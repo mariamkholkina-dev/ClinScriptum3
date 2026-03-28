@@ -1,5 +1,6 @@
 import { Worker, Queue } from "bullmq";
 import IORedis from "ioredis";
+import { handleParseDocument } from "./handlers/parse-document.js";
 
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: null,
@@ -14,22 +15,21 @@ const worker = new Worker(
 
     switch (job.name) {
       case "parse_document":
-        console.log("Document parsing job received (handler pending Phase 2)");
-        break;
+        return handleParseDocument(job.data);
       case "classify_sections":
-        console.log("Section classification job received (handler pending Phase 3)");
+        console.log("Section classification (Phase 3)");
         break;
       case "extract_facts":
-        console.log("Fact extraction job received (handler pending Phase 3)");
+        console.log("Fact extraction (Phase 3)");
         break;
       case "intra_doc_audit":
-        console.log("Intra-document audit job received (handler pending Phase 4)");
+        console.log("Intra-document audit (Phase 4)");
         break;
       case "generate_icf":
-        console.log("ICF generation job received (handler pending Phase 6)");
+        console.log("ICF generation (Phase 6)");
         break;
       case "generate_csr":
-        console.log("CSR generation job received (handler pending Phase 6)");
+        console.log("CSR generation (Phase 6)");
         break;
       default:
         console.warn(`Unknown job type: ${job.name}`);
