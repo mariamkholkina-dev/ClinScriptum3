@@ -12,6 +12,7 @@
     "@aws-sdk/client-s3": "^3.1019.0",
     "@clinscriptum/db": "*",
     "@clinscriptum/shared": "*",
+    "@clinscriptum/diff-engine": "*",
     "@trpc/server": "^11",
     "bcryptjs": "^2",
     "cors": "^2",
