@@ -1,0 +1,9 @@
+{
+  "name": "@clinscriptum/word-addin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'Word Add-in dev server (Phase 7)'",
+    "build": "echo 'Word Add-in build (Phase 7)'"
+  }
+}

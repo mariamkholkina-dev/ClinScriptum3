@@ -1,0 +1,26 @@
+{
+  "name": "@clinscriptum/llm-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "ai": "^3",
+    "@ai-sdk/openai": "^0.0.60",
+    "@ai-sdk/anthropic": "^0.0.50"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}

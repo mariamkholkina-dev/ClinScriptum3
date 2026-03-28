@@ -1,0 +1,374 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Multi-tenant ────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  plan      Plan     @default(basic)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users   User[]
+  studies Study[]
+
+  @@map("tenants")
+}
+
+enum Plan {
+  basic
+  extended
+}
+
+// ─── Users & Auth ────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  role         UserRole @default(writer)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+enum UserRole {
+  writer
+  qc_operator
+  rule_admin
+  tenant_admin
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ─── Studies & Documents ─────────────────────────────────────
+
+model Study {
+  id        String     @id @default(uuid()) @db.Uuid
+  tenantId  String     @map("tenant_id") @db.Uuid
+  title     String
+  phase     StudyPhase @default(unknown)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  documents      Document[]
+  processingRuns ProcessingRun[]
+
+  @@index([tenantId])
+  @@map("studies")
+}
+
+enum StudyPhase {
+  I
+  II
+  III
+  IV
+  I_II   @map("I/II")
+  II_III @map("II/III")
+  unknown
+}
+
+model Document {
+  id        String       @id @default(uuid()) @db.Uuid
+  studyId   String       @map("study_id") @db.Uuid
+  type      DocumentType
+  title     String
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  study    Study             @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  versions DocumentVersion[]
+
+  @@index([studyId])
+  @@map("documents")
+}
+
+enum DocumentType {
+  protocol
+  icf
+  ib
+  csr
+}
+
+model DocumentVersion {
+  id            String                @id @default(uuid()) @db.Uuid
+  documentId    String                @map("document_id") @db.Uuid
+  versionNumber Int                   @map("version_number")
+  fileUrl       String                @map("file_url")
+  status        DocumentVersionStatus @default(uploading)
+  digitalTwin   Json?                 @map("digital_twin") @db.JsonB
+  createdAt     DateTime              @default(now()) @map("created_at")
+
+  document       Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  sections       Section[]
+  facts          Fact[]
+  findings       Finding[]
+  processingRuns ProcessingRun[]
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId])
+  @@map("document_versions")
+}
+
+enum DocumentVersionStatus {
+  uploading
+  parsing
+  parsed
+  error
+}
+
+// ─── Sections & Content ──────────────────────────────────────
+
+model Section {
+  id              String        @id @default(uuid()) @db.Uuid
+  docVersionId    String        @map("doc_version_id") @db.Uuid
+  title           String
+  standardSection String?       @map("standard_section")
+  level           Int
+  order           Int
+  status          SectionStatus @default(not_validated)
+  sourceAnchor    Json          @map("source_anchor") @db.JsonB
+
+  docVersion    DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+  contentBlocks ContentBlock[]
+
+  @@index([docVersionId])
+  @@map("sections")
+}
+
+enum SectionStatus {
+  validated
+  not_validated
+  requires_rework
+}
+
+model ContentBlock {
+  id           String           @id @default(uuid()) @db.Uuid
+  sectionId    String           @map("section_id") @db.Uuid
+  type         ContentBlockType
+  content      String
+  rawHtml      String?          @map("raw_html")
+  order        Int
+  sourceAnchor Json             @map("source_anchor") @db.JsonB
+
+  section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([sectionId])
+  @@map("content_blocks")
+}
+
+enum ContentBlockType {
+  paragraph
+  table
+  table_cell
+  footnote
+  list
+  image
+}
+
+// ─── Facts ───────────────────────────────────────────────────
+
+model Fact {
+  id               String     @id @default(uuid()) @db.Uuid
+  docVersionId     String     @map("doc_version_id") @db.Uuid
+  factKey          String     @map("fact_key")
+  value            String
+  factClass        FactClass  @map("fact_class")
+  sources          Json       @db.JsonB
+  hasContradiction Boolean    @default(false) @map("has_contradiction")
+  status           FactStatus @default(extracted)
+
+  docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+
+  @@index([docVersionId])
+  @@map("facts")
+}
+
+enum FactClass {
+  general
+  phase_specific
+}
+
+enum FactStatus {
+  extracted
+  verified
+  validated
+  rejected
+}
+
+// ─── Findings ────────────────────────────────────────────────
+
+model Finding {
+  id              String        @id @default(uuid()) @db.Uuid
+  docVersionId    String        @map("doc_version_id") @db.Uuid
+  type            FindingType
+  description     String
+  suggestion      String?
+  sourceRef       Json          @map("source_ref") @db.JsonB
+  status          FindingStatus @default(pending)
+  extraAttributes Json          @default("{}") @map("extra_attributes") @db.JsonB
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+
+  @@index([docVersionId])
+  @@map("findings")
+}
+
+enum FindingType {
+  editorial
+  semantic
+}
+
+enum FindingStatus {
+  pending
+  confirmed
+  rejected
+  resolved
+}
+
+// ─── Processing Pipeline ─────────────────────────────────────
+
+model ProcessingRun {
+  id              String              @id @default(uuid()) @db.Uuid
+  studyId         String              @map("study_id") @db.Uuid
+  docVersionId    String              @map("doc_version_id") @db.Uuid
+  type            ProcessingRunType
+  status          ProcessingRunStatus @default(queued)
+  ruleSetVersionId String?            @map("rule_set_version_id") @db.Uuid
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  study          Study            @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  docVersion     DocumentVersion  @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+  ruleSetVersion RuleSetVersion?  @relation(fields: [ruleSetVersionId], references: [id])
+  steps          ProcessingStep[]
+
+  @@index([studyId])
+  @@index([docVersionId])
+  @@map("processing_runs")
+}
+
+enum ProcessingRunType {
+  section_classification
+  fact_extraction
+  intra_doc_audit
+  inter_doc_audit
+  icf_generation
+  csr_generation
+  version_comparison
+}
+
+enum ProcessingRunStatus {
+  queued
+  running
+  completed
+  failed
+}
+
+model ProcessingStep {
+  id              String               @id @default(uuid()) @db.Uuid
+  processingRunId String               @map("processing_run_id") @db.Uuid
+  level           PipelineLevel
+  status          ProcessingStepStatus @default(pending)
+  result          Json?                @db.JsonB
+  startedAt       DateTime?            @map("started_at")
+  completedAt     DateTime?            @map("completed_at")
+
+  processingRun ProcessingRun @relation(fields: [processingRunId], references: [id], onDelete: Cascade)
+
+  @@index([processingRunId])
+  @@map("processing_steps")
+}
+
+enum PipelineLevel {
+  deterministic
+  llm_check
+  llm_qa
+  operator_review
+  user_validation
+}
+
+enum ProcessingStepStatus {
+  pending
+  running
+  completed
+  skipped
+  failed
+}
+
+// ─── Rule Sets ───────────────────────────────────────────────
+
+model RuleSet {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String?  @map("tenant_id") @db.Uuid
+  name      String
+  type      RuleSetType
+  createdAt DateTime @default(now()) @map("created_at")
+
+  versions RuleSetVersion[]
+
+  @@map("rule_sets")
+}
+
+enum RuleSetType {
+  section_classification
+  fact_extraction
+  soa_identification
+  audit
+}
+
+model RuleSetVersion {
+  id          String   @id @default(uuid()) @db.Uuid
+  ruleSetId   String   @map("rule_set_id") @db.Uuid
+  version     Int
+  isActive    Boolean  @default(false) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  ruleSet        RuleSet         @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
+  rules          Rule[]
+  processingRuns ProcessingRun[]
+
+  @@unique([ruleSetId, version])
+  @@map("rule_set_versions")
+}
+
+model Rule {
+  id               String @id @default(uuid()) @db.Uuid
+  ruleSetVersionId String @map("rule_set_version_id") @db.Uuid
+  name             String
+  pattern          String
+  config           Json   @default("{}") @db.JsonB
+
+  ruleSetVersion RuleSetVersion @relation(fields: [ruleSetVersionId], references: [id], onDelete: Cascade)
+
+  @@index([ruleSetVersionId])
+  @@map("rules")
+}

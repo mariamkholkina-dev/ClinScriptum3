@@ -1,0 +1,21 @@
+{
+  "name": "clinscriptum",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "db:migrate": "npm run migrate --workspace=@clinscriptum/db",
+    "db:generate": "npm run generate --workspace=@clinscriptum/db",
+    "db:seed": "npm run seed --workspace=@clinscriptum/db"
+  },
+  "devDependencies": {
+    "turbo": "^2"
+  },
+  "packageManager": "npm@10.0.0"
+}
