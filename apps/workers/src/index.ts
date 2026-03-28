@@ -1,6 +1,8 @@
 import { Worker, Queue } from "bullmq";
 import IORedis from "ioredis";
 import { handleParseDocument } from "./handlers/parse-document.js";
+import { handleClassifySections } from "./handlers/classify-sections.js";
+import { handleExtractFacts } from "./handlers/extract-facts.js";
 
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: null,
@@ -17,11 +19,9 @@ const worker = new Worker(
       case "parse_document":
         return handleParseDocument(job.data);
       case "classify_sections":
-        console.log("Section classification (Phase 3)");
-        break;
+        return handleClassifySections(job.data);
       case "extract_facts":
-        console.log("Fact extraction (Phase 3)");
-        break;
+        return handleExtractFacts(job.data);
       case "intra_doc_audit":
         console.log("Intra-document audit (Phase 4)");
         break;

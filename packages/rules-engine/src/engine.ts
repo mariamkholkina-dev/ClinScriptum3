@@ -1,31 +1,30 @@
-export interface RuleDefinition {
-  name: string;
-  pattern: string;
-  config: Record<string, unknown>;
-}
+import { SectionClassifier, DEFAULT_PROTOCOL_SECTIONS } from "./section-classifier.js";
+import { FactExtractor, DEFAULT_FACT_RULES } from "./fact-extractor.js";
+import { detectContradictions } from "./contradiction-detector.js";
+import type { RuleSetConfig, SectionMappingRule, FactExtractionRule } from "./types.js";
 
 export class RulesEngine {
-  private rules: RuleDefinition[] = [];
+  private sectionClassifier: SectionClassifier;
+  private factExtractor: FactExtractor;
 
-  load(rules: RuleDefinition[]) {
-    this.rules = rules;
+  constructor(config?: Partial<RuleSetConfig>) {
+    this.sectionClassifier = new SectionClassifier(
+      config?.sectionMappings ?? DEFAULT_PROTOCOL_SECTIONS
+    );
+    this.factExtractor = new FactExtractor(
+      config?.factExtractions ?? DEFAULT_FACT_RULES
+    );
   }
 
-  matchFact(text: string, factKey: string): string | null {
-    const rule = this.rules.find((r) => r.name === factKey);
-    if (!rule) return null;
-    const match = text.match(new RegExp(rule.pattern, "i"));
-    return match ? (match[1] ?? match[0]) : null;
+  getSectionClassifier() {
+    return this.sectionClassifier;
   }
 
-  matchAll(text: string): Array<{ factKey: string; value: string }> {
-    const results: Array<{ factKey: string; value: string }> = [];
-    for (const rule of this.rules) {
-      const match = text.match(new RegExp(rule.pattern, "i"));
-      if (match) {
-        results.push({ factKey: rule.name, value: match[1] ?? match[0] });
-      }
-    }
-    return results;
+  getFactExtractor() {
+    return this.factExtractor;
+  }
+
+  getContradictionDetector() {
+    return detectContradictions;
   }
 }

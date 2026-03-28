@@ -12,6 +12,7 @@
     "@clinscriptum/db": "*",
     "@clinscriptum/shared": "*",
     "@clinscriptum/doc-parser": "*",
+    "@clinscriptum/rules-engine": "*",
     "bullmq": "^5",
     "ioredis": "^5"
   },
