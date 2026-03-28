@@ -4,6 +4,7 @@ import { studyRouter } from "./study.js";
 import { documentRouter } from "./document.js";
 import { processingRouter } from "./processing.js";
 import { comparisonRouter } from "./comparison.js";
+import { generationRouter } from "./generation.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -11,6 +12,7 @@ export const appRouter = router({
   document: documentRouter,
   processing: processingRouter,
   comparison: comparisonRouter,
+  generation: generationRouter,
 });
 
 export type AppRouter = typeof appRouter;

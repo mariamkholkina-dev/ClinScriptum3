@@ -4,6 +4,8 @@ import { handleParseDocument } from "./handlers/parse-document.js";
 import { handleClassifySections } from "./handlers/classify-sections.js";
 import { handleExtractFacts } from "./handlers/extract-facts.js";
 import { handleIntraDocAudit } from "./handlers/intra-doc-audit.js";
+import { handleGenerateICF } from "./handlers/generate-icf.js";
+import { handleGenerateCSR } from "./handlers/generate-csr.js";
 
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: null,
@@ -26,11 +28,9 @@ const worker = new Worker(
       case "intra_doc_audit":
         return handleIntraDocAudit(job.data);
       case "generate_icf":
-        console.log("ICF generation (Phase 6)");
-        break;
+        return handleGenerateICF(job.data);
       case "generate_csr":
-        console.log("CSR generation (Phase 6)");
-        break;
+        return handleGenerateCSR(job.data);
       default:
         console.warn(`Unknown job type: ${job.name}`);
     }
