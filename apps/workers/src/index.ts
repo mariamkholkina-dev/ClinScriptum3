@@ -3,6 +3,7 @@ import IORedis from "ioredis";
 import { handleParseDocument } from "./handlers/parse-document.js";
 import { handleClassifySections } from "./handlers/classify-sections.js";
 import { handleExtractFacts } from "./handlers/extract-facts.js";
+import { handleIntraDocAudit } from "./handlers/intra-doc-audit.js";
 
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: null,
@@ -23,8 +24,7 @@ const worker = new Worker(
       case "extract_facts":
         return handleExtractFacts(job.data);
       case "intra_doc_audit":
-        console.log("Intra-document audit (Phase 4)");
-        break;
+        return handleIntraDocAudit(job.data);
       case "generate_icf":
         console.log("ICF generation (Phase 6)");
         break;
