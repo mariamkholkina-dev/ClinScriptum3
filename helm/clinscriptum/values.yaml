@@ -1,0 +1,93 @@
+replicaCount:
+  api: 2
+  web: 2
+  workers: 2
+
+image:
+  registry: ""
+  api:
+    repository: clinscriptum/api
+    tag: latest
+  web:
+    repository: clinscriptum/web
+    tag: latest
+  workers:
+    repository: clinscriptum/workers
+    tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  api:
+    type: ClusterIP
+    port: 4000
+  web:
+    type: ClusterIP
+    port: 3000
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: app.clinscriptum.com
+      paths:
+        - path: /
+          service: web
+        - path: /trpc
+          service: api
+        - path: /health
+          service: api
+  tls:
+    - secretName: clinscriptum-tls
+      hosts:
+        - app.clinscriptum.com
+
+postgresql:
+  enabled: true
+  auth:
+    database: clinscriptum
+    username: clinscriptum
+    existingSecret: clinscriptum-db-secret
+
+redis:
+  enabled: true
+  auth:
+    enabled: false
+
+storage:
+  type: s3
+  bucket: clinscriptum
+  region: us-east-1
+
+env:
+  JWT_SECRET:
+    secretKeyRef:
+      name: clinscriptum-secrets
+      key: jwt-secret
+
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+
+resources:
+  api:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  workers:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  web:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

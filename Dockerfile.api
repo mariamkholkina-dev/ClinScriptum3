@@ -1,0 +1,29 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+
+FROM base AS builder
+COPY package.json package-lock.json turbo.json tsconfig.base.json ./
+COPY apps/api/package.json apps/api/
+COPY packages/db/package.json packages/db/
+COPY packages/shared/package.json packages/shared/
+COPY packages/llm-gateway/package.json packages/llm-gateway/
+COPY packages/diff-engine/package.json packages/diff-engine/
+COPY packages/doc-parser/package.json packages/doc-parser/
+COPY packages/rules-engine/package.json packages/rules-engine/
+
+RUN npm ci --workspace=@clinscriptum/api --include-workspace-root
+
+COPY packages/ packages/
+COPY apps/api/ apps/api/
+
+RUN npx prisma generate --schema=packages/db/prisma/schema.prisma
+RUN npx turbo build --filter=@clinscriptum/api
+
+FROM base AS runner
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/apps/api ./apps/api
+
+EXPOSE 4000
+ENV NODE_ENV=production
+CMD ["node", "apps/api/dist/index.js"]

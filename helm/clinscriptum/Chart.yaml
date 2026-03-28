@@ -1,0 +1,6 @@
+apiVersion: v2
+name: clinscriptum
+description: ClinScriptum - Intelligent assistant for clinical documentation
+version: 0.1.0
+appVersion: "0.1.0"
+type: application

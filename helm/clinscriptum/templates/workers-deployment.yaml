@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-workers
+  labels:
+    app: clinscriptum
+    component: workers
+spec:
+  replicas: {{ .Values.replicaCount.workers }}
+  selector:
+    matchLabels:
+      app: clinscriptum
+      component: workers
+  template:
+    metadata:
+      labels:
+        app: clinscriptum
+        component: workers
+    spec:
+      containers:
+        - name: workers
+          image: "{{ .Values.image.registry }}{{ .Values.image.workers.repository }}:{{ .Values.image.workers.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: clinscriptum-db-secret
+                  key: database-url
+            - name: REDIS_URL
+              value: "redis://{{ .Release.Name }}-redis-master:6379"
+            - name: STORAGE_TYPE
+              value: {{ .Values.storage.type }}
+            - name: S3_BUCKET
+              value: {{ .Values.storage.bucket }}
+            - name: S3_REGION
+              value: {{ .Values.storage.region }}
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: clinscriptum-secrets
+                  key: llm-api-key
+                  optional: true
+            - name: LLM_PROVIDER
+              value: "openai"
+            - name: LLM_MODEL
+              value: "gpt-4o"
+          resources:
+            {{- toYaml .Values.resources.workers | nindent 12 }}

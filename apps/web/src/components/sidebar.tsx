@@ -10,12 +10,17 @@ import {
   LayoutDashboard,
   LogOut,
   Settings,
+  AlertTriangle,
+  GitCompare,
+  Wand2,
 } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/studies", label: "Studies", icon: FlaskConical },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/compare", label: "Comparison", icon: GitCompare },
+  { href: "/generate", label: "Generation", icon: Wand2 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

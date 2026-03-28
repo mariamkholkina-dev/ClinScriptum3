@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    app: clinscriptum
+    component: api
+spec:
+  replicas: {{ .Values.replicaCount.api }}
+  selector:
+    matchLabels:
+      app: clinscriptum
+      component: api
+  template:
+    metadata:
+      labels:
+        app: clinscriptum
+        component: api
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.image.registry }}{{ .Values.image.api.repository }}:{{ .Values.image.api.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 4000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: clinscriptum-db-secret
+                  key: database-url
+            - name: REDIS_URL
+              value: "redis://{{ .Release.Name }}-redis-master:6379"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: clinscriptum-secrets
+                  key: jwt-secret
+            - name: CORS_ORIGIN
+              value: "https://{{ (index .Values.ingress.hosts 0).host }}"
+            - name: STORAGE_TYPE
+              value: {{ .Values.storage.type }}
+            - name: S3_BUCKET
+              value: {{ .Values.storage.bucket }}
+            - name: S3_REGION
+              value: {{ .Values.storage.region }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api
+spec:
+  type: {{ .Values.service.api.type }}
+  ports:
+    - port: {{ .Values.service.api.port }}
+      targetPort: 4000
+  selector:
+    app: clinscriptum
+    component: api
