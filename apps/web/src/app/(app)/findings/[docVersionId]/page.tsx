@@ -10,6 +10,20 @@ import { ArrowLeft, AlertTriangle, CheckCircle2, XCircle, Filter } from "lucide-
 type FindingStatusFilter = "all" | "pending" | "confirmed" | "rejected" | "resolved";
 type FindingTypeFilter = "all" | "editorial" | "semantic";
 
+const statusLabels: Record<string, string> = {
+  all: "Все",
+  pending: "Ожидает",
+  confirmed: "Подтверждён",
+  rejected: "Отклонён",
+  resolved: "Решён",
+};
+
+const typeLabels: Record<string, string> = {
+  all: "Все",
+  editorial: "Редакционный",
+  semantic: "Семантический",
+};
+
 export default function FindingsPage() {
   const { docVersionId } = useParams<{ docVersionId: string }>();
   const [statusFilter, setStatusFilter] = useState<FindingStatusFilter>("all");
@@ -32,14 +46,14 @@ export default function FindingsPage() {
         <Link href="/documents" className="text-gray-400 hover:text-gray-600">
           <ArrowLeft className="h-5 w-5" />
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">Audit Findings</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Результаты аудита</h1>
       </div>
 
-      {/* Filters */}
+      {/* Фильтры */}
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-gray-400" />
-          <span className="text-sm text-gray-500">Status:</span>
+          <span className="text-sm text-gray-500">Статус:</span>
           {(["all", "pending", "confirmed", "rejected", "resolved"] as const).map((s) => (
             <button
               key={s}
@@ -51,12 +65,12 @@ export default function FindingsPage() {
                   : "bg-gray-100 text-gray-600 hover:bg-gray-200"
               )}
             >
-              {s}
+              {statusLabels[s]}
             </button>
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-500">Type:</span>
+          <span className="text-sm text-gray-500">Тип:</span>
           {(["all", "editorial", "semantic"] as const).map((t) => (
             <button
               key={t}
@@ -68,27 +82,27 @@ export default function FindingsPage() {
                   : "bg-gray-100 text-gray-600 hover:bg-gray-200"
               )}
             >
-              {t}
+              {typeLabels[t]}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Статистика */}
       <div className="grid grid-cols-4 gap-4">
-        {["pending", "confirmed", "rejected", "resolved"].map((status) => {
+        {(["pending", "confirmed", "rejected", "resolved"] as const).map((status) => {
           const count = (findingsQuery.data ?? []).filter((f) => f.status === status).length;
           return (
             <div key={status} className="rounded-lg border bg-white p-4 shadow-sm">
               <p className="text-2xl font-bold text-gray-900">{count}</p>
-              <p className="text-sm text-gray-500 capitalize">{status}</p>
+              <p className="text-sm text-gray-500">{statusLabels[status]}</p>
             </div>
           );
         })}
       </div>
 
-      {/* Findings list */}
-      {findingsQuery.isLoading && <p className="text-sm text-gray-500">Loading...</p>}
+      {/* Список находок */}
+      {findingsQuery.isLoading && <p className="text-sm text-gray-500">Загрузка...</p>}
 
       <div className="space-y-3">
         {findings.map((finding) => (
@@ -107,7 +121,7 @@ export default function FindingsPage() {
                         : "bg-orange-100 text-orange-700"
                     )}
                   >
-                    {finding.type}
+                    {typeLabels[finding.type] ?? finding.type}
                   </span>
                   <span
                     className={cn(
@@ -118,11 +132,11 @@ export default function FindingsPage() {
                       finding.status === "resolved" && "bg-gray-100 text-gray-600"
                     )}
                   >
-                    {finding.status}
+                    {statusLabels[finding.status] ?? finding.status}
                   </span>
                   {(finding.extraAttributes as any)?.severity && (
                     <span className="text-xs text-gray-400">
-                      Severity: {(finding.extraAttributes as any).severity}
+                      Критичность: {(finding.extraAttributes as any).severity}
                     </span>
                   )}
                 </div>
@@ -131,7 +145,7 @@ export default function FindingsPage() {
 
                 {finding.suggestion && (
                   <p className="text-sm text-green-700 bg-green-50 rounded p-2">
-                    Suggestion: {finding.suggestion}
+                    Рекомендация: {finding.suggestion}
                   </p>
                 )}
 
@@ -149,7 +163,7 @@ export default function FindingsPage() {
                       updateStatus.mutate({ findingId: finding.id, status: "confirmed" })
                     }
                     className="rounded p-1.5 text-green-600 hover:bg-green-50"
-                    title="Confirm"
+                    title="Подтвердить"
                   >
                     <CheckCircle2 className="h-5 w-5" />
                   </button>
@@ -158,7 +172,7 @@ export default function FindingsPage() {
                       updateStatus.mutate({ findingId: finding.id, status: "rejected" })
                     }
                     className="rounded p-1.5 text-red-600 hover:bg-red-50"
-                    title="Reject"
+                    title="Отклонить"
                   >
                     <XCircle className="h-5 w-5" />
                   </button>
@@ -172,7 +186,7 @@ export default function FindingsPage() {
       {findings.length === 0 && !findingsQuery.isLoading && (
         <div className="rounded-lg border bg-white p-8 text-center shadow-sm">
           <AlertTriangle className="mx-auto h-12 w-12 text-gray-300" />
-          <p className="mt-2 text-sm text-gray-500">No findings match the current filters.</p>
+          <p className="mt-2 text-sm text-gray-500">Нет находок, соответствующих фильтрам.</p>
         </div>
       )}
     </div>

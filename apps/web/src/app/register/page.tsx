@@ -32,7 +32,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm space-y-6 rounded-xl bg-white p-8 shadow-lg">
         <div className="flex flex-col items-center gap-2">
           <FlaskConical className="h-10 w-10 text-brand-600" />
-          <h1 className="text-2xl font-bold text-gray-900">Create account</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Создание аккаунта</h1>
         </div>
 
         <form
@@ -48,7 +48,7 @@ export default function RegisterPage() {
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Organization</label>
+            <label className="block text-sm font-medium text-gray-700">Организация</label>
             <input
               type="text"
               value={form.tenantName}
@@ -59,7 +59,7 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Your name</label>
+            <label className="block text-sm font-medium text-gray-700">Ваше имя</label>
             <input
               type="text"
               value={form.name}
@@ -70,7 +70,7 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Email</label>
+            <label className="block text-sm font-medium text-gray-700">Эл. почта</label>
             <input
               type="email"
               value={form.email}
@@ -81,7 +81,7 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Password</label>
+            <label className="block text-sm font-medium text-gray-700">Пароль</label>
             <input
               type="password"
               value={form.password}
@@ -97,14 +97,14 @@ export default function RegisterPage() {
             disabled={registerMutation.isPending}
             className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
           >
-            {registerMutation.isPending ? "Creating..." : "Create account"}
+            {registerMutation.isPending ? "Создание..." : "Создать аккаунт"}
           </button>
         </form>
 
         <p className="text-center text-sm text-gray-500">
-          Already have an account?{" "}
+          Уже есть аккаунт?{" "}
           <Link href="/login" className="text-brand-600 hover:underline">
-            Sign in
+            Войти
           </Link>
         </p>
       </div>

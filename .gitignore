@@ -9,3 +9,19 @@ dist/
 coverage/
 .DS_Store
 Thumbs.db
+
+# Uploads & storage
+uploads/
+.storage/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
+Desktop.ini
+ehthumbs.db
+
+# Build artifacts
+*.tsbuildinfo

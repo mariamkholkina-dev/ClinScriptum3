@@ -15,6 +15,7 @@
     "db:seed": "npm run seed --workspace=@clinscriptum/db"
   },
   "devDependencies": {
+    "docx": "^9.6.1",
     "turbo": "^2"
   },
   "packageManager": "npm@10.0.0"

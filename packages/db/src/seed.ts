@@ -1,11 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "crypto";
-import { createHash } from "crypto";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-function hashPassword(password: string): string {
-  return createHash("sha256").update(password).digest("hex");
+async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12);
 }
 
 async function main() {
@@ -19,14 +19,17 @@ async function main() {
     },
   });
 
+  const adminHash = await hashPassword("changeme123");
+  const writerHash = await hashPassword("changeme123");
+
   await prisma.user.upsert({
     where: { email: "admin@demo.clinscriptum.com" },
-    update: {},
+    update: { passwordHash: adminHash },
     create: {
       id: randomUUID(),
       tenantId: tenant.id,
       email: "admin@demo.clinscriptum.com",
-      passwordHash: hashPassword("changeme123"),
+      passwordHash: await hashPassword("changeme123"),
       name: "Demo Admin",
       role: "tenant_admin",
     },
@@ -34,12 +37,12 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: "writer@demo.clinscriptum.com" },
-    update: {},
+    update: { passwordHash: writerHash },
     create: {
       id: randomUUID(),
       tenantId: tenant.id,
       email: "writer@demo.clinscriptum.com",
-      passwordHash: hashPassword("changeme123"),
+      passwordHash: await hashPassword("changeme123"),
       name: "Demo Writer",
       role: "writer",
     },

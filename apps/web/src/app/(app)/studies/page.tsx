@@ -23,13 +23,13 @@ export default function StudiesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Studies</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Исследования</h1>
         <button
           onClick={() => setShowCreate(true)}
           className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
         >
           <Plus className="h-4 w-4" />
-          New study
+          Новое исследование
         </button>
       </div>
 
@@ -43,7 +43,7 @@ export default function StudiesPage() {
         >
           <input
             type="text"
-            placeholder="Study title"
+            placeholder="Название исследования"
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             required
@@ -54,13 +54,13 @@ export default function StudiesPage() {
             onChange={(e) => setNewPhase(e.target.value)}
             className="w-full rounded-lg border px-3 py-2 text-sm"
           >
-            <option value="unknown">Unknown</option>
-            <option value="I">Phase I</option>
-            <option value="II">Phase II</option>
-            <option value="III">Phase III</option>
-            <option value="IV">Phase IV</option>
-            <option value="I_II">Phase I/II</option>
-            <option value="II_III">Phase II/III</option>
+            <option value="unknown">Не указана</option>
+            <option value="I">Фаза I</option>
+            <option value="II">Фаза II</option>
+            <option value="III">Фаза III</option>
+            <option value="IV">Фаза IV</option>
+            <option value="I_II">Фаза I/II</option>
+            <option value="II_III">Фаза II/III</option>
           </select>
           <div className="flex gap-2">
             <button
@@ -68,20 +68,20 @@ export default function StudiesPage() {
               disabled={createMutation.isPending}
               className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
             >
-              Create
+              Создать
             </button>
             <button
               type="button"
               onClick={() => setShowCreate(false)}
               className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
             >
-              Cancel
+              Отмена
             </button>
           </div>
         </form>
       )}
 
-      {studiesQuery.isLoading && <p className="text-sm text-gray-500">Loading...</p>}
+      {studiesQuery.isLoading && <p className="text-sm text-gray-500">Загрузка...</p>}
 
       <div className="space-y-3">
         {studiesQuery.data?.map((study) => (
@@ -95,10 +95,10 @@ export default function StudiesPage() {
             </div>
             <div className="flex-1">
               <p className="font-medium text-gray-900">{study.title}</p>
-              <p className="text-sm text-gray-500">Phase {study.phase}</p>
+              <p className="text-sm text-gray-500">Фаза {study.phase}</p>
             </div>
             <span className="text-xs text-gray-400">
-              {new Date(study.createdAt).toLocaleDateString()}
+              {new Date(study.createdAt).toLocaleDateString("ru-RU")}
             </span>
           </Link>
         ))}

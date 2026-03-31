@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { prisma } from "@clinscriptum/db";
 import { router, protectedProcedure } from "../trpc/trpc.js";
 import { storage } from "../lib/storage.js";
+import { runProcessingPipeline } from "../lib/processing-pipeline.js";
 
 export const documentRouter = router({
   listByStudy: protectedProcedure
@@ -59,6 +60,7 @@ export const documentRouter = router({
     .input(
       z.object({
         documentId: z.string().uuid(),
+        versionLabel: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -77,12 +79,48 @@ export const documentRouter = router({
         data: {
           documentId: doc.id,
           versionNumber: nextVersion,
+          versionLabel: input.versionLabel || `v${nextVersion}.0`,
           fileUrl: key,
           status: "uploading",
         },
       });
 
       return { versionId: version.id, storageKey: key };
+    }),
+
+  deleteVersion: protectedProcedure
+    .input(z.object({ versionId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const version = await prisma.documentVersion.findUnique({
+        where: { id: input.versionId },
+        include: { document: { include: { study: true } } },
+      });
+      if (!version || version.document.study.tenantId !== ctx.user.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+      await prisma.documentVersion.delete({ where: { id: input.versionId } });
+      return { success: true };
+    }),
+
+  setCurrentVersion: protectedProcedure
+    .input(z.object({ versionId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const version = await prisma.documentVersion.findUnique({
+        where: { id: input.versionId },
+        include: { document: { include: { study: true } } },
+      });
+      if (!version || version.document.study.tenantId !== ctx.user.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+      await prisma.documentVersion.updateMany({
+        where: { documentId: version.documentId },
+        data: { isCurrent: false },
+      });
+      await prisma.documentVersion.update({
+        where: { id: input.versionId },
+        data: { isCurrent: true },
+      });
+      return { success: true };
     }),
 
   confirmUpload: protectedProcedure
@@ -104,10 +142,10 @@ export const documentRouter = router({
       const buffer = Buffer.from(input.fileBuffer, "base64");
       await storage.upload(version.fileUrl, buffer);
 
-      await prisma.documentVersion.update({
-        where: { id: version.id },
-        data: { status: "parsing" },
-      });
+      // Fire-and-forget: run the full processing pipeline asynchronously
+      runProcessingPipeline(version.id).catch((err) =>
+        console.error(`[pipeline] Background error for ${version.id}:`, err)
+      );
 
       return { versionId: version.id, status: "parsing" };
     }),
@@ -119,7 +157,10 @@ export const documentRouter = router({
         where: { id: input.versionId },
         include: {
           document: { include: { study: true } },
-          sections: { orderBy: { order: "asc" }, include: { contentBlocks: { orderBy: { order: "asc" } } } },
+          sections: {
+            orderBy: { order: "asc" },
+            include: { contentBlocks: { orderBy: { order: "asc" } } },
+          },
         },
       });
       if (!version || version.document.study.tenantId !== ctx.user.tenantId) {
@@ -127,4 +168,65 @@ export const documentRouter = router({
       }
       return version;
     }),
+
+  validateAllSections: protectedProcedure
+    .input(z.object({ versionId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const version = await prisma.documentVersion.findUnique({
+        where: { id: input.versionId },
+        include: { document: { include: { study: true } } },
+      });
+      if (!version || version.document.study.tenantId !== ctx.user.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+      await prisma.section.updateMany({
+        where: { docVersionId: input.versionId },
+        data: { status: "validated" },
+      });
+      return { success: true };
+    }),
+
+  updateSectionClassification: protectedProcedure
+    .input(
+      z.object({
+        sectionId: z.string().uuid(),
+        standardSection: z.string().nullable(),
+        status: z.enum(["validated", "not_validated", "requires_rework"]).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const section = await prisma.section.findUnique({
+        where: { id: input.sectionId },
+        include: { docVersion: { include: { document: { include: { study: true } } } } },
+      });
+      if (!section || section.docVersion.document.study.tenantId !== ctx.user.tenantId) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+      return prisma.section.update({
+        where: { id: input.sectionId },
+        data: {
+          standardSection: input.standardSection,
+          status: input.status ?? section.status,
+        },
+      });
+    }),
+
+  getTaxonomy: protectedProcedure.query(async () => {
+    const ruleSet = await prisma.ruleSet.findFirst({
+      where: { type: "section_classification" },
+      include: {
+        versions: {
+          where: { isActive: true },
+          include: { rules: true },
+          take: 1,
+        },
+      },
+    });
+    if (!ruleSet?.versions[0]) return [];
+    return ruleSet.versions[0].rules.map((r) => ({
+      name: r.name,
+      pattern: r.pattern,
+      config: r.config as any,
+    }));
+  }),
 });

@@ -13,10 +13,10 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">
-          Welcome, {user?.name}
+          Добро пожаловать, {user?.name}
         </h1>
         <p className="mt-1 text-sm text-gray-500">
-          Manage your clinical studies and documentation
+          Управление клиническими исследованиями и документацией
         </p>
       </div>
 
@@ -30,7 +30,7 @@ export default function DashboardPage() {
               <p className="text-2xl font-bold text-gray-900">
                 {studiesQuery.data?.length ?? "—"}
               </p>
-              <p className="text-sm text-gray-500">Studies</p>
+              <p className="text-sm text-gray-500">Исследования</p>
             </div>
           </div>
         </div>
@@ -42,7 +42,7 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-gray-900">—</p>
-              <p className="text-sm text-gray-500">Documents</p>
+              <p className="text-sm text-gray-500">Документы</p>
             </div>
           </div>
         </div>
@@ -50,23 +50,23 @@ export default function DashboardPage() {
 
       <div>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Recent Studies</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Последние исследования</h2>
           <Link
             href="/studies"
             className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
           >
             <Plus className="h-4 w-4" />
-            New study
+            Новое исследование
           </Link>
         </div>
 
         {studiesQuery.isLoading && (
-          <p className="mt-4 text-sm text-gray-500">Loading...</p>
+          <p className="mt-4 text-sm text-gray-500">Загрузка...</p>
         )}
 
         {studiesQuery.data && studiesQuery.data.length === 0 && (
           <p className="mt-4 text-sm text-gray-500">
-            No studies yet. Create your first study to get started.
+            Исследований пока нет. Создайте первое, чтобы начать работу.
           </p>
         )}
 
@@ -81,10 +81,10 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium text-gray-900">{study.title}</p>
-                    <p className="text-sm text-gray-500">Phase {study.phase}</p>
+                    <p className="text-sm text-gray-500">Фаза {study.phase}</p>
                   </div>
                   <span className="text-xs text-gray-400">
-                    {new Date(study.createdAt).toLocaleDateString()}
+                    {new Date(study.createdAt).toLocaleDateString("ru-RU")}
                   </span>
                 </div>
               </Link>

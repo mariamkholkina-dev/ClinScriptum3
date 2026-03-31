@@ -1,0 +1,601 @@
+# Реестр фактов для извлечения из клинических протоколов
+# Источник: backend/app/services/fact_extraction_rules.py
+# Обновлять вручную или через get_extraction_rules()
+#
+# Поля:
+#   fact_key    — dot-path ключ факта
+#   value_type  — тип значения (string, integer, float, boolean, date, duration, range, ratio, list, object)
+#   priority    — приоритет правила (выше = важнее при конфликте)
+#   confidence  — базовый уровень уверенности (high=0.9, medium=0.7, low=0.5)
+#   description — человекочитаемое описание
+#   labels_ru   — ключевые метки в документе (RU)
+#   labels_en   — ключевые метки в документе (EN)
+#   topics      — предпочтительные разделы документа (target_section)
+
+# =============================================================================
+# protocol_meta — метаданные протокола
+# =============================================================================
+protocol_meta:
+
+  - fact_key: protocol_version
+    value_type: string
+    priority: 250
+    confidence: high
+    description: Версия / номер редакции протокола
+    labels_ru: ["версия протокола", "редакция протокола", "номер протокола", "издание"]
+    labels_en: ["protocol version", "protocol no.", "protocol number", "protocol edition", "amendment"]
+    topics: [admin_ethics, overview_objectives]
+
+  - fact_key: protocol_date
+    value_type: date          # ISO YYYY-MM-DD
+    priority: 200
+    confidence: high
+    description: Дата протокола / редакции
+    labels_ru: ["дата протокола", "дата редакции", "дата утверждения"]
+    labels_en: ["protocol date", "release date", "issue date"]
+    topics: [admin_ethics, overview_objectives]
+
+  - fact_key: protocol_id
+    value_type: string
+    priority: 240
+    confidence: high
+    description: Идентификатор / код исследования (например VLT-015)
+    labels_ru: ["номер исследования", "номер протокола", "код исследования", "study id"]
+    labels_en: ["protocol no.", "protocol number", "study id", "study number"]
+    topics: [admin_ethics, overview_objectives]
+
+  - fact_key: sponsor_name
+    value_type: string
+    priority: 150
+    confidence: medium
+    description: Название организации-спонсора
+    labels_ru: ["спонсор"]
+    labels_en: ["sponsor"]
+    topics: [admin_ethics]
+
+  - fact_key: phase
+    value_type: string        # I | II | III | IV | I-II | ...
+    priority: 210
+    confidence: high
+    description: Фаза клинического исследования
+    labels_ru: ["фаза", "первой фазы", "второй фазы", "третьей фазы"]
+    labels_en: ["phase", "phase I", "phase II", "phase III", "phase IV"]
+    topics: [overview_objectives, design_plan]
+
+  - fact_key: therapeutic_area
+    value_type: string
+    priority: 180
+    confidence: medium
+    description: Терапевтическая область / показание
+    labels_ru: ["терапевтическая область / показание", "показание", "для лечения"]
+    labels_en: ["therapeutic area", "indication", "for the treatment of"]
+    topics: [overview_objectives, indication]
+
+  - fact_key: mechanism_of_action
+    value_type: string
+    priority: 150
+    confidence: medium
+    description: Механизм действия исследуемого препарата
+    labels_ru: ["механизм действия"]
+    labels_en: ["mechanism of action"]
+    topics: [overview_objectives, ip_management]
+
+# =============================================================================
+# study — общие характеристики исследования
+# =============================================================================
+study:
+
+  - fact_key: study_title
+    value_type: string
+    priority: 220
+    confidence: medium
+    description: Полное название исследования
+    labels_ru: ["название исследования", "название"]
+    labels_en: ["study title", "title of study"]
+    topics: [overview_objectives]
+
+  - fact_key: phase
+    value_type: string
+    priority: 200
+    confidence: high
+    description: Фаза исследования (дубль для fact_type=study)
+    labels_ru: ["фаза исследования", "фаза"]
+    labels_en: ["phase"]
+    topics: [overview_objectives, design_plan]
+
+  - fact_key: objectives
+    value_type: string
+    priority: 140
+    confidence: low
+    description: Цели исследования
+    labels_ru: ["цели исследования"]
+    labels_en: ["study objectives"]
+    topics: [overview_objectives, endpoints_efficacy]
+
+  - fact_key: tasks
+    value_type: string
+    priority: 130
+    confidence: low
+    description: Задачи исследования
+    labels_ru: ["задачи исследования"]
+    labels_en: []
+    topics: [overview_objectives]
+
+  - fact_key: duration
+    value_type: duration      # {value: int, unit: week|month|day|year}
+    priority: 150
+    confidence: high
+    description: Общая длительность исследования
+    labels_ru: ["продолжительность исследования", "сроки проведения исследования"]
+    labels_en: ["study duration", "study timelines"]
+    topics: [design_plan]
+
+  - fact_key: site_count
+    value_type: integer
+    priority: 160
+    confidence: medium
+    description: Число исследовательских центров
+    labels_ru: ["исследовательские центры", "число центров", "количество центров"]
+    labels_en: ["number of sites", "study location"]
+    topics: [admin_ethics, overview_objectives]
+
+  - fact_key: study_sites
+    value_type: string
+    priority: 120
+    confidence: low
+    description: Описание исследовательских центров (текст)
+    labels_ru: ["исследовательские центры"]
+    labels_en: ["study location", "number of sites"]
+    topics: [admin_ethics, overview_objectives]
+
+  - fact_key: subject_involvement_duration
+    value_type: duration
+    priority: 170
+    confidence: high
+    description: Длительность участия одного добровольца / пациента
+    labels_ru: ["длительность участия добровольца", "продолжительность"]
+    labels_en: ["subject involvement duration"]
+    topics: [design_plan, population_eligibility]
+
+  # --- Дизайн ---
+
+  - fact_key: design.description
+    value_type: string
+    priority: 170
+    confidence: medium
+    description: Текстовое описание дизайна исследования
+    labels_ru: ["дизайн исследования"]
+    labels_en: ["study design", "trial design"]
+    topics: [design_plan]
+
+  - fact_key: design.randomized
+    value_type: boolean
+    priority: 200
+    confidence: high
+    description: Является ли исследование рандомизированным
+    labels_ru: ["рандомизированное", "рандомизация", "с рандомизацией"]
+    labels_en: ["randomized", "randomization", "RCT"]
+    topics: [design_plan, overview_objectives]
+
+  - fact_key: design.type
+    value_type: string        # parallel | crossover
+    priority: 180
+    confidence: high
+    description: "Тип дизайна: параллельный или перекрёстный"
+    labels_ru: ["параллельных группах", "параллельное", "перекрестное", "кроссовер"]
+    labels_en: ["parallel", "parallel group", "crossover", "cross-over"]
+    topics: [design_plan]
+
+  - fact_key: design.configuration
+    value_type: string        # parallel | crossover | factorial | sequential
+    priority: 190
+    confidence: high
+    description: Конфигурация дизайна (parallel/crossover/factorial/sequential)
+    labels_ru: ["параллельн", "перекрестн", "факторн", "двухэтапн"]
+    labels_en: ["parallel group", "crossover design", "factorial design", "two-stage design"]
+    topics: [design_plan]
+
+  - fact_key: design.blinding
+    value_type: string        # open-label | double | single | unknown
+    priority: 180
+    confidence: high
+    description: Тип ослепления (упрощённый)
+    labels_ru: ["открытое", "слепое", "двойное слепое", "заслепленное"]
+    labels_en: ["open-label", "double-blind", "blinded", "placebo-controlled"]
+    topics: [design_plan]
+
+  - fact_key: design.masking
+    value_type: string        # open-label | double-blind | single-blind | triple-blind
+    priority: 185
+    confidence: high
+    description: Маскирование (детальный тип ослепления)
+    labels_ru: ["открытое исследование", "двойное слепое исследование", "одинарное слепое"]
+    labels_en: ["open-label study", "double-blind study", "single-blind study"]
+    topics: [design_plan]
+
+  - fact_key: design.control_type
+    value_type: string        # placebo | active | uncontrolled
+    priority: 175
+    confidence: high
+    description: Тип контрольной группы
+    labels_ru: ["плацебо-контролируем", "плацебо", "активный контроль", "без контроля"]
+    labels_en: ["placebo-controlled", "active-controlled", "uncontrolled"]
+    topics: [design_plan]
+
+  - fact_key: design.randomization_ratio
+    value_type: ratio         # "1:1" | "2:1" | ...
+    priority: 170
+    confidence: medium
+    description: Соотношение рандомизации между группами
+    labels_ru: ["соотношении", "соотношение", "рандомизированы"]
+    labels_en: ["ratio", "randomization ratio"]
+    topics: [design_plan]
+
+  - fact_key: design.rationale
+    value_type: string
+    priority: 140
+    confidence: low
+    description: Обоснование дизайна исследования
+    labels_ru: ["обоснование дизайна исследования"]
+    labels_en: ["rationale"]
+    topics: [design_plan, overview_objectives]
+
+  - fact_key: design.interim_analysis
+    value_type: boolean       # true — присутствует
+    priority: 150
+    confidence: medium
+    description: Наличие промежуточного анализа
+    labels_ru: ["промежуточный анализ"]
+    labels_en: ["interim analysis"]
+    topics: [design_plan, stats_sample_size]
+
+# =============================================================================
+# study_design — детальный блок ослепления (дополняет study.design.*)
+# =============================================================================
+study_design:
+
+  - fact_key: blinding
+    value_type: string        # open-label | double-blind | single-blind | triple-blind
+    priority: 170
+    confidence: medium
+    description: Тип ослепления / маскирования (расширенный блок)
+    labels_ru: ["заслепление", "заслепление", "двойное слепое", "одинарное слепое"]
+    labels_en: ["blinding", "double-blind", "single-blind", "open-label"]
+    topics: [design_plan, overview_objectives]
+
+# =============================================================================
+# population — популяция исследования
+# =============================================================================
+population:
+
+  - fact_key: planned_n_total
+    value_type: integer
+    priority: 300
+    confidence: high
+    description: Плановое общее число участников исследования
+    labels_ru: ["всего n", "общее число", "величина выборки", "объем выборки",
+                "количество добровольцев", "размер выборки", "N="]
+    labels_en: ["total n", "sample size", "planned enrollment", "number of patients", "total subjects"]
+    topics: [stats_sample_size, population_eligibility, overview_objectives]
+
+  - fact_key: planned_sample_size
+    value_type: integer
+    priority: 290
+    confidence: high
+    description: Размер выборки (паттерн «с участием N добровольцев»)
+    labels_ru: ["с участием", "включает", "включено"]
+    labels_en: []
+    topics: [stats_sample_size, population_eligibility, overview_objectives]
+
+  - fact_key: population_description
+    value_type: string
+    priority: 140
+    confidence: low
+    description: Текстовое описание исследуемой популяции
+    labels_ru: ["исследуемая популяция"]
+    labels_en: ["study population"]
+    topics: [population_eligibility, overview_objectives]
+
+  - fact_key: age_range
+    value_type: range         # {min: int, max: int}
+    priority: 210
+    confidence: high
+    description: Возрастной диапазон участников
+    labels_ru: ["возраст от … до … лет"]
+    labels_en: ["age range", "age from … to … years"]
+    topics: [population_eligibility]
+
+  - fact_key: age_min
+    value_type: integer
+    priority: 200
+    confidence: high
+    description: Минимальный возраст (лет)
+    labels_ru: ["возраст от", "совершеннолетние"]
+    labels_en: ["age from", "age range"]
+    topics: [population_eligibility]
+
+  - fact_key: gender
+    value_type: string        # male | female | all
+    priority: 170
+    confidence: medium
+    description: Пол участников
+    labels_ru: ["пол", "мужской", "женский", "здоровые мужские"]
+    labels_en: ["gender", "sex", "male", "female", "both genders"]
+    topics: [population_eligibility]
+
+  - fact_key: population_type
+    value_type: string        # healthy_volunteers | patients
+    priority: 160
+    confidence: medium
+    description: Тип популяции — здоровые добровольцы или пациенты
+    labels_ru: ["здоровые добровольцы", "здоровые субъекты", "пациенты с"]
+    labels_en: ["healthy volunteers", "healthy subjects", "patients with"]
+    topics: [population_eligibility]
+
+  - fact_key: inclusion_criteria
+    value_type: string
+    priority: 150
+    confidence: medium
+    description: Критерии включения
+    labels_ru: ["критерии включения"]
+    labels_en: ["inclusion criteria"]
+    topics: [population_eligibility]
+
+  - fact_key: exclusion_criteria
+    value_type: string
+    priority: 150
+    confidence: medium
+    description: Критерии невключения
+    labels_ru: ["критерии невключения"]
+    labels_en: ["exclusion criteria"]
+    topics: [population_eligibility]
+
+  - fact_key: withdrawal_criteria
+    value_type: string
+    priority: 140
+    confidence: low
+    description: Критерии досрочного исключения из исследования
+    labels_ru: ["критерии исключения из исследования", "досрочное выведение пациентов"]
+    labels_en: []
+    topics: [population_eligibility]
+
+# =============================================================================
+# treatment — терапия / препараты
+# =============================================================================
+treatment:
+
+  - fact_key: ip_name
+    value_type: string
+    priority: 200
+    confidence: medium
+    description: Название исследуемого препарата (ИП)
+    labels_ru: ["исследуемый препарат", "ИП"]
+    labels_en: ["investigational product", "IP", "study drug"]
+    topics: [ip_management]
+
+  - fact_key: imp_name
+    value_type: string
+    priority: 195
+    confidence: medium
+    description: Название ИМП (investigational medicinal product)
+    labels_ru: ["исследуемый препарат", "test product"]
+    labels_en: ["investigational product", "test product", "IP"]
+    topics: [ip_management]
+
+  - fact_key: comparator_name
+    value_type: string
+    priority: 180
+    confidence: medium
+    description: Название препарата сравнения / контрольного препарата
+    labels_ru: ["препарат сравнения", "активный контроль", "плацебо-контроль"]
+    labels_en: ["comparator", "active control", "reference drug", "placebo"]
+    topics: [ip_management, design_plan]
+
+  - fact_key: dosage
+    value_type: object        # {value: float, unit: str}
+    priority: 190
+    confidence: medium
+    description: Доза препарата с единицами (мг, мкг, мл и др.)
+    labels_ru: ["в дозе", "доза", "дозировка"]
+    labels_en: ["dose", "dosage"]
+    topics: [ip_management]
+
+  - fact_key: dosage_regimen
+    value_type: string
+    priority: 150
+    confidence: low
+    description: Режим дозирования (текстовое описание)
+    labels_ru: ["дозы и способ введения", "режим дозирования"]
+    labels_en: ["dosage and mode of administration"]
+    topics: [ip_management]
+
+  - fact_key: dosage_form
+    value_type: string
+    priority: 150
+    confidence: medium
+    description: Лекарственная форма (таблетка, капсула, раствор и др.)
+    labels_ru: ["лекарственная форма", "форма выпуска"]
+    labels_en: ["dosage form", "formulation"]
+    topics: [ip_management]
+
+  - fact_key: route
+    value_type: string        # po | iv | sc | im | unknown
+    priority: 190
+    confidence: medium
+    description: Путь введения препарата
+    labels_ru: ["перорально", "внутривенно", "подкожно", "путь введения", "способ введения"]
+    labels_en: ["oral", "intravenous", "subcutaneous", "intramuscular", "route of administration"]
+    topics: [ip_management]
+
+  - fact_key: frequency
+    value_type: string        # qd | bid | tid | qid | weekly | unknown
+    priority: 190
+    confidence: medium
+    description: Частота / кратность приёма препарата
+    labels_ru: ["раз в день", "дважды в день", "ежедневно", "еженедельно"]
+    labels_en: ["once daily", "twice daily", "daily", "weekly", "qd", "bid"]
+    topics: [ip_management]
+
+  - fact_key: treatment_duration
+    value_type: duration
+    priority: 185
+    confidence: high
+    description: Длительность курса лечения
+    labels_ru: ["длительность лечения", "лечение в течение", "прием в течение"]
+    labels_en: ["treatment duration", "duration of treatment", "treatment for"]
+    topics: [ip_management]
+
+  - fact_key: manufacturer
+    value_type: string
+    priority: 140
+    confidence: low
+    description: Производитель исследуемого препарата
+    labels_ru: ["производитель"]
+    labels_en: ["manufacturer"]
+    topics: [ip_management]
+
+  - fact_key: concomitant_therapy
+    value_type: string
+    priority: 130
+    confidence: low
+    description: Разрешённая сопутствующая терапия
+    labels_ru: ["сопутствующая терапия"]
+    labels_en: ["concomitant therapy"]
+    topics: [ip_management, safety]
+
+  - fact_key: prohibited_therapy
+    value_type: string
+    priority: 130
+    confidence: low
+    description: Запрещённые препараты / терапия
+    labels_ru: ["запрещенная терапия"]
+    labels_en: ["prohibited medications"]
+    topics: [ip_management, safety]
+
+# =============================================================================
+# intervention — вмешательство (маршрут введения для intervention-типа)
+# =============================================================================
+intervention:
+
+  - fact_key: route
+    value_type: string        # po | iv | sc | im | unknown
+    priority: 185
+    confidence: medium
+    description: Путь введения (для факта типа intervention)
+    labels_ru: ["перорально", "внутривенно", "подкожно", "путь введения"]
+    labels_en: ["oral", "intravenous", "subcutaneous", "route of administration"]
+    topics: [ip_management]
+
+# =============================================================================
+# endpoints — конечные точки
+# =============================================================================
+endpoints:
+
+  - fact_key: primary
+    value_type: string
+    priority: 200
+    confidence: medium
+    description: Первичная конечная точка / основной критерий эффективности
+    labels_ru: ["первичная конечная точка", "основная конечная точка", "основной критерий эффективности"]
+    labels_en: ["primary endpoint", "primary objective", "primary outcome measure"]
+    topics: [endpoints_efficacy]
+
+  - fact_key: secondary
+    value_type: string
+    priority: 190
+    confidence: medium
+    description: Вторичные конечные точки
+    labels_ru: ["вторичные конечные точки", "вторичные цели"]
+    labels_en: ["secondary endpoints", "secondary objectives"]
+    topics: [endpoints_efficacy]
+
+  - fact_key: safety_assessments
+    value_type: string
+    priority: 160
+    confidence: low
+    description: Параметры / критерии безопасности
+    labels_ru: ["параметры безопасности", "параметры безопасности"]
+    labels_en: ["safety assessments", "safety objectives"]
+    topics: [endpoints_efficacy, safety]
+
+# =============================================================================
+# statistics — статистика и расчёт выборки
+# =============================================================================
+statistics:
+
+  - fact_key: alpha
+    value_type: float
+    priority: 200
+    confidence: high
+    description: Уровень значимости (α), например 0.05
+    labels_ru: ["альфа", "уровень значимости"]
+    labels_en: ["alpha", "significance level"]
+    topics: [stats_sample_size]
+
+  - fact_key: analysis_method
+    value_type: string
+    priority: 150
+    confidence: low
+    description: Метод статистического анализа
+    labels_ru: ["статистический анализ … использовался / применялся"]
+    labels_en: ["statistical analysis … was used / was applied"]
+    topics: [stats_sample_size, endpoints_efficacy]
+
+# =============================================================================
+# bioequivalence — специфика БЭ-исследований
+# =============================================================================
+bioequivalence:
+
+  - fact_key: washout_period
+    value_type: duration      # {value: int, unit: day}
+    priority: 180
+    confidence: high
+    description: Период отмывки (washout) между периодами
+    labels_ru: ["отмывки", "washout", "отмывочный период"]
+    labels_en: ["washout period"]
+    topics: [design_plan, bioequivalence]
+
+  - fact_key: half_life
+    value_type: object        # {value: float, unit: "h"}
+    priority: 175
+    confidence: high
+    description: Период полувыведения T½ исследуемого препарата
+    labels_ru: ["период полувыведения", "T1/2", "Т1/2", "полувыведения"]
+    labels_en: ["half-life", "t1/2", "elimination half-life"]
+    topics: [bioequivalence, endpoints_efficacy]
+
+  - fact_key: analytes
+    value_type: string
+    priority: 170
+    confidence: medium
+    description: Аналиты (измеряемые вещества в биологических образцах)
+    labels_ru: ["аналиты"]
+    labels_en: ["analytes"]
+    topics: [bioequivalence, endpoints_efficacy]
+
+  - fact_key: fasting_condition
+    value_type: string        # fasting | fed
+    priority: 175
+    confidence: high
+    description: "Условие приёма препарата: натощак или после еды"
+    labels_ru: ["натощак", "после еды", "на голодный желудок", "после приема пищи"]
+    labels_en: ["fasting conditions", "fed conditions", "non-fasting"]
+    topics: [ip_management, bioequivalence]
+
+  - fact_key: blood_sampling_volume
+    value_type: object        # {value: float, unit: "ml"|"l"}
+    priority: 170
+    confidence: medium
+    description: Общий объём забора крови на участника
+    labels_ru: ["объем крови", "всего крови"]
+    labels_en: ["blood volume", "blood sampling volume", "total blood volume"]
+    topics: [bioequivalence, stats_sample_size]
+
+  - fact_key: pk_parameters
+    value_type: list          # ["AUC", "CMAX", "TMAX", ...]
+    priority: 160
+    confidence: low
+    description: Фармакокинетические параметры (AUC, Cmax, Tmax, T½, CL и др.)
+    labels_ru: ["pk параметры", "параметры фармакокинетики", "оценка фармакокинетики"]
+    labels_en: ["pk parameters", "pharmacokinetic parameters", "AUC", "Cmax", "Tmax"]
+    topics: [endpoints_efficacy, bioequivalence]

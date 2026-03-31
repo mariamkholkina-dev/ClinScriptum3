@@ -89,8 +89,8 @@ enum StudyPhase {
   II
   III
   IV
-  I_II   @map("I/II")
-  II_III @map("II/III")
+  I_II    @map("I/II")
+  II_III  @map("II/III")
   unknown
 }
 
@@ -120,8 +120,10 @@ model DocumentVersion {
   id            String                @id @default(uuid()) @db.Uuid
   documentId    String                @map("document_id") @db.Uuid
   versionNumber Int                   @map("version_number")
+  versionLabel  String?               @map("version_label")
   fileUrl       String                @map("file_url")
   status        DocumentVersionStatus @default(uploading)
+  isCurrent     Boolean               @default(false) @map("is_current")
   digitalTwin   Json?                 @map("digital_twin") @db.JsonB
   createdAt     DateTime              @default(now()) @map("created_at")
 
@@ -130,6 +132,7 @@ model DocumentVersion {
   facts          Fact[]
   findings       Finding[]
   processingRuns ProcessingRun[]
+  soaTables      SoaTable[]
 
   @@unique([documentId, versionNumber])
   @@index([documentId])
@@ -139,6 +142,13 @@ model DocumentVersion {
 enum DocumentVersionStatus {
   uploading
   parsing
+  classifying_sections
+  extracting_facts
+  detecting_soa
+  ready
+  intra_audit
+  inter_audit
+  impact_assessment
   parsed
   error
 }
@@ -150,6 +160,8 @@ model Section {
   docVersionId    String        @map("doc_version_id") @db.Uuid
   title           String
   standardSection String?       @map("standard_section")
+  confidence      Float         @default(0)
+  classifiedBy    String?       @map("classified_by")
   level           Int
   order           Int
   status          SectionStatus @default(not_validated)
@@ -198,7 +210,11 @@ model Fact {
   id               String     @id @default(uuid()) @db.Uuid
   docVersionId     String     @map("doc_version_id") @db.Uuid
   factKey          String     @map("fact_key")
+  factCategory     String     @map("fact_category")
+  description      String     @default("")
   value            String
+  manualValue      String?    @map("manual_value")
+  confidence       Float      @default(0)
   factClass        FactClass  @map("fact_class")
   sources          Json       @db.JsonB
   hasContradiction Boolean    @default(false) @map("has_contradiction")
@@ -219,32 +235,43 @@ enum FactStatus {
   extracted
   verified
   validated
+  deferred
+  not_found
   rejected
 }
 
 // ─── Findings ────────────────────────────────────────────────
 
 model Finding {
-  id              String        @id @default(uuid()) @db.Uuid
-  docVersionId    String        @map("doc_version_id") @db.Uuid
+  id              String         @id @default(uuid()) @db.Uuid
+  docVersionId    String         @map("doc_version_id") @db.Uuid
   type            FindingType
   description     String
   suggestion      String?
-  sourceRef       Json          @map("source_ref") @db.JsonB
-  status          FindingStatus @default(pending)
-  extraAttributes Json          @default("{}") @map("extra_attributes") @db.JsonB
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  sourceRef       Json           @map("source_ref") @db.JsonB
+  status          FindingStatus  @default(pending)
+  severity        AuditSeverity?
+  auditCategory   String?        @map("audit_category")
+  issueType       String?        @map("issue_type")
+  issueFamily     String?        @map("issue_family")
+  anchorZone      String?        @map("anchor_zone")
+  targetZone      String?        @map("target_zone")
+  qaVerified      Boolean        @default(false) @map("qa_verified")
+  extraAttributes Json           @default("{}") @map("extra_attributes") @db.JsonB
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
   docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
 
   @@index([docVersionId])
+  @@index([docVersionId, type])
   @@map("findings")
 }
 
 enum FindingType {
   editorial
   semantic
+  intra_audit
 }
 
 enum FindingStatus {
@@ -252,19 +279,28 @@ enum FindingStatus {
   confirmed
   rejected
   resolved
+  false_positive
+}
+
+enum AuditSeverity {
+  critical
+  high
+  medium
+  low
+  info
 }
 
 // ─── Processing Pipeline ─────────────────────────────────────
 
 model ProcessingRun {
-  id              String              @id @default(uuid()) @db.Uuid
-  studyId         String              @map("study_id") @db.Uuid
-  docVersionId    String              @map("doc_version_id") @db.Uuid
-  type            ProcessingRunType
-  status          ProcessingRunStatus @default(queued)
-  ruleSetVersionId String?            @map("rule_set_version_id") @db.Uuid
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
+  id               String              @id @default(uuid()) @db.Uuid
+  studyId          String              @map("study_id") @db.Uuid
+  docVersionId     String              @map("doc_version_id") @db.Uuid
+  type             ProcessingRunType
+  status           ProcessingRunStatus @default(queued)
+  ruleSetVersionId String?             @map("rule_set_version_id") @db.Uuid
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
 
   study          Study            @relation(fields: [studyId], references: [id], onDelete: Cascade)
   docVersion     DocumentVersion  @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
@@ -279,6 +315,7 @@ model ProcessingRun {
 enum ProcessingRunType {
   section_classification
   fact_extraction
+  soa_detection
   intra_doc_audit
   inter_doc_audit
   icf_generation
@@ -324,14 +361,59 @@ enum ProcessingStepStatus {
   failed
 }
 
+// ─── SOA (Schedule of Activities) ────────────────────────
+
+model SoaTable {
+  id            String    @id @default(uuid()) @db.Uuid
+  docVersionId  String    @map("doc_version_id") @db.Uuid
+  sourceBlockId String?   @map("source_block_id") @db.Uuid
+  title         String    @default("")
+  soaScore      Float     @default(0) @map("soa_score")
+  status        SoaStatus @default(detected)
+  headerData    Json      @map("header_data") @db.JsonB
+  rawMatrix     Json      @map("raw_matrix") @db.JsonB
+  footnotes     Json      @default("[]") @db.JsonB
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+  cells      SoaCell[]
+
+  @@index([docVersionId])
+  @@map("soa_tables")
+}
+
+model SoaCell {
+  id              String  @id @default(uuid()) @db.Uuid
+  soaTableId      String  @map("soa_table_id") @db.Uuid
+  rowIndex        Int     @map("row_index")
+  colIndex        Int     @map("col_index")
+  procedureName   String  @map("procedure_name")
+  visitName       String  @map("visit_name")
+  rawValue        String  @default("") @map("raw_value")
+  normalizedValue String  @default("") @map("normalized_value")
+  manualValue     String? @map("manual_value")
+  confidence      Float   @default(1.0)
+
+  soaTable SoaTable @relation(fields: [soaTableId], references: [id], onDelete: Cascade)
+
+  @@unique([soaTableId, rowIndex, colIndex])
+  @@index([soaTableId])
+  @@map("soa_cells")
+}
+
+enum SoaStatus {
+  detected
+  validated
+}
+
 // ─── Rule Sets ───────────────────────────────────────────────
 
 model RuleSet {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String?  @map("tenant_id") @db.Uuid
+  id        String      @id @default(uuid()) @db.Uuid
+  tenantId  String?     @map("tenant_id") @db.Uuid
   name      String
   type      RuleSetType
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime    @default(now()) @map("created_at")
 
   versions RuleSetVersion[]
 
@@ -346,11 +428,11 @@ enum RuleSetType {
 }
 
 model RuleSetVersion {
-  id          String   @id @default(uuid()) @db.Uuid
-  ruleSetId   String   @map("rule_set_id") @db.Uuid
-  version     Int
-  isActive    Boolean  @default(false) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id        String   @id @default(uuid()) @db.Uuid
+  ruleSetId String   @map("rule_set_id") @db.Uuid
+  version   Int
+  isActive  Boolean  @default(false) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
 
   ruleSet        RuleSet         @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
   rules          Rule[]

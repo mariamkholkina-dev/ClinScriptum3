@@ -1,3 +1,44 @@
+export type LlmTask =
+  | "section_classify"
+  | "fact_extraction"
+  | "fact_extraction_qa"
+  | "intra_audit"
+  | "intra_audit_qa"
+  | "inter_audit"
+  | "generation"
+  | "impact_analysis";
+
+export interface LlmTaskConfig {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+}
+
+const DEFAULT_MAX_TOKENS: Record<string, number> = {
+  fact_extraction: 16384,
+  fact_extraction_qa: 4096,
+  intra_audit: 4096,
+  intra_audit_qa: 2048,
+};
+
+const GLOBAL_DEFAULT_MAX_TOKENS = 2048;
+
+function llmTaskConfig(task: string): LlmTaskConfig {
+  const prefix = `LLM_${task.toUpperCase()}_`;
+  const defaultMax = DEFAULT_MAX_TOKENS[task] ?? GLOBAL_DEFAULT_MAX_TOKENS;
+  return {
+    provider: process.env[`${prefix}PROVIDER`] || process.env.LLM_PROVIDER || "yandexgpt",
+    baseUrl: process.env[`${prefix}BASE_URL`] || process.env.LLM_BASE_URL || "",
+    apiKey: process.env[`${prefix}API_KEY`] || process.env.LLM_API_KEY || "",
+    model: process.env[`${prefix}MODEL`] || process.env.LLM_MODEL || "",
+    temperature: parseFloat(process.env[`${prefix}TEMPERATURE`] || "0.1"),
+    maxTokens: parseInt(process.env[`${prefix}MAX_TOKENS`] || String(defaultMax), 10),
+  };
+}
+
 export const config = {
   port: parseInt(process.env.PORT ?? "4000", 10),
   jwtSecret: process.env.JWT_SECRET ?? "dev-secret-change-in-production",
@@ -15,5 +56,9 @@ export const config = {
       accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
       secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
     },
+  },
+
+  llm(task: LlmTask): LlmTaskConfig {
+    return llmTaskConfig(task);
   },
 } as const;

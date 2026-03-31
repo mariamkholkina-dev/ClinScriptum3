@@ -5,17 +5,15 @@ import { create } from "zustand";
 interface AuthState {
   accessToken: string | null;
   user: { id: string; email: string; name: string; role: string } | null;
+  _hydrated: boolean;
   setAuth: (token: string, user: AuthState["user"]) => void;
   logout: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  accessToken:
-    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null,
-  user:
-    typeof window !== "undefined"
-      ? JSON.parse(localStorage.getItem("user") ?? "null")
-      : null,
+  accessToken: null,
+  user: null,
+  _hydrated: false,
   setAuth: (token, user) => {
     localStorage.setItem("accessToken", token);
     localStorage.setItem("user", JSON.stringify(user));
@@ -28,3 +26,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ accessToken: null, user: null });
   },
 }));
+
+if (typeof window !== "undefined") {
+  const token = localStorage.getItem("accessToken");
+  const user = JSON.parse(localStorage.getItem("user") ?? "null");
+  useAuthStore.setState({ accessToken: token, user, _hydrated: true });
+}

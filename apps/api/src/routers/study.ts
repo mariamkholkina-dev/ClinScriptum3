@@ -17,7 +17,10 @@ export const studyRouter = router({
         where: { id: input.id, tenantId: ctx.user.tenantId },
         include: {
           documents: {
-            include: { versions: { orderBy: { versionNumber: "desc" }, take: 1 } },
+            include: {
+              versions: { orderBy: { versionNumber: "desc" } },
+            },
+            orderBy: { createdAt: "asc" },
           },
         },
       });

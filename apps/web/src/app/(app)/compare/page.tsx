@@ -21,27 +21,26 @@ export default function ComparePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Version Comparison</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Сравнение версий</h1>
 
-      {/* Version selection */}
       <div className="flex items-end gap-4 rounded-lg border bg-white p-4 shadow-sm">
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Old version ID</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">ID старой версии</label>
           <input
             type="text"
             value={oldVersionId}
             onChange={(e) => setOldVersionId(e.target.value)}
-            placeholder="UUID of old version"
+            placeholder="UUID старой версии"
             className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-1">New version ID</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">ID новой версии</label>
           <input
             type="text"
             value={newVersionId}
             onChange={(e) => setNewVersionId(e.target.value)}
-            placeholder="UUID of new version"
+            placeholder="UUID новой версии"
             className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
@@ -50,41 +49,39 @@ export default function ComparePage() {
           disabled={compareMutation.isPending || !oldVersionId || !newVersionId}
           className="rounded-lg bg-brand-600 px-6 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
-          {compareMutation.isPending ? "Comparing..." : "Compare"}
+          {compareMutation.isPending ? "Сравнение..." : "Сравнить"}
         </button>
       </div>
 
-      {/* Summary */}
       {result && (
         <>
           <div className="grid grid-cols-4 gap-4">
             <SummaryCard
               icon={<Plus className="h-5 w-5 text-green-600" />}
-              label="Added"
+              label="Добавлено"
               count={result.summary.addedSections}
               bgColor="bg-green-50"
             />
             <SummaryCard
               icon={<Minus className="h-5 w-5 text-red-600" />}
-              label="Removed"
+              label="Удалено"
               count={result.summary.removedSections}
               bgColor="bg-red-50"
             />
             <SummaryCard
               icon={<Edit3 className="h-5 w-5 text-amber-600" />}
-              label="Modified"
+              label="Изменено"
               count={result.summary.modifiedSections}
               bgColor="bg-amber-50"
             />
             <SummaryCard
               icon={<GitCompare className="h-5 w-5 text-gray-600" />}
-              label="Unchanged"
+              label="Без изменений"
               count={result.summary.unchangedSections}
               bgColor="bg-gray-50"
             />
           </div>
 
-          {/* Section diffs */}
           <div className="space-y-4">
             {result.sectionDiffs
               .filter((d) => d.changeType !== "unchanged")
@@ -138,18 +135,17 @@ export default function ComparePage() {
               ))}
           </div>
 
-          {/* Fact changes */}
           {result.factChanges.filter((f) => f.changeType !== "unchanged").length > 0 && (
             <div className="space-y-3">
-              <h2 className="text-lg font-semibold text-gray-900">Fact Changes</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Изменения фактов</h2>
               <div className="rounded-lg border bg-white shadow-sm overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b">
                     <tr>
-                      <th className="px-4 py-2 text-left font-medium text-gray-500">Fact</th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-500">Change</th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-500">Old</th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-500">New</th>
+                      <th className="px-4 py-2 text-left font-medium text-gray-500">Факт</th>
+                      <th className="px-4 py-2 text-left font-medium text-gray-500">Изменение</th>
+                      <th className="px-4 py-2 text-left font-medium text-gray-500">Было</th>
+                      <th className="px-4 py-2 text-left font-medium text-gray-500">Стало</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -167,7 +163,7 @@ export default function ComparePage() {
                                 fc.changeType === "modified" && "bg-amber-100 text-amber-700"
                               )}
                             >
-                              {fc.changeType}
+                              {fc.changeType === "added" ? "Добавлен" : fc.changeType === "removed" ? "Удалён" : "Изменён"}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-gray-500">{fc.oldValue ?? "—"}</td>

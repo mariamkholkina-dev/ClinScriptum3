@@ -5,6 +5,13 @@ import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
 import { FileText, Wand2, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 
+const statusLabels: Record<string, string> = {
+  completed: "Завершён",
+  running: "Выполняется",
+  failed: "Ошибка",
+  pending: "Ожидает",
+};
+
 export default function GeneratePage() {
   const [protocolVersionId, setProtocolVersionId] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -36,9 +43,8 @@ export default function GeneratePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Document Generation</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Генерация документов</h1>
 
-      {/* Config */}
       <div className="rounded-lg border bg-white p-6 shadow-sm space-y-4">
         <div className="flex gap-4">
           <button
@@ -50,7 +56,7 @@ export default function GeneratePage() {
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             )}
           >
-            Generate ICF
+            Генерация ICF
           </button>
           <button
             onClick={() => setGenType("csr")}
@@ -61,19 +67,19 @@ export default function GeneratePage() {
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             )}
           >
-            Generate CSR
+            Генерация CSR
           </button>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Protocol Version ID
+            ID версии протокола
           </label>
           <input
             type="text"
             value={protocolVersionId}
             onChange={(e) => setProtocolVersionId(e.target.value)}
-            placeholder="UUID of parsed protocol version"
+            placeholder="UUID разобранной версии протокола"
             className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
@@ -84,11 +90,10 @@ export default function GeneratePage() {
           className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-6 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
           <Wand2 className="h-4 w-4" />
-          {isLoading ? "Starting..." : `Generate ${genType.toUpperCase()}`}
+          {isLoading ? "Запуск..." : `Сгенерировать ${genType.toUpperCase()}`}
         </button>
       </div>
 
-      {/* Progress */}
       {result && (
         <div className="space-y-4">
           <div className="flex items-center gap-3 rounded-lg border bg-white p-4 shadow-sm">
@@ -102,18 +107,17 @@ export default function GeneratePage() {
               <AlertCircle className="h-5 w-5 text-red-600" />
             )}
             <span className="text-sm font-medium text-gray-900">
-              Status: {result.run.status}
+              Статус: {statusLabels[result.run.status] ?? result.run.status}
             </span>
             <span className="text-xs text-gray-500">
-              Pipeline steps: {result.run.steps.length}
+              Шагов конвейера: {result.run.steps.length}
             </span>
           </div>
 
-          {/* Generated sections */}
           {result.generatedSections.length > 0 && (
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-gray-900">
-                Generated Sections ({result.generatedSections.length})
+                Сгенерированные секции ({result.generatedSections.length})
               </h2>
               {result.generatedSections.map((section: any, i: number) => (
                 <div key={i} className="rounded-lg border bg-white shadow-sm">

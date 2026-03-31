@@ -12,6 +12,7 @@ export interface ProcessingRun {
 export type ProcessingRunType =
   | "section_classification"
   | "fact_extraction"
+  | "soa_detection"
   | "intra_doc_audit"
   | "inter_doc_audit"
   | "icf_generation"

@@ -6,6 +6,13 @@ import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
 import { ArrowLeft, AlertTriangle, Database } from "lucide-react";
 
+const statusLabels: Record<string, string> = {
+  extracted: "Извлечён",
+  verified: "Проверен",
+  validated: "Подтверждён",
+  rejected: "Отклонён",
+};
+
 export default function FactsPage() {
   const { docVersionId } = useParams<{ docVersionId: string }>();
   const factsQuery = trpc.processing.listFacts.useQuery({ docVersionId });
@@ -23,22 +30,22 @@ export default function FactsPage() {
         <Link href="/documents" className="text-gray-400 hover:text-gray-600">
           <ArrowLeft className="h-5 w-5" />
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">Extracted Facts</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Извлечённые факты</h1>
       </div>
 
-      {factsQuery.isLoading && <p className="text-sm text-gray-500">Loading...</p>}
+      {factsQuery.isLoading && <p className="text-sm text-gray-500">Загрузка...</p>}
 
       {Array.from(grouped.entries()).map(([cls, facts]) => (
         <div key={cls} className="space-y-3">
-          <h2 className="text-lg font-semibold text-gray-900 capitalize">{cls} facts</h2>
+          <h2 className="text-lg font-semibold text-gray-900 capitalize">Факты: {cls}</h2>
           <div className="rounded-lg border bg-white shadow-sm overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b">
                 <tr>
-                  <th className="px-4 py-2 text-left font-medium text-gray-500">Key</th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-500">Value</th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-500">Status</th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-500">Contradictions</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-500">Ключ</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-500">Значение</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-500">Статус</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-500">Противоречия</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -56,13 +63,13 @@ export default function FactsPage() {
                           fact.status === "rejected" && "bg-red-100 text-red-700"
                         )}
                       >
-                        {fact.status}
+                        {statusLabels[fact.status] ?? fact.status}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       {fact.hasContradiction && (
                         <span className="inline-flex items-center gap-1 text-xs text-amber-600">
-                          <AlertTriangle className="h-3 w-3" /> Contradiction
+                          <AlertTriangle className="h-3 w-3" /> Противоречие
                         </span>
                       )}
                     </td>
@@ -77,7 +84,7 @@ export default function FactsPage() {
       {(factsQuery.data ?? []).length === 0 && !factsQuery.isLoading && (
         <div className="rounded-lg border bg-white p-8 text-center shadow-sm">
           <Database className="mx-auto h-12 w-12 text-gray-300" />
-          <p className="mt-2 text-sm text-gray-500">No facts extracted yet.</p>
+          <p className="mt-2 text-sm text-gray-500">Факты ещё не извлечены.</p>
         </div>
       )}
     </div>

@@ -20,7 +20,9 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
-    "@prisma/client": "^6"
+    "@prisma/client": "^6",
+    "bcryptjs": "^2.4.3",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "prisma": "^6",
