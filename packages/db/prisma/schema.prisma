@@ -133,6 +133,7 @@ model DocumentVersion {
   findings       Finding[]
   processingRuns ProcessingRun[]
   soaTables      SoaTable[]
+  generatedDocs  GeneratedDoc[]
 
   @@unique([documentId, versionNumber])
   @@index([documentId])
@@ -272,6 +273,7 @@ enum FindingType {
   editorial
   semantic
   intra_audit
+  inter_audit
 }
 
 enum FindingStatus {
@@ -453,4 +455,68 @@ model Rule {
 
   @@index([ruleSetVersionId])
   @@map("rules")
+}
+
+// ─── Document Templates ───────────────────────────────────────
+
+model DocTemplate {
+  id        String       @id @default(uuid()) @db.Uuid
+  tenantId  String       @map("tenant_id") @db.Uuid
+  name      String
+  docType   DocumentType @map("doc_type")
+  sections  Json         @db.JsonB
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("doc_templates")
+}
+
+// ─── Generated Documents ──────────────────────────────────────
+
+model GeneratedDoc {
+  id                String             @id @default(uuid()) @db.Uuid
+  protocolVersionId String             @map("protocol_version_id") @db.Uuid
+  templateId        String?            @map("template_id") @db.Uuid
+  docType           DocumentType       @map("doc_type")
+  status            GeneratedDocStatus @default(generating)
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  protocolVersion DocumentVersion      @relation(fields: [protocolVersionId], references: [id], onDelete: Cascade)
+  sections        GeneratedDocSection[]
+
+  @@index([protocolVersionId])
+  @@map("generated_docs")
+}
+
+enum GeneratedDocStatus {
+  generating
+  qa_checking
+  completed
+  failed
+}
+
+model GeneratedDocSection {
+  id              String                    @id @default(uuid()) @db.Uuid
+  generatedDocId  String                    @map("generated_doc_id") @db.Uuid
+  title           String
+  standardSection String?                   @map("standard_section")
+  order           Int
+  content         String                    @default("")
+  status          GeneratedDocSectionStatus @default(pending)
+  qaFindings      Json                      @default("[]") @map("qa_findings") @db.JsonB
+
+  generatedDoc GeneratedDoc @relation(fields: [generatedDocId], references: [id], onDelete: Cascade)
+
+  @@index([generatedDocId])
+  @@map("generated_doc_sections")
+}
+
+enum GeneratedDocSectionStatus {
+  pending
+  generating
+  qa_checking
+  completed
+  skipped
+  failed
 }

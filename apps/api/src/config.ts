@@ -5,7 +5,9 @@ export type LlmTask =
   | "intra_audit"
   | "intra_audit_qa"
   | "inter_audit"
+  | "inter_audit_qa"
   | "generation"
+  | "generation_qa"
   | "impact_analysis";
 
 export interface LlmTaskConfig {
@@ -22,6 +24,10 @@ const DEFAULT_MAX_TOKENS: Record<string, number> = {
   fact_extraction_qa: 4096,
   intra_audit: 4096,
   intra_audit_qa: 2048,
+  inter_audit: 8192,
+  inter_audit_qa: 4096,
+  generation: 8192,
+  generation_qa: 4096,
 };
 
 const GLOBAL_DEFAULT_MAX_TOKENS = 2048;
@@ -60,5 +66,10 @@ export const config = {
 
   llm(task: LlmTask): LlmTaskConfig {
     return llmTaskConfig(task);
+  },
+
+  generation: {
+    modelWindowChars: parseInt(process.env.LLM_GENERATION_MODEL_WINDOW_CHARS ?? "12000", 10),
+    qaWindowChars: parseInt(process.env.LLM_GENERATION_QA_WINDOW_CHARS ?? "12000", 10),
   },
 } as const;

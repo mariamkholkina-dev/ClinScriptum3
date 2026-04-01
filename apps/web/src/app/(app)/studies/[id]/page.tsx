@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
@@ -22,6 +22,8 @@ import {
   Database,
   ChevronRight,
   Shield,
+  FileSearch,
+  FilePlus2,
 } from "lucide-react";
 
 /* ──────────────────────── Types & Constants ──────────────────────── */
@@ -322,13 +324,24 @@ function DocumentsTab({
                   >
                     <AlertTriangle className="h-4 w-4" />
                   </Link>
-                  <Link
-                    href={`/compare?old=${ver.id}`}
-                    className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                    title="Сравнение версий"
-                  >
-                    <GitCompare className="h-4 w-4" />
-                  </Link>
+                  {selectedType === "protocol" && (
+                    <>
+                      <GenerateDocButton
+                        protocolVersionId={ver.id}
+                        protocolLabel={ver.versionLabel || `v${ver.versionNumber}`}
+                      />
+                      <CrossDocAuditButton
+                        studyId={studyId}
+                        protocolVersionId={ver.id}
+                        protocolLabel={ver.versionLabel || `v${ver.versionNumber}`}
+                      />
+                    </>
+                  )}
+                  <CompareVersionButton
+                    versionId={ver.id}
+                    versionLabel={ver.versionLabel || `v${ver.versionNumber}`}
+                    allVersions={selectedDoc?.versions ?? []}
+                  />
                   <button
                     onClick={() => handleDownload(ver.id)}
                     className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
@@ -508,6 +521,328 @@ function VersionUploadForm({
         </button>
       </div>
     </form>
+  );
+}
+
+/* ──────────────────── Compare Version Button ──────────────────── */
+
+function CompareVersionButton({
+  versionId,
+  versionLabel,
+  allVersions,
+}: {
+  versionId: string;
+  versionLabel: string;
+  allVersions: any[];
+}) {
+  const [open, setOpen] = useState(false);
+  const otherVersions = allVersions.filter((v) => v.id !== versionId);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [open]);
+
+  if (otherVersions.length === 0) {
+    return (
+      <span
+        className="rounded-lg p-2 text-gray-300 cursor-not-allowed"
+        title="Нет других версий для сравнения"
+      >
+        <GitCompare className="h-4 w-4" />
+      </span>
+    );
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        title="Сравнить версии"
+      >
+        <GitCompare className="h-4 w-4" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border bg-white shadow-lg py-1">
+          <div className="px-3 py-2 border-b">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              Сравнить {versionLabel} с:
+            </p>
+          </div>
+          {otherVersions.map((other: any) => (
+            <Link
+              key={other.id}
+              href={`/compare/${versionId}/${other.id}`}
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-brand-50 hover:text-brand-700"
+            >
+              <GitCompare className="h-3.5 w-3.5 text-gray-400" />
+              <span>{other.versionLabel || `v${other.versionNumber}`}</span>
+              <span className="text-xs text-gray-400 ml-auto">
+                от {new Date(other.createdAt).toLocaleDateString("ru-RU")}
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────── Cross-Document Audit Button ──────────────────── */
+
+function CrossDocAuditButton({
+  studyId,
+  protocolVersionId,
+  protocolLabel,
+}: {
+  studyId: string;
+  protocolVersionId: string;
+  protocolLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const docsQuery = trpc.audit.getStudyDocumentsForInterAudit.useQuery(
+    { studyId },
+    { enabled: open }
+  );
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="rounded-lg p-2 text-gray-400 hover:bg-purple-50 hover:text-purple-600"
+        title="Междокументный аудит"
+      >
+        <FileSearch className="h-4 w-4" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-lg border bg-white shadow-lg py-1">
+          <div className="px-3 py-2 border-b">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              Аудит {protocolLabel} vs документ:
+            </p>
+          </div>
+          {docsQuery.isLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+            </div>
+          ) : !docsQuery.data || docsQuery.data.length === 0 ? (
+            <div className="px-3 py-4 text-sm text-gray-500 text-center">
+              Нет доступных документов ICF или CSR
+            </div>
+          ) : (
+            docsQuery.data.map((doc) => (
+              <div key={doc.id}>
+                <div className="px-3 py-1.5 bg-gray-50 text-xs font-medium text-gray-500">
+                  {doc.type === "icf" ? "Информированное согласие" : "Отчёт клинического исследования"}
+                </div>
+                {doc.versions.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-gray-400">Нет готовых версий</div>
+                ) : (
+                  doc.versions.map((ver) => (
+                    <Link
+                      key={ver.id}
+                      href={`/cross-audit/${protocolVersionId}/${ver.id}`}
+                      onClick={() => setOpen(false)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 hover:text-purple-700"
+                    >
+                      <FileSearch className="h-3.5 w-3.5 text-gray-400" />
+                      <span>{doc.title} — {ver.versionLabel || `v${ver.versionNumber}`}</span>
+                      {ver.isCurrent && (
+                        <Star className="h-3 w-3 text-amber-500 fill-amber-500 ml-auto" />
+                      )}
+                    </Link>
+                  ))
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────── Generate Document Button ──────────────────── */
+
+function GenerateDocButton({
+  protocolVersionId,
+  protocolLabel,
+}: {
+  protocolVersionId: string;
+  protocolLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [docType, setDocType] = useState<"icf" | "csr">("icf");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [starting, setStarting] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+
+  const templatesQuery = trpc.generation.listTemplates.useQuery(
+    { docType },
+    { enabled: open }
+  );
+
+  const startGeneration = trpc.generation.startGeneration.useMutation({
+    onSuccess: (data) => {
+      setOpen(false);
+      setStarting(false);
+      router.push(`/generate/${data.generatedDocId}`);
+    },
+    onError: () => {
+      setStarting(false);
+    },
+  });
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setSelectedTemplateId("");
+  }, [docType]);
+
+  const handleStart = () => {
+    setStarting(true);
+    startGeneration.mutate({
+      protocolVersionId,
+      docType,
+      templateId: selectedTemplateId || undefined,
+    });
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="rounded-lg p-2 text-gray-400 hover:bg-emerald-50 hover:text-emerald-600"
+        title="Сгенерировать документ"
+      >
+        <FilePlus2 className="h-4 w-4" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-96 rounded-lg border bg-white shadow-lg">
+          <div className="px-4 py-3 border-b">
+            <p className="text-sm font-semibold text-gray-900">
+              Генерация документа из {protocolLabel}
+            </p>
+          </div>
+
+          <div className="px-4 py-3 space-y-3">
+            {/* doc type selector */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">
+                Тип документа
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setDocType("icf")}
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                    docType === "icf"
+                      ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                  )}
+                >
+                  ICF
+                </button>
+                <button
+                  onClick={() => setDocType("csr")}
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                    docType === "csr"
+                      ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                  )}
+                >
+                  CSR
+                </button>
+              </div>
+            </div>
+
+            {/* template selector */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">
+                Шаблон документа
+              </label>
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => setSelectedTemplateId(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="">По умолчанию</option>
+                {templatesQuery.data?.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              {templatesQuery.isLoading && (
+                <p className="text-xs text-gray-400 mt-1">Загрузка шаблонов...</p>
+              )}
+            </div>
+          </div>
+
+          <div className="px-4 py-3 border-t bg-gray-50 rounded-b-lg flex gap-2">
+            <button
+              onClick={handleStart}
+              disabled={starting}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {starting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Запуск...
+                </>
+              ) : (
+                <>
+                  <FilePlus2 className="h-4 w-4" />
+                  Начать
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => setOpen(false)}
+              className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+            >
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
