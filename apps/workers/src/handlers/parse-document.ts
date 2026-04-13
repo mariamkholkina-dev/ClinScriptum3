@@ -1,6 +1,6 @@
 import { prisma } from "@clinscriptum/db";
 import { parseDocx } from "@clinscriptum/doc-parser";
-import { createStorageProvider } from "../../api-shared/storage.js";
+import { createStorageProvider } from "../api-shared/storage.js";
 
 export async function handleParseDocument(data: { versionId: string }) {
   const version = await prisma.documentVersion.findUnique({

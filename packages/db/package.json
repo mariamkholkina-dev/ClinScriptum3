@@ -25,6 +25,7 @@
     "yaml": "^2.8.3"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2",
     "prisma": "^6",
     "tsx": "^4",
     "typescript": "^5"

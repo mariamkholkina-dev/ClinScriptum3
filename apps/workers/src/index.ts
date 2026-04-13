@@ -1,5 +1,5 @@
 import { Worker, Queue } from "bullmq";
-import IORedis from "ioredis";
+import { Redis } from "ioredis";
 import { handleParseDocument } from "./handlers/parse-document.js";
 import { handleClassifySections } from "./handlers/classify-sections.js";
 import { handleExtractFacts } from "./handlers/extract-facts.js";
@@ -7,7 +7,7 @@ import { handleIntraDocAudit } from "./handlers/intra-doc-audit.js";
 import { handleGenerateICF } from "./handlers/generate-icf.js";
 import { handleGenerateCSR } from "./handlers/generate-csr.js";
 
-const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
+const connection = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: null,
 });
 
