@@ -8,7 +8,7 @@ import { FileText, Wand2, CheckCircle2, Clock, AlertCircle } from "lucide-react"
 const statusLabels: Record<string, string> = {
   completed: "Завершён",
   generating: "Выполняется",
-  error: "Ошибка",
+  failed: "Ошибка",
   pending: "Ожидает",
 };
 
@@ -96,7 +96,7 @@ export default function GeneratePage() {
             {result.status === "generating" && (
               <Clock className="h-5 w-5 text-amber-600 animate-pulse" />
             )}
-            {result.status === "error" && (
+            {result.status === "failed" && (
               <AlertCircle className="h-5 w-5 text-red-600" />
             )}
             <span className="text-sm font-medium text-gray-900">
