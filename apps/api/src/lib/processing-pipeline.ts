@@ -14,6 +14,8 @@
  *        3c. Сохранение найденных + ненайденных фактов в БД
  *   4. detecting_soa              — поиск и выделение таблицы SOA (только для protocol):
  *        Детерминированный 5-фазный алгоритм скоринга HTML-таблиц
+ *   5. intra_audit                — внутридокументный аудит:
+ *        Детерминированные + LLM-проверки (консистентность, плейсхолдеры, редактура)
  *
  * Всё выполняется in-process (без Redis/BullMQ) для простоты локальной разработки.
  */
@@ -23,6 +25,7 @@ import { storage } from "./storage.js";
 import { llmAsk } from "./llm-gateway.js";
 import { extractFactsForVersion } from "./fact-extraction.js";
 import { detectSoaForVersion } from "./soa-detection.js";
+import { runIntraDocAudit } from "./intra-audit.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
 
@@ -143,8 +146,15 @@ export async function runProcessingPipeline(versionId: string) {
       }
     }
 
-    // Mark as ready
-    await setVersionStatus(versionId, "parsed");
+    // Stage 5: Intra-document audit
+    try {
+      await runIntraDocAudit(versionId);
+      console.log(`[pipeline] Stage 5 (intra-audit) complete`);
+    } catch (auditErr) {
+      console.error(`[pipeline] Stage 5 (intra-audit) failed:`, auditErr);
+      await setVersionStatus(versionId, "parsed").catch(() => {});
+    }
+
     console.log(`[pipeline] Done for version ${versionId}`);
   } catch (err) {
     console.error(`[pipeline] Error for version ${versionId}:`, err);
