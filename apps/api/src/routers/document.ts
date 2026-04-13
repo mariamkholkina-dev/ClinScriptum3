@@ -153,20 +153,158 @@ export const documentRouter = router({
   getVersion: protectedProcedure
     .input(z.object({ versionId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      const version = await prisma.documentVersion.findUnique({
+      const versionBase = await prisma.documentVersion.findUnique({
         where: { id: input.versionId },
-        include: {
-          document: { include: { study: true } },
-          sections: {
-            orderBy: { order: "asc" },
-            include: { contentBlocks: { orderBy: { order: "asc" } } },
+        select: {
+          id: true,
+          versionNumber: true,
+          versionLabel: true,
+          status: true,
+          document: {
+            select: {
+              id: true,
+              studyId: true,
+              type: true,
+              title: true,
+              study: {
+                select: {
+                  id: true,
+                  title: true,
+                  code: true,
+                  tenantId: true,
+                },
+              },
+            },
           },
         },
       });
-      if (!version || version.document.study.tenantId !== ctx.user.tenantId) {
+
+      if (!versionBase || versionBase.document.study.tenantId !== ctx.user.tenantId) {
         throw new TRPCError({ code: "NOT_FOUND" });
       }
-      return version;
+
+      try {
+        const sections = await prisma.section.findMany({
+          where: { docVersionId: input.versionId },
+          orderBy: { order: "asc" },
+          select: {
+            id: true,
+            title: true,
+            standardSection: true,
+            confidence: true,
+            classifiedBy: true,
+            level: true,
+            order: true,
+            status: true,
+            contentBlocks: {
+              orderBy: { order: "asc" },
+              select: {
+                id: true,
+                type: true,
+                content: true,
+                rawHtml: true,
+                order: true,
+              },
+            },
+          },
+        });
+
+        return { ...versionBase, sections };
+      } catch (err) {
+        console.error("[document.getVersion] Prisma read failed, using raw fallback:", err);
+
+        type RawSectionRow = {
+          id: string;
+          title: string;
+          standardSection: string | null;
+          confidence: number | null;
+          classifiedBy: string | null;
+          level: number | null;
+          order: number | null;
+          status: string | null;
+        };
+
+        type RawBlockRow = {
+          id: string;
+          sectionId: string;
+          type: string | null;
+          content: string;
+          rawHtml: string | null;
+          order: number | null;
+        };
+
+        const rawSections = await prisma.$queryRaw<RawSectionRow[]>`
+          SELECT
+            s.id,
+            s.title,
+            s.standard_section AS "standardSection",
+            s.confidence,
+            s.classified_by AS "classifiedBy",
+            s.level,
+            s."order",
+            s.status::text AS status
+          FROM sections s
+          WHERE s.doc_version_id = ${input.versionId}::uuid
+          ORDER BY s."order" ASC
+        `;
+
+        const rawBlocks = await prisma.$queryRaw<RawBlockRow[]>`
+          SELECT
+            cb.id,
+            cb.section_id AS "sectionId",
+            cb.type::text AS type,
+            cb.content,
+            cb.raw_html AS "rawHtml",
+            cb."order"
+          FROM content_blocks cb
+          INNER JOIN sections s ON s.id = cb.section_id
+          WHERE s.doc_version_id = ${input.versionId}::uuid
+          ORDER BY cb."order" ASC
+        `;
+
+        const blocksBySection = new Map<string, RawBlockRow[]>();
+        for (const block of rawBlocks) {
+          const existing = blocksBySection.get(block.sectionId) ?? [];
+          existing.push(block);
+          blocksBySection.set(block.sectionId, existing);
+        }
+
+        const sections = rawSections.map((section) => ({
+          id: section.id,
+          title: section.title,
+          standardSection: section.standardSection,
+          confidence: Number(section.confidence ?? 0),
+          classifiedBy: section.classifiedBy,
+          level: Number(section.level ?? 1),
+          order: Number(section.order ?? 0),
+          status:
+            section.status === "validated" ||
+            section.status === "requires_rework" ||
+            section.status === "not_validated"
+              ? section.status
+              : "not_validated",
+          contentBlocks: (blocksBySection.get(section.id) ?? []).map((block) => ({
+            id: block.id,
+            type:
+              block.type === "paragraph" ||
+              block.type === "table" ||
+              block.type === "table_cell" ||
+              block.type === "footnote" ||
+              block.type === "list" ||
+              block.type === "image"
+                ? block.type
+                : "paragraph",
+            content: block.content ?? "",
+            rawHtml: block.rawHtml,
+            order: Number(block.order ?? 0),
+          })),
+        }));
+
+        return {
+          ...versionBase,
+          sections,
+        };
+      }
     }),
 
   validateAllSections: protectedProcedure
