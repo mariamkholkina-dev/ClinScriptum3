@@ -1420,8 +1420,8 @@ function SoaTab({ versionId }: { versionId: string }) {
                             const isLow = cell.confidence < LOW_CONFIDENCE_SOA;
                             const isSelected =
                               selectedCell?.tableId === table.id &&
-                              selectedCell.row === cell.rowIndex &&
-                              selectedCell.col === cell.colIndex;
+                              selectedCell?.row === cell.rowIndex &&
+                              selectedCell?.col === cell.colIndex;
                             const isEditing = editingCell === cell.id;
 
                             return (
@@ -1567,8 +1567,8 @@ function OriginalSoaTable({
       : 1;
     const hdrCount = headerRowCount > 0 ? headerRowCount : 1;
 
-    const targetRowIdx = selectedCell.row + hdrCount;
-    const targetColIdx = selectedCell.col + 1;
+    const targetRowIdx = selectedCell!.row + hdrCount;
+    const targetColIdx = selectedCell!.col + 1;
 
     if (targetRowIdx < allRows.length) {
       // Highlight entire row
