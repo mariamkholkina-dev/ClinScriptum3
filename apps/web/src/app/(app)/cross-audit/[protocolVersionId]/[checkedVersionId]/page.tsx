@@ -413,7 +413,7 @@ function CheckedDocPanel({
 }: {
   finding: any;
   docTypeLabel: string;
-  onStatusChange: (findingId: string, status: string) => void;
+  onStatusChange: (findingId: string, status: "pending" | "rejected" | "confirmed" | "resolved" | "false_positive") => void;
 }) {
   const ref = finding.sourceRef as any;
   const section = ref?.checkedDocSection ?? finding.targetZone ?? "—";
