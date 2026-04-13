@@ -335,11 +335,11 @@ export default function TuningDashboard() {
                 disabled={
                   !selectedVersionId ||
                   (selectedType === "icf_generation" && !selectedGenDocId) ||
-                  createMutation.isLoading
+                  createMutation.isPending
                 }
                 className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
-                {createMutation.isLoading && (
+                {createMutation.isPending && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
                 Создать

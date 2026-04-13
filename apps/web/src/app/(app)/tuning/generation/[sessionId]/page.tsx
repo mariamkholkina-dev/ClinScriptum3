@@ -151,10 +151,10 @@ export default function GenerationTuningPage() {
             {session?.status !== "completed" && (
               <button
                 onClick={() => completeMutation.mutate({ sessionId })}
-                disabled={completeMutation.isLoading || reviewedCount === 0}
+                disabled={completeMutation.isPending || reviewedCount === 0}
                 className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
               >
-                {completeMutation.isLoading ? (
+                {completeMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <CheckCircle2 className="h-4 w-4" />
@@ -337,13 +337,13 @@ export default function GenerationTuningPage() {
                     <button
                       onClick={() => handleSave(verdict.id)}
                       disabled={
-                        saveMutation.isLoading ||
+                        saveMutation.isPending ||
                         (localState[verdict.id]?.rating ?? verdict.rating ?? 0) === 0 ||
                         !hasChanges
                       }
                       className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
                     >
-                      {saveMutation.isLoading ? (
+                      {saveMutation.isPending ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Save className="h-4 w-4" />

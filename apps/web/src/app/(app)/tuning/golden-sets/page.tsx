@@ -282,7 +282,7 @@ export default function GoldenSetsPage() {
                   </div>
                   <button
                     onClick={() => toggleMutation.mutate({ sessionId: session.id })}
-                    disabled={toggleMutation.isLoading}
+                    disabled={toggleMutation.isPending}
                     className="rounded p-1 text-gray-400 hover:bg-yellow-100 hover:text-red-500"
                     title="Убрать из золотого набора"
                   >
