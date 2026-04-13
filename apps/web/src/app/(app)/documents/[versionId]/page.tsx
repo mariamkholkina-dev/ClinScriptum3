@@ -1380,7 +1380,7 @@ function SoaTab({ versionId }: { versionId: string }) {
                     {procedures.map((proc) => {
                       const isRowSelected =
                         selectedCell?.tableId === table.id &&
-                        selectedCell.row === proc.rowIdx;
+                        selectedCell?.row === proc.rowIdx;
 
                       return (
                         <tr
