@@ -68,7 +68,7 @@ export default function CrossAuditPage() {
   const startAudit = trpc.audit.startInterAudit.useMutation();
   const statusQuery = trpc.audit.getInterAuditStatus.useQuery(
     { protocolVersionId, checkedVersionId },
-    { refetchInterval: (data) => (data?.isRunning ? 3000 : false) }
+    { refetchInterval: (data) => (data?.state?.data?.isRunning ? 3000 : false) }
   );
   const findingsQuery = trpc.audit.getInterAuditFindings.useQuery(
     { protocolVersionId, checkedVersionId },
