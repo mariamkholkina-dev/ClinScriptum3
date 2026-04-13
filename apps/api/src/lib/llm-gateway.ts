@@ -109,7 +109,7 @@ async function callYandexGpt(
     throw new Error(`[llm:yandexgpt] ${res.status} ${res.statusText}: ${errText}`);
   }
 
-  const data = await res.json();
+  const data: any = await res.json();
 
   return {
     text: data.choices?.[0]?.message?.content ?? "",
@@ -159,7 +159,7 @@ async function callOpenAiCompatible(
     throw new Error(`[llm:openai] ${res.status} ${res.statusText}: ${errText}`);
   }
 
-  const data = await res.json();
+  const data: any = await res.json();
   return {
     text: data.choices?.[0]?.message?.content ?? "",
     usage: data.usage
@@ -205,7 +205,7 @@ async function callAnthropic(
     throw new Error(`[llm:anthropic] ${res.status} ${res.statusText}: ${errText}`);
   }
 
-  const data = await res.json();
+  const data: any = await res.json();
   const text = data.content?.map((c: any) => c.text).join("") ?? "";
 
   return {

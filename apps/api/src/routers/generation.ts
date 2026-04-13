@@ -22,7 +22,7 @@ export const generationRouter = router({
         id: t.id,
         name: t.name,
         docType: t.docType,
-        sections: t.sections as TemplateSectionDef[],
+        sections: t.sections as unknown as TemplateSectionDef[],
         createdAt: t.createdAt,
       }));
     }),
@@ -100,7 +100,7 @@ export const generationRouter = router({
         if (template.docType !== input.docType) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Template type mismatch" });
         }
-        templateSections = template.sections as TemplateSectionDef[];
+        templateSections = template.sections as unknown as TemplateSectionDef[];
       } else {
         templateSections = getDefaultTemplate(input.docType);
       }

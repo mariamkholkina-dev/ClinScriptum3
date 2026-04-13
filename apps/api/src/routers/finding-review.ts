@@ -116,7 +116,7 @@ export const findingReviewRouter = router({
         where: { id: input.reviewId },
         data: {
           status: "in_review",
-          reviewerId: ctx.user.id,
+          reviewerId: ctx.user.userId,
         },
       });
     }),
@@ -145,7 +145,7 @@ export const findingReviewRouter = router({
         data: {
           reviewId: input.reviewId,
           findingId: input.findingId,
-          reviewerId: ctx.user.id,
+          reviewerId: ctx.user.userId,
           action: newValue ? "hide" : "unhide",
           previousValue: String(!newValue),
           newValue: String(newValue),
@@ -188,7 +188,7 @@ export const findingReviewRouter = router({
         data: {
           reviewId: input.reviewId,
           findingId: input.findingId,
-          reviewerId: ctx.user.id,
+          reviewerId: ctx.user.userId,
           action: "change_severity",
           previousValue: previousSeverity,
           newValue: input.severity,
@@ -229,7 +229,7 @@ export const findingReviewRouter = router({
         data: {
           reviewId: input.reviewId,
           findingId: input.findingId,
-          reviewerId: ctx.user.id,
+          reviewerId: ctx.user.userId,
           action: "add_note",
           previousValue: finding.reviewerNote ?? null,
           newValue: input.note,
@@ -265,7 +265,7 @@ export const findingReviewRouter = router({
         data: {
           status: "published",
           publishedAt: new Date(),
-          reviewerId: review.reviewerId ?? ctx.user.id,
+          reviewerId: review.reviewerId ?? ctx.user.userId,
         },
       });
     }),
