@@ -19,6 +19,7 @@ COPY apps/api/ apps/api/
 
 RUN npx prisma generate --schema=packages/db/prisma/schema.prisma
 RUN npx turbo build --filter=@clinscriptum/api
+RUN cp apps/api/src/data/*.yaml apps/api/dist/data/ 2>/dev/null || true
 
 FROM base AS runner
 COPY --from=builder /app/node_modules ./node_modules
