@@ -170,7 +170,6 @@ export const documentRouter = router({
                 select: {
                   id: true,
                   title: true,
-                  code: true,
                   tenantId: true,
                 },
               },
