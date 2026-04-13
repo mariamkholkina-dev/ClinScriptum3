@@ -35,7 +35,7 @@ export async function handleExtractFacts(data: {
           data: {
             docVersionId: ctx.docVersionId,
             factKey: fact.factKey,
-            factCategory: fact.category ?? "general",
+            factCategory: "general",
             value: fact.value,
             factClass: fact.factClass,
             sources: [fact.source] as any,
