@@ -6,6 +6,20 @@ import { storage } from "../lib/storage.js";
 import { runProcessingPipeline } from "../lib/processing-pipeline.js";
 
 export const documentRouter = router({
+  listAll: protectedProcedure.query(async ({ ctx }) => {
+    return prisma.documentVersion.findMany({
+      where: { document: { study: { tenantId: ctx.user.tenantId } } },
+      include: {
+        document: {
+          include: {
+            study: { select: { id: true, title: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  }),
+
   listByStudy: protectedProcedure
     .input(z.object({ studyId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {

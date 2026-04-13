@@ -30,7 +30,11 @@ export const studyRouter = router({
     .input(
       z.object({
         title: z.string().min(1),
-        phase: z.enum(["I", "II", "III", "IV", "I_II", "II_III", "unknown"]).default("unknown"),
+        sponsor: z.string().optional(),
+        drug: z.string().optional(),
+        therapeuticArea: z.string().optional(),
+        protocolTitle: z.string().optional(),
+        phase: z.string().default(""),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -38,6 +42,10 @@ export const studyRouter = router({
         data: {
           tenantId: ctx.user.tenantId,
           title: input.title,
+          sponsor: input.sponsor || null,
+          drug: input.drug || null,
+          therapeuticArea: input.therapeuticArea || null,
+          protocolTitle: input.protocolTitle || null,
           phase: input.phase,
         },
       });
@@ -48,7 +56,11 @@ export const studyRouter = router({
       z.object({
         id: z.string().uuid(),
         title: z.string().min(1).optional(),
-        phase: z.enum(["I", "II", "III", "IV", "I_II", "II_III", "unknown"]).optional(),
+        sponsor: z.string().optional(),
+        drug: z.string().optional(),
+        therapeuticArea: z.string().optional(),
+        protocolTitle: z.string().optional(),
+        phase: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {

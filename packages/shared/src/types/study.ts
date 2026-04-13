@@ -2,9 +2,11 @@ export interface Study {
   id: string;
   tenantId: string;
   title: string;
-  phase: StudyPhase;
+  sponsor?: string | null;
+  drug?: string | null;
+  therapeuticArea?: string | null;
+  protocolTitle?: string | null;
+  phase: string;
   createdAt: Date;
   updatedAt: Date;
 }
-
-export type StudyPhase = "I" | "II" | "III" | "IV" | "I/II" | "II/III" | "unknown";

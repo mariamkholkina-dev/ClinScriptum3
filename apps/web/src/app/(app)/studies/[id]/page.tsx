@@ -28,6 +28,9 @@ import {
   Circle,
   CircleDot,
   CircleAlert,
+  Pencil,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 /* ──────────────────────── Types & Constants ──────────────────────── */
@@ -59,8 +62,8 @@ const PIPELINE_STAGES = [
   { key: "parsing", label: "Разбор структуры" },
   { key: "classifying_sections", label: "Присвоение секций" },
   { key: "extracting_facts", label: "Выделение фактов" },
-  { key: "detecting_soa", label: "Анализ SOA" },
-  { key: "intra_audit", label: "Интра аудит" },
+  { key: "detecting_soa", label: "Анализ графика процедур" },
+  { key: "intra_audit", label: "Внутридокументный аудит" },
 ] as const;
 
 type PipelineStageKey = (typeof PIPELINE_STAGES)[number]["key"];
@@ -190,7 +193,9 @@ const FINDING_TYPE_LABELS: Record<string, string> = {
 export default function StudyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [activeTab, setActiveTab] = useState<Tab>("documents");
+  const [editing, setEditing] = useState(false);
 
+  const utils = trpc.useUtils();
   const studyQuery = trpc.study.getById.useQuery({ id });
 
   if (studyQuery.isLoading) {
@@ -219,15 +224,41 @@ export default function StudyDetailPage() {
         <Link href="/studies" className="text-gray-400 hover:text-gray-600">
           <ArrowLeft className="h-5 w-5" />
         </Link>
-        <div>
-          <div className="flex items-center gap-2 text-sm text-gray-400">
-            <Link href="/studies" className="hover:text-gray-600">Исследования</Link>
-            <span>/</span>
-            <span className="text-gray-600">{study.title}</span>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-gray-900">Исследование {study.title}</h1>
+            {!editing && (
+              <button
+                onClick={() => setEditing(true)}
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                title="Редактировать характеристики"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+            )}
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">{study.title}</h1>
+          {!editing && (
+            <p className="mt-1 text-sm text-gray-500">
+              {[study.protocolTitle, study.sponsor, study.drug, study.therapeuticArea, study.phase && `Фаза ${study.phase}`]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
         </div>
       </div>
+
+      {/* Study properties edit */}
+      {editing && (
+        <StudyEditForm
+          study={study}
+          onSave={() => {
+            setEditing(false);
+            utils.study.getById.invalidate({ id });
+            utils.study.list.invalidate();
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      )}
 
       {/* Tabs */}
       <div className="border-b">
@@ -256,6 +287,97 @@ export default function StudyDetailPage() {
       {activeTab === "knowledge" && <KnowledgeBaseTab studyId={id} />}
       {activeTab === "findings" && <FindingsTab studyId={id} />}
     </div>
+  );
+}
+
+/* ──────────────────── Study Edit Form ──────────────────── */
+
+function StudyEditForm({
+  study,
+  onSave,
+  onCancel,
+}: {
+  study: any;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = useState(study.title ?? "");
+  const [protocolTitle, setProtocolTitle] = useState(study.protocolTitle ?? "");
+  const [sponsor, setSponsor] = useState(study.sponsor ?? "");
+  const [drug, setDrug] = useState(study.drug ?? "");
+  const [therapeuticArea, setTherapeuticArea] = useState(study.therapeuticArea ?? "");
+  const [phase, setPhase] = useState(study.phase ?? "");
+
+  const updateMutation = trpc.study.update.useMutation({ onSuccess: onSave });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateMutation.mutate({
+      id: study.id,
+      title: title || undefined,
+      protocolTitle: protocolTitle || undefined,
+      sponsor: sponsor || undefined,
+      drug: drug || undefined,
+      therapeuticArea: therapeuticArea || undefined,
+      phase: phase || undefined,
+    });
+  };
+
+  const inputClass =
+    "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500";
+
+  return (
+    <form onSubmit={handleSubmit} className="rounded-lg border bg-white p-4 shadow-sm space-y-4">
+      <h3 className="text-sm font-semibold text-gray-900">Характеристики исследования</h3>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">
+            Номер протокола <span className="text-red-500">*</span>
+          </label>
+          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} required className={inputClass} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Название протокола</label>
+          <input type="text" value={protocolTitle} onChange={(e) => setProtocolTitle(e.target.value)} className={inputClass} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Спонсор</label>
+          <input type="text" value={sponsor} onChange={(e) => setSponsor(e.target.value)} className={inputClass} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Препарат / МИ</label>
+          <input type="text" value={drug} onChange={(e) => setDrug(e.target.value)} className={inputClass} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Терапевтическая область</label>
+          <input type="text" value={therapeuticArea} onChange={(e) => setTherapeuticArea(e.target.value)} className={inputClass} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Фаза исследования</label>
+          <input type="text" value={phase} onChange={(e) => setPhase(e.target.value)} className={inputClass} />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={updateMutation.isPending || !title}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+        >
+          {updateMutation.isPending ? (
+            <><Loader2 className="h-4 w-4 animate-spin" /> Сохранение...</>
+          ) : (
+            <><Check className="h-4 w-4" /> Сохранить</>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+        >
+          Отмена
+        </button>
+      </div>
+    </form>
   );
 }
 

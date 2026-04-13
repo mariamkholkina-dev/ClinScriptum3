@@ -105,16 +105,15 @@ export default function DocumentVersionPage() {
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div className="flex-1">
-          <div className="flex items-center gap-2 text-sm text-gray-400">
-            <Link href={`/studies/${version.document.studyId}`} className="hover:text-gray-600">
-              {version.document.title}
-            </Link>
-            <span>/</span>
-            <span className="text-gray-600">
-              {(version as any).versionLabel ?? `v${version.versionNumber}`}
-            </span>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">{version.document.title}</h1>
+          <p className="text-sm text-gray-500">
+            Исследование {version.document.study.title}
+          </p>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {version.document.title}
+          </h1>
+          <p className="text-sm text-gray-500">
+            Версия {(version as any).versionLabel ?? `v${version.versionNumber}`}
+          </p>
         </div>
         <span
           className={cn(

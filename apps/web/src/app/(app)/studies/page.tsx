@@ -13,12 +13,20 @@ export default function StudiesPage() {
       utils.study.list.invalidate();
       setShowCreate(false);
       setNewTitle("");
+      setNewSponsor("");
+      setNewDrug("");
+      setNewTherapeuticArea("");
+      setNewProtocolTitle("");
     },
   });
 
   const [showCreate, setShowCreate] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const [newPhase, setNewPhase] = useState<string>("unknown");
+  const [newSponsor, setNewSponsor] = useState("");
+  const [newDrug, setNewDrug] = useState("");
+  const [newTherapeuticArea, setNewTherapeuticArea] = useState("");
+  const [newProtocolTitle, setNewProtocolTitle] = useState("");
+  const [newPhase, setNewPhase] = useState("");
 
   return (
     <div className="space-y-6">
@@ -37,31 +45,60 @@ export default function StudiesPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            createMutation.mutate({ title: newTitle, phase: newPhase as any });
+            createMutation.mutate({
+              title: newTitle,
+              sponsor: newSponsor || undefined,
+              drug: newDrug || undefined,
+              therapeuticArea: newTherapeuticArea || undefined,
+              protocolTitle: newProtocolTitle || undefined,
+              phase: newPhase || undefined,
+            });
           }}
           className="rounded-lg border bg-white p-4 shadow-sm space-y-3"
         >
           <input
             type="text"
-            placeholder="Название исследования"
+            placeholder="Номер протокола"
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             required
             className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
-          <select
+          <input
+            type="text"
+            placeholder="Название протокола"
+            value={newProtocolTitle}
+            onChange={(e) => setNewProtocolTitle(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <input
+            type="text"
+            placeholder="Спонсор"
+            value={newSponsor}
+            onChange={(e) => setNewSponsor(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <input
+            type="text"
+            placeholder="Препарат / МИ"
+            value={newDrug}
+            onChange={(e) => setNewDrug(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <input
+            type="text"
+            placeholder="Терапевтическая область"
+            value={newTherapeuticArea}
+            onChange={(e) => setNewTherapeuticArea(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <input
+            type="text"
+            placeholder="Фаза исследования"
             value={newPhase}
             onChange={(e) => setNewPhase(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2 text-sm"
-          >
-            <option value="unknown">Не указана</option>
-            <option value="I">Фаза I</option>
-            <option value="II">Фаза II</option>
-            <option value="III">Фаза III</option>
-            <option value="IV">Фаза IV</option>
-            <option value="I_II">Фаза I/II</option>
-            <option value="II_III">Фаза II/III</option>
-          </select>
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
           <div className="flex gap-2">
             <button
               type="submit"
@@ -88,18 +125,38 @@ export default function StudiesPage() {
           <Link
             key={study.id}
             href={`/studies/${study.id}`}
-            className="flex items-center gap-4 rounded-lg border bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
+            className="block rounded-lg border bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
           >
-            <div className="rounded-lg bg-brand-50 p-2">
-              <FlaskConical className="h-5 w-5 text-brand-600" />
+            <div className="flex items-center gap-4">
+              <div className="rounded-lg bg-brand-50 p-2">
+                <FlaskConical className="h-5 w-5 text-brand-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-gray-900">{study.title}</p>
+                {study.protocolTitle && (
+                  <p className="text-sm text-gray-500 truncate">{study.protocolTitle}</p>
+                )}
+              </div>
+              <span className="text-xs text-gray-400 shrink-0">
+                {new Date(study.createdAt).toLocaleDateString("ru-RU")}
+              </span>
             </div>
-            <div className="flex-1">
-              <p className="font-medium text-gray-900">{study.title}</p>
-              <p className="text-sm text-gray-500">Фаза {study.phase}</p>
-            </div>
-            <span className="text-xs text-gray-400">
-              {new Date(study.createdAt).toLocaleDateString("ru-RU")}
-            </span>
+            {(study.sponsor || study.drug || study.therapeuticArea || study.phase) && (
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 pl-11 text-xs text-gray-500">
+                {study.sponsor && (
+                  <span><span className="text-gray-400">Спонсор:</span> {study.sponsor}</span>
+                )}
+                {study.drug && (
+                  <span><span className="text-gray-400">Препарат / МИ:</span> {study.drug}</span>
+                )}
+                {study.therapeuticArea && (
+                  <span><span className="text-gray-400">Терапевтическая область:</span> {study.therapeuticArea}</span>
+                )}
+                {study.phase && (
+                  <span><span className="text-gray-400">Фаза:</span> {study.phase}</span>
+                )}
+              </div>
+            )}
           </Link>
         ))}
       </div>

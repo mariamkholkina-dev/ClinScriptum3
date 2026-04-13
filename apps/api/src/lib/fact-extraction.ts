@@ -98,8 +98,8 @@ export async function extractFactsForVersion(versionId: string) {
     return;
   }
 
-  const isBioequivalence = version.document.study.phase === "I" ||
-    version.document.study.phase === "I_II";
+  const phaseNormalized = (version.document.study.phase || "").toUpperCase().replace(/\s/g, "");
+  const isBioequivalence = phaseNormalized === "I" || phaseNormalized === "I/II";
 
   // 1. Собрать секции (исключая overview, admin, appendix)
   const relevantSections = version.sections.filter((s) => {

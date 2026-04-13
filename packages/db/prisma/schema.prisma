@@ -71,12 +71,16 @@ model RefreshToken {
 // ─── Studies & Documents ─────────────────────────────────────
 
 model Study {
-  id        String     @id @default(uuid()) @db.Uuid
-  tenantId  String     @map("tenant_id") @db.Uuid
-  title     String
-  phase     StudyPhase @default(unknown)
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
+  id              String     @id @default(uuid()) @db.Uuid
+  tenantId        String     @map("tenant_id") @db.Uuid
+  title           String
+  sponsor         String?
+  drug            String?
+  therapeuticArea String?    @map("therapeutic_area")
+  protocolTitle   String?    @map("protocol_title")
+  phase           String     @default("")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   documents      Document[]
@@ -86,15 +90,6 @@ model Study {
   @@map("studies")
 }
 
-enum StudyPhase {
-  I
-  II
-  III
-  IV
-  I_II    @map("I/II")
-  II_III  @map("II/III")
-  unknown
-}
 
 model Document {
   id        String       @id @default(uuid()) @db.Uuid
