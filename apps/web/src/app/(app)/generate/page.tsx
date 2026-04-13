@@ -7,8 +7,8 @@ import { FileText, Wand2, CheckCircle2, Clock, AlertCircle } from "lucide-react"
 
 const statusLabels: Record<string, string> = {
   completed: "Завершён",
-  running: "Выполняется",
-  failed: "Ошибка",
+  generating: "Выполняется",
+  error: "Ошибка",
   pending: "Ожидает",
 };
 
@@ -17,29 +17,22 @@ export default function GeneratePage() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [genType, setGenType] = useState<"icf" | "csr">("icf");
 
-  const icfMutation = trpc.generation.startICFGeneration.useMutation({
-    onSuccess: (data) => setActiveRunId(data.runId),
-  });
-  const csrMutation = trpc.generation.startCSRGeneration.useMutation({
-    onSuccess: (data) => setActiveRunId(data.runId),
+  const startMutation = trpc.generation.startGeneration.useMutation({
+    onSuccess: (data) => setActiveRunId(data.generatedDocId),
   });
 
-  const resultQuery = trpc.generation.getGenerationResult.useQuery(
-    { runId: activeRunId! },
+  const resultQuery = trpc.generation.getGeneratedDoc.useQuery(
+    { generatedDocId: activeRunId! },
     { enabled: !!activeRunId, refetchInterval: 3000 }
   );
 
   const handleGenerate = () => {
     if (!protocolVersionId) return;
-    if (genType === "icf") {
-      icfMutation.mutate({ protocolVersionId });
-    } else {
-      csrMutation.mutate({ protocolVersionId });
-    }
+    startMutation.mutate({ protocolVersionId, docType: genType });
   };
 
   const result = resultQuery.data;
-  const isLoading = icfMutation.isPending || csrMutation.isPending;
+  const isLoading = startMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -97,30 +90,30 @@ export default function GeneratePage() {
       {result && (
         <div className="space-y-4">
           <div className="flex items-center gap-3 rounded-lg border bg-white p-4 shadow-sm">
-            {result.run.status === "completed" && (
+            {result.status === "completed" && (
               <CheckCircle2 className="h-5 w-5 text-green-600" />
             )}
-            {result.run.status === "running" && (
+            {result.status === "generating" && (
               <Clock className="h-5 w-5 text-amber-600 animate-pulse" />
             )}
-            {result.run.status === "failed" && (
+            {result.status === "error" && (
               <AlertCircle className="h-5 w-5 text-red-600" />
             )}
             <span className="text-sm font-medium text-gray-900">
-              Статус: {statusLabels[result.run.status] ?? result.run.status}
+              Статус: {statusLabels[result.status] ?? result.status}
             </span>
             <span className="text-xs text-gray-500">
-              Шагов конвейера: {result.run.steps.length}
+              Секций: {result.sections.length}
             </span>
           </div>
 
-          {result.generatedSections.length > 0 && (
+          {result.sections.length > 0 && (
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-gray-900">
-                Сгенерированные секции ({result.generatedSections.length})
+                Сгенерированные секции ({result.sections.length})
               </h2>
-              {result.generatedSections.map((section: any, i: number) => (
-                <div key={i} className="rounded-lg border bg-white shadow-sm">
+              {result.sections.map((section) => (
+                <div key={section.id} className="rounded-lg border bg-white shadow-sm">
                   <div className="flex items-center gap-2 border-b px-4 py-3">
                     <FileText className="h-4 w-4 text-brand-600" />
                     <span className="font-medium text-gray-900">{section.title}</span>
