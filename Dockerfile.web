@@ -19,6 +19,8 @@ COPY apps/web/ apps/web/
 
 RUN npx prisma generate --schema=packages/db/prisma/schema.prisma
 
+ARG NEXT_PUBLIC_API_URL=https://app.clinscriptum.ru/trpc
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npx turbo build --filter=@clinscriptum/web
 
