@@ -24,6 +24,10 @@ import {
   Shield,
   FileSearch,
   FilePlus2,
+  CircleCheck,
+  Circle,
+  CircleDot,
+  CircleAlert,
 } from "lucide-react";
 
 /* ──────────────────────── Types & Constants ──────────────────────── */
@@ -51,19 +55,116 @@ const VERSION_STATUS_LABELS: Record<string, string> = {
   error: "Ошибка",
 };
 
-const VERSION_STATUS_COLORS: Record<string, string> = {
-  uploading: "bg-gray-100 text-gray-600",
-  parsing: "bg-blue-100 text-blue-700",
-  classifying_sections: "bg-blue-100 text-blue-700",
-  extracting_facts: "bg-blue-100 text-blue-700",
-  detecting_soa: "bg-blue-100 text-blue-700",
-  ready: "bg-green-100 text-green-700",
-  intra_audit: "bg-amber-100 text-amber-700",
-  inter_audit: "bg-amber-100 text-amber-700",
-  impact_assessment: "bg-amber-100 text-amber-700",
-  parsed: "bg-teal-100 text-teal-700",
-  error: "bg-red-100 text-red-700",
+const PIPELINE_STAGES = [
+  { key: "parsing", label: "Разбор структуры" },
+  { key: "classifying_sections", label: "Присвоение секций" },
+  { key: "extracting_facts", label: "Выделение фактов" },
+  { key: "detecting_soa", label: "Анализ SOA" },
+  { key: "intra_audit", label: "Интра аудит" },
+] as const;
+
+type PipelineStageKey = (typeof PIPELINE_STAGES)[number]["key"];
+
+const STAGE_ORDER: Record<string, number> = {
+  uploading: -1,
+  parsing: 0,
+  classifying_sections: 1,
+  extracting_facts: 2,
+  detecting_soa: 3,
+  intra_audit: 4,
+  parsed: 5,
+  ready: 5,
+  error: -2,
 };
+
+const TERMINAL_STATUSES = new Set(["parsed", "ready", "error"]);
+
+function getStageState(
+  stageKey: PipelineStageKey,
+  currentStatus: string
+): "completed" | "current" | "pending" | "error" {
+  if (currentStatus === "error") {
+    return "pending";
+  }
+  const currentIdx = STAGE_ORDER[currentStatus] ?? -1;
+  const stageIdx = STAGE_ORDER[stageKey] ?? 99;
+
+  if (currentIdx >= 5) return "completed";
+  if (stageIdx < currentIdx) return "completed";
+  if (stageIdx === currentIdx) return "current";
+  return "pending";
+}
+
+function PipelineStatus({ status }: { status: string }) {
+  if (status === "uploading") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Загрузка...
+      </span>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
+        <CircleAlert className="h-3.5 w-3.5" />
+        Ошибка обработки
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-0">
+      {PIPELINE_STAGES.map((stage, idx) => {
+        const state = getStageState(stage.key, status);
+        return (
+          <div key={stage.key} className="flex items-center">
+            {idx > 0 && (
+              <div
+                className={cn(
+                  "h-px w-3 sm:w-5",
+                  state === "completed"
+                    ? "bg-green-400"
+                    : state === "current"
+                      ? "bg-blue-300"
+                      : "bg-gray-200"
+                )}
+              />
+            )}
+            <div
+              className="group relative flex items-center"
+              title={stage.label}
+            >
+              {state === "completed" ? (
+                <CircleCheck className="h-4 w-4 text-green-500 shrink-0" />
+              ) : state === "current" ? (
+                <CircleDot className="h-4 w-4 text-blue-500 animate-pulse shrink-0" />
+              ) : (
+                <Circle className="h-4 w-4 text-gray-300 shrink-0" />
+              )}
+              <span
+                className={cn(
+                  "absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] leading-none pointer-events-none",
+                  "opacity-0 group-hover:opacity-100 transition-opacity",
+                  state === "completed"
+                    ? "text-green-600"
+                    : state === "current"
+                      ? "text-blue-600 font-medium"
+                      : "text-gray-400"
+                )}
+              >
+                {stage.label}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const POLL_INTERVAL = 3000;
 
 const FACT_STATUS_LABELS: Record<string, string> = {
   extracted: "Извлечён",
@@ -174,6 +275,36 @@ function DocumentsTab({
 
   const docsOfType = documents.filter((d) => d.type === selectedType);
   const selectedDoc = docsOfType[0];
+
+  const allVersions: any[] = documents.flatMap((d: any) => d.versions);
+  const processingVersionIds = allVersions
+    .filter((v: any) => !TERMINAL_STATUSES.has(v.status) && v.status !== "uploading")
+    .map((v: any) => v.id);
+
+  const statusPoll = trpc.document.getVersionStatuses.useQuery(
+    { versionIds: processingVersionIds.length > 0 ? processingVersionIds : ["00000000-0000-0000-0000-000000000000"] },
+    {
+      enabled: processingVersionIds.length > 0,
+      refetchInterval: POLL_INTERVAL,
+      refetchIntervalInBackground: false,
+    }
+  );
+
+  const liveStatuses = new Map<string, string>();
+  if (statusPoll.data) {
+    for (const v of statusPoll.data) {
+      liveStatuses.set(v.id, v.status);
+    }
+  }
+
+  useEffect(() => {
+    if (!statusPoll.data) return;
+    const anyChanged = statusPoll.data.some((polled) => {
+      const orig = allVersions.find((v: any) => v.id === polled.id);
+      return orig && orig.status !== polled.status && TERMINAL_STATUSES.has(polled.status);
+    });
+    if (anyChanged) onRefetch();
+  }, [statusPoll.data]);
 
   const deleteVersion = trpc.document.deleteVersion.useMutation({ onSuccess: onRefetch });
   const setCurrent = trpc.document.setCurrentVersion.useMutation({ onSuccess: onRefetch });
@@ -289,15 +420,8 @@ function DocumentsTab({
                       <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
                     )}
                   </div>
-                  <div className="mt-1">
-                    <span
-                      className={cn(
-                        "inline-block rounded-full px-2.5 py-0.5 text-xs font-medium",
-                        VERSION_STATUS_COLORS[ver.status] ?? "bg-gray-100 text-gray-600"
-                      )}
-                    >
-                      {VERSION_STATUS_LABELS[ver.status] ?? ver.status}
-                    </span>
+                  <div className="mt-2 mb-1">
+                    <PipelineStatus status={liveStatuses.get(ver.id) ?? ver.status} />
                   </div>
                 </div>
 

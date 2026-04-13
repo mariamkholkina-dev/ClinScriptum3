@@ -150,6 +150,22 @@ export const documentRouter = router({
       return { versionId: version.id, status: "parsing" };
     }),
 
+  getVersionStatuses: protectedProcedure
+    .input(z.object({ versionIds: z.array(z.string().uuid()).min(1).max(50) }))
+    .query(async ({ ctx, input }) => {
+      const versions = await prisma.documentVersion.findMany({
+        where: { id: { in: input.versionIds } },
+        select: {
+          id: true,
+          status: true,
+          document: { select: { study: { select: { tenantId: true } } } },
+        },
+      });
+      return versions
+        .filter((v) => v.document.study.tenantId === ctx.user.tenantId)
+        .map((v) => ({ id: v.id, status: v.status }));
+    }),
+
   getVersion: protectedProcedure
     .input(z.object({ versionId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
