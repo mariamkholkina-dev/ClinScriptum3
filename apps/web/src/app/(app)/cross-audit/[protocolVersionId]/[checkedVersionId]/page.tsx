@@ -17,7 +17,10 @@ import {
   Info,
   Eye,
   Filter,
+  FileText,
+  Clock,
 } from "lucide-react";
+import { openInWord } from "@/lib/open-in-word";
 
 /* ═══════════════════════ Constants ═══════════════════════ */
 
@@ -80,6 +83,7 @@ export default function CrossAuditPage() {
 
   const auditData = findingsQuery.data;
   const isRunning = statusQuery.data?.isRunning ?? false;
+  const reviewPending = (auditData as any)?.reviewPending === true;
 
   // Auto-start on first visit if no findings
   useEffect(() => {
@@ -170,6 +174,14 @@ export default function CrossAuditPage() {
               {isRunning ? "Выполняется..." : "Запустить повторный аудит"}
             </button>
             <button
+              onClick={() => openInWord({ docVersionId: checkedVersionId, mode: "inter_audit", protocolVersionId })}
+              disabled={isRunning}
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <FileText className="h-4 w-4" />
+              Открыть в Word
+            </button>
+            <button
               onClick={handleDownloadReport}
               disabled={isRunning || findings.length === 0}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
@@ -187,6 +199,16 @@ export default function CrossAuditPage() {
           <Loader2 className="h-5 w-5 animate-spin text-amber-600" />
           <p className="text-sm text-amber-700">
             Выполняется междокументный аудит... Результаты появятся автоматически.
+          </p>
+        </div>
+      )}
+
+      {/* Review pending banner */}
+      {reviewPending && !isRunning && (
+        <div className="flex-none bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center gap-3">
+          <Clock className="h-5 w-5 text-amber-600" />
+          <p className="text-sm text-amber-700">
+            Результаты аудита на проверке у специалиста. Findings будут доступны после публикации.
           </p>
         </div>
       )}

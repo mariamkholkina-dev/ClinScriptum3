@@ -48,6 +48,21 @@ async function main() {
     },
   });
 
+  const reviewerHash = await hashPassword("changeme123");
+
+  await prisma.user.upsert({
+    where: { email: "reviewer@demo.clinscriptum.com" },
+    update: { passwordHash: reviewerHash },
+    create: {
+      id: randomUUID(),
+      tenantId: tenant.id,
+      email: "reviewer@demo.clinscriptum.com",
+      passwordHash: reviewerHash,
+      name: "Demo Reviewer",
+      role: "findings_reviewer",
+    },
+  });
+
   console.log("Seed completed.");
 }
 

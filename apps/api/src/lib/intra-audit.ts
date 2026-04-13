@@ -148,6 +148,28 @@ export async function runIntraDocAudit(versionId: string): Promise<string> {
     await runQaVerification(savedIds);
     console.log(`[intra-audit] QA verification complete`);
 
+    // 6. Create/reset FindingReview for reviewer workflow
+    await prisma.findingReview.upsert({
+      where: {
+        docVersionId_auditType: {
+          docVersionId: versionId,
+          auditType: "intra_audit",
+        },
+      },
+      create: {
+        tenantId: version.document.study.tenantId,
+        docVersionId: versionId,
+        auditType: "intra_audit",
+        status: "pending",
+      },
+      update: {
+        status: "pending",
+        reviewerId: null,
+        publishedAt: null,
+      },
+    });
+    console.log(`[intra-audit] FindingReview created/reset for ${versionId}`);
+
     await prisma.processingRun.update({
       where: { id: run.id },
       data: { status: "completed" },
@@ -565,6 +587,7 @@ async function saveFindings(versionId: string, findings: RawFinding[]): Promise<
         description: f.description,
         suggestion: f.suggestion ?? null,
         severity: f.severity as any,
+        originalSeverity: f.severity as any,
         auditCategory: f.auditCategory,
         issueType: f.issueType,
         issueFamily: f.issueFamily,

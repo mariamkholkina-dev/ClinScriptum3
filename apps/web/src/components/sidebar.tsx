@@ -12,6 +12,8 @@ import {
   Settings,
   GitCompare,
   Wand2,
+  SlidersHorizontal,
+  ClipboardCheck,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -23,6 +25,14 @@ const navItems = [
   { href: "/compare", label: "Сравнение", icon: GitCompare },
   { href: "/generate", label: "Генерация", icon: Wand2 },
   { href: "/settings", label: "Настройки", icon: Settings },
+];
+
+const reviewerNavItems = [
+  { href: "/finding-review", label: "Ревью findings", icon: ClipboardCheck },
+];
+
+const adminNavItems = [
+  { href: "/tuning", label: "Тюнинг", icon: SlidersHorizontal },
 ];
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
@@ -85,6 +95,68 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
             </Link>
           );
         })}
+
+        {(user?.role === "findings_reviewer" || user?.role === "tenant_admin" || user?.role === "rule_admin") && (
+          <>
+            {!collapsed && (
+              <div className="pt-4 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                Ревью
+              </div>
+            )}
+            {reviewerNavItems.map((item) => {
+              const Icon = item.icon;
+              const active = pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  title={collapsed ? item.label : undefined}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    collapsed && "justify-center px-0",
+                    active
+                      ? "bg-brand-50 text-brand-700"
+                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  )}
+                >
+                  <Icon className="h-4 w-4 flex-shrink-0" />
+                  {!collapsed && <span className="truncate">{item.label}</span>}
+                </Link>
+              );
+            })}
+          </>
+        )}
+
+        {(user?.role === "tenant_admin" || user?.role === "rule_admin") && (
+          <>
+            {!collapsed && (
+              <div className="pt-4 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                Администрирование
+              </div>
+            )}
+            {adminNavItems.map((item) => {
+              const Icon = item.icon;
+              const active = pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  title={collapsed ? item.label : undefined}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    collapsed && "justify-center px-0",
+                    active
+                      ? "bg-brand-50 text-brand-700"
+                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  )}
+                >
+                  <Icon className="h-4 w-4 flex-shrink-0" />
+                  {!collapsed && <span className="truncate">{item.label}</span>}
+                </Link>
+              );
+            })}
+          </>
+        )}
       </nav>
 
       {/* Footer */}

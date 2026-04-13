@@ -5,6 +5,8 @@ import { router, protectedProcedure } from "../trpc/trpc.js";
 import { runIntraDocAudit } from "../lib/intra-audit.js";
 import { runInterDocAudit } from "../lib/inter-audit.js";
 
+const REVIEWER_ROLES = new Set(["findings_reviewer", "rule_admin", "tenant_admin"]);
+
 export const auditRouter = router({
   startIntraAudit: protectedProcedure
     .input(z.object({ docVersionId: z.string().uuid() }))
@@ -60,12 +62,24 @@ export const auditRouter = router({
         where: { docVersionId: input.docVersionId, type: "editorial", issueFamily: "EDITORIAL" },
       });
 
+      const review = await prisma.findingReview.findUnique({
+        where: {
+          docVersionId_auditType: {
+            docVersionId: input.docVersionId,
+            auditType: "intra_audit",
+          },
+        },
+        select: { id: true, status: true },
+      });
+
       return {
         versionStatus: version.status,
         runStatus: latestRun?.status ?? null,
         runId: latestRun?.id ?? null,
         totalFindings: findingsCount + editorialCount,
         isRunning: version.status === "intra_audit" || latestRun?.status === "running",
+        reviewStatus: review?.status ?? null,
+        reviewId: review?.id ?? null,
       };
     }),
 
@@ -87,6 +101,28 @@ export const auditRouter = router({
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
+      const isReviewer = REVIEWER_ROLES.has(ctx.user.role);
+
+      if (!isReviewer) {
+        const review = await prisma.findingReview.findUnique({
+          where: {
+            docVersionId_auditType: {
+              docVersionId: input.docVersionId,
+              auditType: "intra_audit",
+            },
+          },
+        });
+        if (review && review.status !== "published") {
+          return {
+            findings: [],
+            documentTitle: version.document.title,
+            versionLabel: version.versionLabel ?? `v${version.versionNumber}`,
+            documentType: version.document.type,
+            reviewPending: true,
+          };
+        }
+      }
+
       const where: any = {
         docVersionId: input.docVersionId,
         OR: [
@@ -97,6 +133,10 @@ export const auditRouter = router({
       if (input.severity) where.severity = input.severity;
       if (input.category) where.auditCategory = input.category;
       if (input.status) where.status = input.status;
+
+      if (!isReviewer) {
+        where.hiddenByReviewer = false;
+      }
 
       const findings = await prisma.finding.findMany({
         where,
@@ -111,6 +151,7 @@ export const auditRouter = router({
         documentTitle: version.document.title,
         versionLabel: version.versionLabel ?? `v${version.versionNumber}`,
         documentType: version.document.type,
+        reviewPending: false,
       };
     }),
 
@@ -308,12 +349,24 @@ export const auditRouter = router({
         where: { docVersionId: input.checkedVersionId, type: "inter_audit" },
       });
 
+      const review = await prisma.findingReview.findUnique({
+        where: {
+          docVersionId_auditType: {
+            docVersionId: input.checkedVersionId,
+            auditType: "inter_audit",
+          },
+        },
+        select: { id: true, status: true },
+      });
+
       return {
         versionStatus: checkedVersion.status,
         runStatus: latestRun?.status ?? null,
         runId: latestRun?.id ?? null,
         totalFindings: findingsCount,
         isRunning: checkedVersion.status === "inter_audit" || latestRun?.status === "running",
+        reviewStatus: review?.status ?? null,
+        reviewId: review?.id ?? null,
       };
     }),
 
@@ -335,6 +388,31 @@ export const auditRouter = router({
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
+      const isReviewerUser = REVIEWER_ROLES.has(ctx.user.role);
+
+      if (!isReviewerUser) {
+        const review = await prisma.findingReview.findUnique({
+          where: {
+            docVersionId_auditType: {
+              docVersionId: input.checkedVersionId,
+              auditType: "inter_audit",
+            },
+          },
+        });
+        if (review && review.status !== "published") {
+          return {
+            findings: [],
+            protocolTitle: "",
+            protocolLabel: "",
+            checkedDocTitle: checkedVersion.document.title,
+            checkedDocLabel: checkedVersion.versionLabel ?? `v${checkedVersion.versionNumber}`,
+            checkedDocType: checkedVersion.document.type,
+            studyTitle: checkedVersion.document.study.title,
+            reviewPending: true,
+          };
+        }
+      }
+
       const protocolVersion = await prisma.documentVersion.findUnique({
         where: { id: input.protocolVersionId },
         include: { document: true },
@@ -346,6 +424,10 @@ export const auditRouter = router({
       };
       if (input.severity) where.severity = input.severity;
       if (input.status) where.status = input.status;
+
+      if (!isReviewerUser) {
+        where.hiddenByReviewer = false;
+      }
 
       const findings = await prisma.finding.findMany({
         where,
@@ -360,6 +442,7 @@ export const auditRouter = router({
         checkedDocLabel: checkedVersion.versionLabel ?? `v${checkedVersion.versionNumber}`,
         checkedDocType: checkedVersion.document.type,
         studyTitle: checkedVersion.document.study.title,
+        reviewPending: false,
       };
     }),
 

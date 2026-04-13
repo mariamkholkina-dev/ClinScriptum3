@@ -356,6 +356,8 @@ async function classifySectionsDeterministic(versionId: string, taxonomy: Taxono
         standardSection: match?.pattern ?? null,
         confidence: match?.score ?? 0,
         classifiedBy: match ? "deterministic" : null,
+        algoSection: match?.pattern ?? null,
+        algoConfidence: match?.score ?? 0,
       },
     });
   }
@@ -419,12 +421,13 @@ async function classifySectionsLlm(versionId: string, taxonomy: TaxonomyRule[]) 
   console.log(`[pipeline] LLM classify: ${targets.length} sections`);
 
   const taxonomyCatalog = buildTaxonomyCatalog(taxonomy);
+  const validPatterns = taxonomy.map((r) => r.pattern);
 
   for (const section of targets) {
     try {
       const preview = section.contentBlocks.map((b) => b.content).join(" ").slice(0, 800);
       const breadcrumb = formatBreadcrumb(parentChains.get(section.id) ?? []);
-      const result = await llmClassifySection(section.title, preview, breadcrumb, taxonomyCatalog);
+      const result = await llmClassifySection(section.title, preview, breadcrumb, taxonomyCatalog, validPatterns);
 
       if (result) {
         await prisma.section.update({
@@ -433,6 +436,8 @@ async function classifySectionsLlm(versionId: string, taxonomy: TaxonomyRule[]) 
             standardSection: result.section,
             confidence: result.confidence,
             classifiedBy: "llm_check",
+            llmSection: result.section,
+            llmConfidence: result.confidence,
           },
         });
       }
@@ -456,20 +461,27 @@ async function llmClassifySection(
   title: string,
   preview: string,
   breadcrumb: string,
-  taxonomyCatalog: string
+  taxonomyCatalog: string,
+  validPatterns: string[]
 ): Promise<{ section: string; confidence: number } | null> {
+  const validCodesList = validPatterns.join(", ");
+
   const systemPrompt = `Ты — эксперт по клинической документации. Твоя задача — классифицировать секцию документа клинического исследования (протокол, ICF, IB, CSR) по стандартной таксономии.
 
 Таксономия секций:
 ${taxonomyCatalog}
 
+Допустимые коды секций (СТРОГО только из этого списка):
+${validCodesList}
+
 Правила:
-1. Верни РОВНО один JSON объект: {"section": "<код секции из таксономии>", "confidence": <число от 0.0 до 1.0>}
-2. Если секция не относится ни к одной из категорий, верни {"section": null, "confidence": 0}
-3. confidence отражает твою уверенность в классификации
-4. Предпочитай подзоны (subzone) зонам (zone), если подходят обе
-5. Учитывай иерархию: цепочка родительских заголовков показывает контекст, в котором находится секция
-6. Не добавляй комментарии, верни ТОЛЬКО JSON`;
+1. Верни РОВНО один JSON объект: {"section": "<код секции>", "confidence": <число от 0.0 до 1.0>}
+2. Значение "section" ОБЯЗАТЕЛЬНО должно быть одним из допустимых кодов выше. Любой другой вариант ЗАПРЕЩЁН.
+3. Если секция не относится ни к одной из категорий, верни {"section": null, "confidence": 0}
+4. confidence отражает твою уверенность в классификации
+5. Предпочитай подзоны (subzone) зонам (zone), если подходят обе
+6. Учитывай иерархию: цепочка родительских заголовков показывает контекст, в котором находится секция
+7. Не добавляй комментарии, верни ТОЛЬКО JSON`;
 
   const contextLine = breadcrumb
     ? `Путь в документе (родительские заголовки): ${breadcrumb}\n`
@@ -479,15 +491,22 @@ ${taxonomyCatalog}
 Начало содержимого: "${preview}"`;
 
   const raw = await llmAsk("section_classify", systemPrompt, userPrompt);
-  return parseLlmClassifyResponse(raw);
+  return parseLlmClassifyResponse(raw, validPatterns);
 }
 
-function parseLlmClassifyResponse(raw: string): { section: string; confidence: number } | null {
+function parseLlmClassifyResponse(
+  raw: string,
+  validPatterns: string[]
+): { section: string; confidence: number } | null {
   try {
     const jsonMatch = raw.match(/\{[\s\S]*?\}/);
     if (!jsonMatch) return null;
     const obj = JSON.parse(jsonMatch[0]);
     if (!obj.section || typeof obj.confidence !== "number") return null;
+    if (!validPatterns.includes(obj.section)) {
+      console.warn(`[pipeline] LLM returned unknown section code "${obj.section}", ignoring`);
+      return null;
+    }
     return { section: obj.section, confidence: Math.min(Math.max(obj.confidence, 0), 1) };
   } catch {
     console.warn("[pipeline] Failed to parse LLM classify response:", raw.slice(0, 200));
@@ -528,15 +547,23 @@ async function classifySectionsLlmQa(versionId: string, taxonomy: TaxonomyRule[]
           const newConf = Math.min((sec.confidence ?? 0) + 0.15, 1.0);
           await prisma.section.update({
             where: { id: sec.id },
-            data: { confidence: newConf, classifiedBy: "llm_qa" },
+            data: {
+              confidence: newConf,
+              classifiedBy: "llm_qa",
+              llmSection: sec.standardSection,
+              llmConfidence: newConf,
+            },
           });
         } else if (correction.suggestedSection) {
+          const qaConf = correction.suggestedConfidence ?? 0.6;
           await prisma.section.update({
             where: { id: sec.id },
             data: {
               standardSection: correction.suggestedSection,
-              confidence: correction.suggestedConfidence ?? 0.6,
+              confidence: qaConf,
               classifiedBy: "llm_qa",
+              llmSection: correction.suggestedSection,
+              llmConfidence: qaConf,
             },
           });
         }
@@ -559,6 +586,9 @@ async function llmQaBatch(
   parentChains: Map<string, string[]>,
   taxonomyMap: Map<string, string>
 ): Promise<QaCorrection[]> {
+  const validPatterns = Array.from(taxonomyMap.keys());
+  const validCodesList = validPatterns.join(", ");
+
   const items = sections.map((s, idx) => {
     const preview = s.contentBlocks.map((b) => b.content).join(" ").slice(0, 300);
     const sectionLabel = s.standardSection
@@ -572,35 +602,47 @@ async function llmQaBatch(
   const systemPrompt = `Ты — QA-ревьюер классификации секций клинической документации.
 Тебе дан список секций с текущей классификацией. Проверь каждую.
 
+Допустимые коды секций (СТРОГО только из этого списка):
+${validCodesList}
+
 Правила:
 1. Для каждой секции оцени, правильно ли она классифицирована
 2. Учитывай иерархию документа: поле "Путь" показывает цепочку родительских заголовков, в контексте которых находится секция
 3. Если классификация верна, верни correct=true
-4. Если неверна — предложи правильную секцию из таксономии (suggestedSection) и уверенность (suggestedConfidence)
-5. Верни JSON массив: [{"id":"<id секции>","correct":true/false,"suggestedSection":"<код>","suggestedConfidence":0.8}]
-6. Верни ТОЛЬКО JSON массив без комментариев`;
+4. Если неверна — предложи правильный код из допустимого списка выше (suggestedSection) и уверенность (suggestedConfidence)
+5. suggestedSection ОБЯЗАТЕЛЬНО должен быть одним из допустимых кодов. Любой другой вариант ЗАПРЕЩЁН.
+6. Верни JSON массив: [{"id":"<id секции>","correct":true/false,"suggestedSection":"<код>","suggestedConfidence":0.8}]
+7. Верни ТОЛЬКО JSON массив без комментариев`;
 
   const userPrompt = `Проверь классификацию следующих секций:\n\n${items.join("\n")}`;
 
   const raw = await llmAsk("section_classify", systemPrompt, userPrompt);
-  return parseLlmQaResponse(raw, sections);
+  return parseLlmQaResponse(raw, sections, validPatterns);
 }
 
 function parseLlmQaResponse(
   raw: string,
-  sections: { id: string }[]
+  sections: { id: string }[],
+  validPatterns: string[]
 ): QaCorrection[] {
   try {
     const jsonMatch = raw.match(/\[[\s\S]*?\]/);
     if (!jsonMatch) return sections.map((s) => ({ sectionId: s.id, correct: true }));
 
     const arr = JSON.parse(jsonMatch[0]) as any[];
-    return arr.map((item: any) => ({
-      sectionId: item.id ?? "",
-      correct: item.correct !== false,
-      suggestedSection: item.suggestedSection ?? undefined,
-      suggestedConfidence: typeof item.suggestedConfidence === "number" ? item.suggestedConfidence : undefined,
-    }));
+    return arr.map((item: any) => {
+      const suggested = item.suggestedSection ?? undefined;
+      if (suggested !== undefined && !validPatterns.includes(suggested)) {
+        console.warn(`[pipeline] LLM QA returned unknown section code "${suggested}", ignoring suggestion`);
+        return { sectionId: item.id ?? "", correct: true };
+      }
+      return {
+        sectionId: item.id ?? "",
+        correct: item.correct !== false,
+        suggestedSection: suggested,
+        suggestedConfidence: typeof item.suggestedConfidence === "number" ? item.suggestedConfidence : undefined,
+      };
+    });
   } catch {
     console.warn("[pipeline] Failed to parse LLM QA response:", raw.slice(0, 300));
     return sections.map((s) => ({ sectionId: s.id, correct: true }));

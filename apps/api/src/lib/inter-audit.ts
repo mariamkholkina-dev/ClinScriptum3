@@ -382,6 +382,29 @@ export async function runInterDocAudit(
     await runQaVerification(savedIds);
     console.log(`[inter-audit] QA verification complete`);
 
+    await prisma.findingReview.upsert({
+      where: {
+        docVersionId_auditType: {
+          docVersionId: checkedVersionId,
+          auditType: "inter_audit",
+        },
+      },
+      create: {
+        tenantId: checkedVersion.document.study.tenantId,
+        docVersionId: checkedVersionId,
+        auditType: "inter_audit",
+        protocolVersionId,
+        status: "pending",
+      },
+      update: {
+        status: "pending",
+        protocolVersionId,
+        reviewerId: null,
+        publishedAt: null,
+      },
+    });
+    console.log(`[inter-audit] FindingReview created/reset`);
+
     await prisma.processingRun.update({
       where: { id: run.id },
       data: { status: "completed" },
@@ -554,6 +577,7 @@ async function saveFindings(
         description: f.description,
         suggestion: f.suggestion ?? null,
         severity: f.severity as any,
+        originalSeverity: f.severity as any,
         auditCategory: f.checkId.startsWith("CSR-X") || f.checkId.startsWith("ICF-X") ? "expert" : "concordance",
         issueType: f.checkId,
         issueFamily: f.issueFamily,

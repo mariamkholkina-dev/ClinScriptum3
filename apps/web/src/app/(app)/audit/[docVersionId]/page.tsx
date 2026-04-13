@@ -17,7 +17,10 @@ import {
   Eye,
   Shield,
   RotateCcw,
+  FileText,
+  Clock,
 } from "lucide-react";
+import { openInWord } from "@/lib/open-in-word";
 
 /* ──────────────────── Constants ──────────────────── */
 
@@ -156,6 +159,8 @@ export default function IntraAuditPage() {
   const docTitle = findingsQuery.data?.documentTitle ?? "Документ";
   const versionLabel = findingsQuery.data?.versionLabel ?? "";
   const isRunning = statusQuery.data?.isRunning ?? false;
+  const reviewPending = (findingsQuery.data as any)?.reviewPending === true;
+  const reviewStatus = statusQuery.data?.reviewStatus ?? null;
 
   const selectedFinding = findings.find((f) => f.id === selectedFindingId);
 
@@ -204,6 +209,14 @@ export default function IntraAuditPage() {
               Запустить повторный аудит
             </button>
             <button
+              onClick={() => openInWord({ docVersionId, mode: "intra_audit" })}
+              disabled={isRunning}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <FileText className="h-4 w-4" />
+              Открыть в Word
+            </button>
+            <button
               onClick={handleExport}
               disabled={isRunning || findings.length === 0}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
@@ -221,6 +234,16 @@ export default function IntraAuditPage() {
           <div className="flex items-center gap-2 text-sm text-blue-700">
             <Loader2 className="h-4 w-4 animate-spin" />
             Выполняется анализ документа... Результаты появятся автоматически.
+          </div>
+        </div>
+      )}
+
+      {/* Review pending banner */}
+      {reviewPending && !isRunning && (
+        <div className="flex-none bg-amber-50 border-b border-amber-200 px-6 py-3">
+          <div className="flex items-center gap-2 text-sm text-amber-700">
+            <Clock className="h-4 w-4" />
+            Результаты аудита на проверке у специалиста. Findings будут доступны после публикации.
           </div>
         </div>
       )}

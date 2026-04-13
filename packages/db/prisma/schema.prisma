@@ -39,8 +39,9 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  refreshTokens RefreshToken[]
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refreshTokens  RefreshToken[]
+  findingReviews FindingReview[]
 
   @@index([tenantId])
   @@map("users")
@@ -49,6 +50,7 @@ model User {
 enum UserRole {
   writer
   qc_operator
+  findings_reviewer
   rule_admin
   tenant_admin
 }
@@ -127,13 +129,15 @@ model DocumentVersion {
   digitalTwin   Json?                 @map("digital_twin") @db.JsonB
   createdAt     DateTime              @default(now()) @map("created_at")
 
-  document       Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  sections       Section[]
-  facts          Fact[]
-  findings       Finding[]
-  processingRuns ProcessingRun[]
-  soaTables      SoaTable[]
-  generatedDocs  GeneratedDoc[]
+  document        Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  sections        Section[]
+  facts           Fact[]
+  findings        Finding[]
+  processingRuns  ProcessingRun[]
+  soaTables       SoaTable[]
+  generatedDocs   GeneratedDoc[]
+  tuningSessions  TuningSession[]
+  findingReviews  FindingReview[]
 
   @@unique([documentId, versionNumber])
   @@index([documentId])
@@ -163,6 +167,10 @@ model Section {
   standardSection String?       @map("standard_section")
   confidence      Float         @default(0)
   classifiedBy    String?       @map("classified_by")
+  algoSection     String?       @map("algo_section")
+  algoConfidence  Float         @default(0) @map("algo_confidence")
+  llmSection      String?       @map("llm_section")
+  llmConfidence   Float         @default(0) @map("llm_confidence")
   level           Int
   order           Int
   status          SectionStatus @default(not_validated)
@@ -257,10 +265,13 @@ model Finding {
   issueFamily     String?        @map("issue_family")
   anchorZone      String?        @map("anchor_zone")
   targetZone      String?        @map("target_zone")
-  qaVerified      Boolean        @default(false) @map("qa_verified")
-  extraAttributes Json           @default("{}") @map("extra_attributes") @db.JsonB
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  qaVerified       Boolean        @default(false) @map("qa_verified")
+  hiddenByReviewer Boolean        @default(false) @map("hidden_by_reviewer")
+  originalSeverity AuditSeverity? @map("original_severity")
+  reviewerNote     String?        @map("reviewer_note")
+  extraAttributes  Json           @default("{}") @map("extra_attributes") @db.JsonB
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
 
   docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
 
@@ -482,8 +493,9 @@ model GeneratedDoc {
   createdAt         DateTime           @default(now()) @map("created_at")
   updatedAt         DateTime           @updatedAt @map("updated_at")
 
-  protocolVersion DocumentVersion      @relation(fields: [protocolVersionId], references: [id], onDelete: Cascade)
+  protocolVersion DocumentVersion       @relation(fields: [protocolVersionId], references: [id], onDelete: Cascade)
   sections        GeneratedDocSection[]
+  tuningSessions  TuningSession[]
 
   @@index([protocolVersionId])
   @@map("generated_docs")
@@ -519,4 +531,177 @@ enum GeneratedDocSectionStatus {
   completed
   skipped
   failed
+}
+
+// ─── Finding Reviews ─────────────────────────────────────────
+
+model FindingReview {
+  id                String              @id @default(uuid()) @db.Uuid
+  tenantId          String              @map("tenant_id") @db.Uuid
+  docVersionId      String              @map("doc_version_id") @db.Uuid
+  auditType         FindingType         @map("audit_type")
+  protocolVersionId String?             @map("protocol_version_id") @db.Uuid
+  reviewerId        String?             @map("reviewer_id") @db.Uuid
+  status            FindingReviewStatus @default(pending)
+  createdAt         DateTime            @default(now()) @map("created_at")
+  publishedAt       DateTime?           @map("published_at")
+
+  docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+  reviewer   User?           @relation(fields: [reviewerId], references: [id])
+  logs       FindingReviewLog[]
+
+  @@unique([docVersionId, auditType])
+  @@index([tenantId])
+  @@index([status])
+  @@map("finding_reviews")
+}
+
+enum FindingReviewStatus {
+  pending
+  in_review
+  published
+}
+
+model FindingReviewLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  reviewId      String   @map("review_id") @db.Uuid
+  findingId     String   @map("finding_id") @db.Uuid
+  reviewerId    String   @map("reviewer_id") @db.Uuid
+  action        String
+  previousValue String?  @map("previous_value")
+  newValue      String?  @map("new_value")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  review FindingReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@index([findingId])
+  @@map("finding_review_logs")
+}
+
+// ─── Word Add-in Sessions ────────────────────────────────────
+
+model WordSession {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  context   Json     @db.JsonB
+  exchanged Boolean  @default(false)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("word_sessions")
+}
+
+// ─── Quality Tuning ──────────────────────────────────────────
+
+model TuningSession {
+  id           String              @id @default(uuid()) @db.Uuid
+  tenantId     String              @map("tenant_id") @db.Uuid
+  userId       String              @map("user_id") @db.Uuid
+  docVersionId String              @map("doc_version_id") @db.Uuid
+  type         TuningType
+  status       TuningSessionStatus @default(processing)
+  isGoldenSet  Boolean             @default(false) @map("is_golden_set")
+  stats        Json                @default("{}") @db.JsonB
+  createdAt    DateTime            @default(now()) @map("created_at")
+  completedAt  DateTime?           @map("completed_at")
+
+  generatedDocId String?  @map("generated_doc_id") @db.Uuid
+
+  docVersion         DocumentVersion    @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+  generatedDoc       GeneratedDoc?      @relation(fields: [generatedDocId], references: [id], onDelete: SetNull)
+  sectionVerdicts    SectionVerdict[]
+  factVerdicts       FactVerdict[]
+  soaVerdicts        SoaVerdict[]
+  generationVerdicts GenerationVerdict[]
+
+  @@index([tenantId])
+  @@index([docVersionId])
+  @@map("tuning_sessions")
+}
+
+enum TuningType {
+  section_classification
+  fact_extraction
+  soa_detection
+  icf_generation
+}
+
+enum TuningSessionStatus {
+  processing
+  pending_review
+  in_review
+  completed
+}
+
+model SectionVerdict {
+  id                String    @id @default(uuid()) @db.Uuid
+  tuningSessionId   String    @map("tuning_session_id") @db.Uuid
+  sectionId         String    @map("section_id") @db.Uuid
+  algoResult        String?   @map("algo_result")
+  algoConfidence    Float     @default(0) @map("algo_confidence")
+  llmResult         String?   @map("llm_result")
+  llmConfidence     Float     @default(0) @map("llm_confidence")
+  auditorChoice     String?   @map("auditor_choice")
+  auditorAgreedWith String?   @map("auditor_agreed_with")
+  comment           String?
+  reviewedAt        DateTime? @map("reviewed_at")
+
+  tuningSession TuningSession @relation(fields: [tuningSessionId], references: [id], onDelete: Cascade)
+
+  @@index([tuningSessionId])
+  @@map("section_verdicts")
+}
+
+model FactVerdict {
+  id              String    @id @default(uuid()) @db.Uuid
+  tuningSessionId String    @map("tuning_session_id") @db.Uuid
+  factId          String?   @map("fact_id") @db.Uuid
+  factKey         String    @map("fact_key")
+  llmValue        String?   @map("llm_value")
+  llmConfidence   Float     @default(0) @map("llm_confidence")
+  isCorrect       Boolean?  @map("is_correct")
+  auditorValue    String?   @map("auditor_value")
+  comment         String?
+  reviewedAt      DateTime? @map("reviewed_at")
+
+  tuningSession TuningSession @relation(fields: [tuningSessionId], references: [id], onDelete: Cascade)
+
+  @@index([tuningSessionId])
+  @@map("fact_verdicts")
+}
+
+model SoaVerdict {
+  id                 String    @id @default(uuid()) @db.Uuid
+  tuningSessionId    String    @map("tuning_session_id") @db.Uuid
+  soaTableId         String?   @map("soa_table_id") @db.Uuid
+  isCorrectDetection Boolean?  @map("is_correct_detection")
+  missedTables       Json      @default("[]") @db.JsonB
+  falsePositives     Json      @default("[]") @db.JsonB
+  cellVerdicts       Json      @default("[]") @db.JsonB
+  comment            String?
+  reviewedAt         DateTime? @map("reviewed_at")
+
+  tuningSession TuningSession @relation(fields: [tuningSessionId], references: [id], onDelete: Cascade)
+
+  @@index([tuningSessionId])
+  @@map("soa_verdicts")
+}
+
+model GenerationVerdict {
+  id                    String    @id @default(uuid()) @db.Uuid
+  tuningSessionId       String    @map("tuning_session_id") @db.Uuid
+  generatedDocSectionId String    @map("generated_doc_section_id") @db.Uuid
+  sectionTitle          String    @default("") @map("section_title")
+  standardSection       String?   @map("standard_section")
+  rating                Int       @default(0)
+  comment               String?
+  reviewedAt            DateTime? @map("reviewed_at")
+
+  tuningSession TuningSession @relation(fields: [tuningSessionId], references: [id], onDelete: Cascade)
+
+  @@index([tuningSessionId])
+  @@map("generation_verdicts")
 }

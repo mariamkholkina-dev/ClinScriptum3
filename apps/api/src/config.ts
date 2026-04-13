@@ -50,7 +50,9 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET ?? "dev-secret-change-in-production",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "15m",
   refreshTokenExpiresInDays: parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS ?? "30", 10),
-  corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:3000",
+  corsOrigin: process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(",")
+    : ["http://localhost:3000", "https://localhost:3001"],
 
   storage: {
     type: (process.env.STORAGE_TYPE ?? "local") as "local" | "s3",

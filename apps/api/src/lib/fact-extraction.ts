@@ -14,6 +14,7 @@
 
 import { prisma } from "@clinscriptum/db";
 import { llmAsk } from "./llm-gateway.js";
+import { config } from "../config.js";
 import {
   loadFactRegistry,
   type FactRegistryEntry,
@@ -42,7 +43,38 @@ interface ExtractedFact {
 const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "appendix"];
 const SYNOPSIS_PREFIX = "synopsis";
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
-const MAX_DOCUMENT_CHARS = 120_000;
+
+/**
+ * Примерное количество символов на один токен для смешанного RU/EN текста.
+ * Для русского языка токенизаторы (BPE) дают ~2–3 символа/токен,
+ * для английского ~4. Значение 3 — консервативный общий множитель.
+ */
+const CHARS_PER_TOKEN = 3;
+
+/**
+ * Резерв токенов на системный промпт + список фактов + буфер ответа LLM.
+ * Системный промпт + 60 фактов с описаниями ≈ 2 500 токенов,
+ * плюс 3 500 токенов на ответ (JSON с найденными фактами).
+ */
+const FACT_EXTRACTION_PROMPT_OVERHEAD_TOKENS = 6_000;
+
+/**
+ * Резерв токенов для QA-шага: системный промпт + сводка фактов ≈ 800 токенов,
+ * плюс 700 токенов на ответ.
+ */
+const FACT_EXTRACTION_QA_PROMPT_OVERHEAD_TOKENS = 1_500;
+
+function getMaxDocumentChars(): number {
+  const maxTokens = config.llm("fact_extraction").maxTokens;
+  const budgetTokens = Math.max(maxTokens - FACT_EXTRACTION_PROMPT_OVERHEAD_TOKENS, 2_000);
+  return budgetTokens * CHARS_PER_TOKEN;
+}
+
+function getMaxQaContextChars(): number {
+  const maxTokens = config.llm("fact_extraction_qa").maxTokens;
+  const budgetTokens = Math.max(maxTokens - FACT_EXTRACTION_QA_PROMPT_OVERHEAD_TOKENS, 500);
+  return budgetTokens * CHARS_PER_TOKEN;
+}
 
 /* ═══════════════════════ Entry point ═══════════════════════ */
 
@@ -83,7 +115,9 @@ export async function extractFactsForVersion(versionId: string) {
   }
 
   // 2. Подготовить текст документа с маркерами секций
-  const documentText = buildDocumentText(relevantSections);
+  const maxDocumentChars = getMaxDocumentChars();
+  console.log(`[facts] Document text budget: ${maxDocumentChars} chars (from maxTokens=${config.llm("fact_extraction").maxTokens})`);
+  const documentText = buildDocumentText(relevantSections, maxDocumentChars);
 
   // 3. Загрузить реестр фактов, отфильтровать по типу исследования
   const allFacts = loadFactRegistry();
@@ -122,7 +156,8 @@ function buildDocumentText(
     title: string;
     standardSection: string | null;
     contentBlocks: { content: string }[];
-  }[]
+  }[],
+  maxChars: number
 ): string {
   const parts: string[] = [];
   let totalChars = 0;
@@ -134,8 +169,8 @@ function buildDocumentText(
 
     const chunk = `\n${marker}\n${sectionText}\n`;
 
-    if (totalChars + chunk.length > MAX_DOCUMENT_CHARS) {
-      const remaining = MAX_DOCUMENT_CHARS - totalChars;
+    if (totalChars + chunk.length > maxChars) {
+      const remaining = maxChars - totalChars;
       if (remaining > 200) parts.push(chunk.slice(0, remaining));
       break;
     }
@@ -276,7 +311,8 @@ async function qaCheckFacts(
     return `- ${f.category}.${f.factKey}: значение="${f.value}", уверенность=${f.confidence}, источники: ${srcTexts}`;
   }).join("\n");
 
-  const contextSnippet = documentText.slice(0, 60_000);
+  const maxQaContextChars = getMaxQaContextChars();
+  const contextSnippet = documentText.slice(0, maxQaContextChars);
 
   const systemPrompt = `Ты — QA-аудитор извлечения фактов из клинического протокола.
 Тебе даны факты с низкой уверенностью извлечения. Проверь каждый:

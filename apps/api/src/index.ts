@@ -18,6 +18,130 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// ─── Word Add-in Session Endpoints ─────────────────────────
+
+app.post("/api/word-sessions", async (req, res) => {
+  try {
+    const { verifyAccessToken } = await import("./lib/auth.js");
+    const { createWordSession } = await import("./lib/word-session.js");
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const user = verifyAccessToken(authHeader.slice(7));
+    const { docVersionId, mode, protocolVersionId, generatedDocId } = req.body;
+
+    if (!mode) {
+      res.status(400).json({ error: "mode is required" });
+      return;
+    }
+
+    const sessionId = await createWordSession(user.userId, user.tenantId, {
+      docVersionId,
+      mode,
+      protocolVersionId,
+      generatedDocId,
+    });
+
+    res.json({ sessionId });
+  } catch (err) {
+    console.error("[word-sessions] Create error:", err);
+    res.status(500).json({ error: "Failed to create session" });
+  }
+});
+
+app.post("/api/word-sessions/:sessionId/exchange", async (req, res) => {
+  try {
+    const { exchangeWordSession } = await import("./lib/word-session.js");
+
+    const result = await exchangeWordSession(req.params.sessionId);
+    if (!result) {
+      res.status(404).json({ error: "Session not found or expired" });
+      return;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error("[word-sessions] Exchange error:", err);
+    res.status(500).json({ error: "Session exchange failed" });
+  }
+});
+
+app.get("/api/word-open/:sessionId", async (req, res) => {
+  try {
+    const { prisma } = await import("@clinscriptum/db");
+    const { storage } = await import("./lib/storage.js");
+    const { injectSessionXml } = await import("./lib/docx-tag.js");
+
+    const session = await prisma.wordSession.findUnique({
+      where: { id: req.params.sessionId },
+    });
+
+    if (!session || session.expiresAt < new Date()) {
+      res.status(404).json({ error: "Session not found or expired" });
+      return;
+    }
+
+    const ctx = session.context as any;
+    let fileUrl: string | null = null;
+    let filename = "document.docx";
+
+    if (ctx.generatedDocId && (ctx.mode === "generation_review" || ctx.mode === "generation_insert")) {
+      const { exportGeneratedDocToWord } = await import("./lib/doc-generation.js");
+      const buffer = await exportGeneratedDocToWord(ctx.generatedDocId);
+      const tagged = await injectSessionXml(buffer, session.id);
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
+      res.setHeader("Content-Length", tagged.length);
+      res.send(tagged);
+      return;
+    }
+
+    if (ctx.docVersionId) {
+      const version = await prisma.documentVersion.findUnique({
+        where: { id: ctx.docVersionId },
+        include: { document: true },
+      });
+
+      if (!version) {
+        res.status(404).json({ error: "Document version not found" });
+        return;
+      }
+
+      fileUrl = version.fileUrl;
+      filename = `${version.document.title}_v${version.versionNumber}.docx`;
+    }
+
+    if (!fileUrl) {
+      res.status(400).json({ error: "No document associated with session" });
+      return;
+    }
+
+    let buffer: Buffer;
+    try {
+      buffer = await storage.download(fileUrl);
+    } catch (dlErr: any) {
+      console.error("[word-open] File not found in storage:", fileUrl, dlErr.message);
+      res.status(404).json({ error: `Document file not found in storage: ${fileUrl}` });
+      return;
+    }
+
+    const tagged = await injectSessionXml(buffer, session.id);
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader("Content-Length", tagged.length);
+    res.send(tagged);
+  } catch (err) {
+    console.error("[word-open] Error:", err);
+    res.status(500).json({ error: "Failed to prepare document" });
+  }
+});
+
 app.get("/api/download/:versionId", async (req, res) => {
   try {
     const { verifyAccessToken } = await import("./lib/auth.js");

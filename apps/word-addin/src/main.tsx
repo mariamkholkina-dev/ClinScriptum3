@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { App } from "./App";
 
 declare const Office: any;
@@ -7,7 +8,9 @@ declare const Office: any;
 Office.onReady(() => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
-      <App />
+      <FluentProvider theme={webLightTheme}>
+        <App />
+      </FluentProvider>
     </React.StrictMode>
   );
 });

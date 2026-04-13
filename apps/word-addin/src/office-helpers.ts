@@ -1,18 +1,66 @@
 declare const Word: any;
+declare const Office: any;
 
-/**
- * URS-044: Navigate to a specific text in the Word document.
- */
+const CLINSCRIPTUM_NS = "urn:clinscriptum:word-session";
+
 export async function navigateToText(textSnippet: string): Promise<boolean> {
   return Word.run(async (context: any) => {
     const body = context.document.body;
-    const searchResults = body.search(textSnippet, { matchCase: false, matchWholeWord: false });
+    const searchResults = body.search(textSnippet, {
+      matchCase: false,
+      matchWholeWord: false,
+    });
     searchResults.load("items");
     await context.sync();
 
     if (searchResults.items.length > 0) {
-      const range = searchResults.items[0];
-      range.select();
+      searchResults.items[0].select();
+      await context.sync();
+      return true;
+    }
+
+    if (textSnippet.length > 40) {
+      const shorter = textSnippet.slice(0, 40);
+      const fallback = body.search(shorter, { matchCase: false });
+      fallback.load("items");
+      await context.sync();
+      if (fallback.items.length > 0) {
+        fallback.items[0].select();
+        await context.sync();
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+export async function navigateToSection(sectionTitle: string): Promise<boolean> {
+  return Word.run(async (context: any) => {
+    const body = context.document.body;
+    const paragraphs = body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    for (const para of paragraphs.items) {
+      para.load("text,style");
+    }
+    await context.sync();
+
+    for (const para of paragraphs.items) {
+      const style = (para.style || "").toLowerCase();
+      const isHeading = style.includes("heading") || style.includes("заголовок");
+      if (isHeading && para.text.toLowerCase().includes(sectionTitle.toLowerCase())) {
+        para.select();
+        await context.sync();
+        return true;
+      }
+    }
+
+    const search = body.search(sectionTitle, { matchCase: false });
+    search.load("items");
+    await context.sync();
+    if (search.items.length > 0) {
+      search.items[0].select();
       await context.sync();
       return true;
     }
@@ -20,9 +68,6 @@ export async function navigateToText(textSnippet: string): Promise<boolean> {
   });
 }
 
-/**
- * URS-044: Apply a text replacement (fix) in the document.
- */
 export async function applyTextReplacement(
   oldText: string,
   newText: string
@@ -42,9 +87,52 @@ export async function applyTextReplacement(
   });
 }
 
-/**
- * URS-046: Get the current document content for upload.
- */
+export async function highlightFindingLocations(
+  snippets: string[],
+  color: string = "Yellow"
+): Promise<number> {
+  return Word.run(async (context: any) => {
+    let count = 0;
+    for (const snippet of snippets) {
+      if (!snippet || snippet.length < 5) continue;
+      const searchText = snippet.length > 60 ? snippet.slice(0, 60) : snippet;
+      const results = context.document.body.search(searchText, { matchCase: false });
+      results.load("items");
+      await context.sync();
+      for (const item of results.items) {
+        item.font.highlightColor = color;
+        count++;
+      }
+    }
+    await context.sync();
+    return count;
+  });
+}
+
+export async function clearHighlights(): Promise<void> {
+  return Word.run(async (context: any) => {
+    const body = context.document.body;
+    body.font.highlightColor = "None";
+    await context.sync();
+  });
+}
+
+export async function insertTextAtCursor(text: string): Promise<void> {
+  return Word.run(async (context: any) => {
+    const selection = context.document.getSelection();
+    selection.insertText(text, "Replace");
+    await context.sync();
+  });
+}
+
+export async function insertHtmlAtCursor(html: string): Promise<void> {
+  return Word.run(async (context: any) => {
+    const selection = context.document.getSelection();
+    selection.insertHtml(html, "Replace");
+    await context.sync();
+  });
+}
+
 export async function getDocumentContent(): Promise<string> {
   return Word.run(async (context: any) => {
     const body = context.document.body;
@@ -54,20 +142,16 @@ export async function getDocumentContent(): Promise<string> {
   });
 }
 
-/**
- * URS-047: Get document as base64 for upload, ignoring tracked changes.
- */
 export async function getDocumentAsBase64(): Promise<string> {
   return new Promise((resolve, reject) => {
-    (Office as any).context.document.getFileAsync(
-      (Office as any).FileType.Compressed,
+    Office.context.document.getFileAsync(
+      Office.FileType.Compressed,
       { sliceSize: 65536 },
       (result: any) => {
-        if (result.status !== (Office as any).AsyncResultStatus.Succeeded) {
+        if (result.status !== Office.AsyncResultStatus.Succeeded) {
           reject(new Error("Failed to get file"));
           return;
         }
-
         const file = result.value;
         const sliceCount = file.sliceCount;
         const chunks: Uint8Array[] = [];
@@ -75,24 +159,27 @@ export async function getDocumentAsBase64(): Promise<string> {
 
         const getSlice = (index: number) => {
           file.getSliceAsync(index, (sliceResult: any) => {
-            if (sliceResult.status === (Office as any).AsyncResultStatus.Succeeded) {
-              chunks.push(new Uint8Array(sliceResult.value.data));
+            if (sliceResult.status === Office.AsyncResultStatus.Succeeded) {
+              chunks[index] = new Uint8Array(sliceResult.value.data);
               slicesReceived++;
               if (slicesReceived === sliceCount) {
                 file.closeAsync();
-                const combined = new Uint8Array(
-                  chunks.reduce((sum, c) => sum + c.length, 0)
-                );
+                const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+                const combined = new Uint8Array(totalLen);
                 let offset = 0;
                 for (const chunk of chunks) {
                   combined.set(chunk, offset);
                   offset += chunk.length;
                 }
-                const base64 = btoa(
-                  String.fromCharCode(...combined)
-                );
-                resolve(base64);
-              } else {
+                const binaryChunks: string[] = [];
+                const CHUNK_SIZE = 8192;
+                for (let i = 0; i < combined.length; i += CHUNK_SIZE) {
+                  binaryChunks.push(
+                    String.fromCharCode(...combined.slice(i, i + CHUNK_SIZE))
+                  );
+                }
+                resolve(btoa(binaryChunks.join("")));
+              } else if (index + 1 < sliceCount) {
                 getSlice(index + 1);
               }
             } else {
@@ -101,28 +188,59 @@ export async function getDocumentAsBase64(): Promise<string> {
             }
           });
         };
-
         getSlice(0);
       }
     );
   });
 }
 
-/**
- * Highlight text range in the document.
- */
-export async function highlightText(
-  textSnippet: string,
-  color: string = "Yellow"
-): Promise<void> {
-  return Word.run(async (context: any) => {
-    const searchResults = context.document.body.search(textSnippet, { matchCase: false });
-    searchResults.load("items");
-    await context.sync();
+export async function readCustomXmlPart(): Promise<string | null> {
+  return new Promise((resolve) => {
+    Office.context.document.customXmlParts.getByNamespaceAsync(
+      CLINSCRIPTUM_NS,
+      (result: any) => {
+        if (
+          result.status !== Office.AsyncResultStatus.Succeeded ||
+          result.value.length === 0
+        ) {
+          resolve(null);
+          return;
+        }
+        const part = result.value[0];
+        part.getXmlAsync((xmlResult: any) => {
+          if (xmlResult.status !== Office.AsyncResultStatus.Succeeded) {
+            resolve(null);
+            return;
+          }
+          const xml = xmlResult.value as string;
+          const match = xml.match(/<SessionId>([^<]+)<\/SessionId>/);
+          resolve(match ? match[1] : null);
+        });
+      }
+    );
+  });
+}
 
-    for (const item of searchResults.items) {
-      item.font.highlightColor = color;
-    }
-    await context.sync();
+export async function removeCustomXmlPart(): Promise<void> {
+  return new Promise((resolve) => {
+    Office.context.document.customXmlParts.getByNamespaceAsync(
+      CLINSCRIPTUM_NS,
+      (result: any) => {
+        if (
+          result.status !== Office.AsyncResultStatus.Succeeded ||
+          result.value.length === 0
+        ) {
+          resolve();
+          return;
+        }
+        let remaining = result.value.length;
+        for (const part of result.value) {
+          part.deleteAsync(() => {
+            remaining--;
+            if (remaining === 0) resolve();
+          });
+        }
+      }
+    );
   });
 }

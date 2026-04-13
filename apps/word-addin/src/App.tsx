@@ -1,251 +1,272 @@
 import React, { useState, useEffect } from "react";
-import { setToken, trpcCall } from "./api";
-import { navigateToText, applyTextReplacement, getDocumentAsBase64 } from "./office-helpers";
+import {
+  TabList,
+  Tab,
+  SelectTabEvent,
+  SelectTabData,
+  Spinner,
+  Text,
+  Button,
+  Select,
+  makeStyles,
+  tokens,
+  Divider,
+} from "@fluentui/react-components";
+import {
+  DocumentSearch24Regular,
+  ArrowUpload24Regular,
+  Sparkle24Regular,
+  SignOut24Regular,
+} from "@fluentui/react-icons";
+import { AuthProvider, useAuth, type SessionContext } from "./auth/AuthProvider";
+import { useAutoAuth } from "./auth/useAutoAuth";
+import { LoginForm } from "./auth/LoginForm";
+import { FindingsPanel } from "./findings/FindingsPanel";
+import { InterAuditPanel } from "./inter-audit/InterAuditPanel";
+import { GenerationPanel } from "./generation/GenerationPanel";
+import { UploadPanel } from "./upload/UploadPanel";
+import { trpcCall } from "./api";
 
-interface Finding {
-  id: string;
-  type: "editorial" | "semantic";
-  description: string;
-  suggestion: string | null;
-  sourceRef: { textSnippet?: string; sectionTitle?: string };
-  status: string;
-  extraAttributes: Record<string, unknown>;
-}
+const useStyles = makeStyles({
+  root: {
+    display: "flex",
+    flexDirection: "column",
+    height: "100vh",
+    overflow: "hidden",
+  },
+  topBar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "4px 8px",
+    backgroundColor: tokens.colorBrandBackground2,
+  },
+  content: {
+    flex: 1,
+    overflow: "hidden",
+  },
+  loading: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100%",
+    gap: "16px",
+  },
+  selector: {
+    padding: "16px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  selectItem: {
+    padding: "8px 12px",
+    cursor: "pointer",
+    borderRadius: "4px",
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    "&:hover": { backgroundColor: tokens.colorNeutralBackground1Hover },
+  },
+});
 
 export function App() {
-  const [view, setView] = useState<"login" | "findings" | "upload">("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [docVersionId, setDocVersionId] = useState("");
-  const [loading, setLoading] = useState(false);
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
+}
 
-  const handleLogin = async () => {
-    try {
-      setError("");
-      const result = await trpcCall<{ accessToken: string }>("auth.login", {
-        email,
-        password,
-      });
-      setToken(result.accessToken);
-      setView("findings");
-    } catch (e: any) {
-      setError(e.message);
-    }
-  };
+type ActiveTab = "findings" | "upload";
 
-  const loadFindings = async () => {
-    if (!docVersionId) return;
-    setLoading(true);
-    try {
-      const result = await trpcCall<Finding[]>("processing.listFindings", {
-        docVersionId,
-      });
-      setFindings(result);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+function AppContent() {
+  const styles = useStyles();
+  const { isAuthenticated, sessionContext, logout, setSessionCtx } = useAuth();
+  const { loading, autoAuthFailed } = useAutoAuth();
+  const [activeTab, setActiveTab] = useState<ActiveTab>("findings");
 
-  const handleNavigate = async (textSnippet: string) => {
-    try {
-      await navigateToText(textSnippet);
-    } catch {
-      setError("Could not navigate to text in document");
-    }
-  };
-
-  const handleApplyFix = async (finding: Finding) => {
-    if (!finding.suggestion || !finding.sourceRef.textSnippet) return;
-    try {
-      const success = await applyTextReplacement(
-        finding.sourceRef.textSnippet,
-        finding.suggestion
-      );
-      if (success) {
-        await trpcCall("processing.updateFindingStatus", {
-          findingId: finding.id,
-          status: "resolved",
-        });
-        await loadFindings();
-      }
-    } catch {
-      setError("Failed to apply fix");
-    }
-  };
-
-  const handleUploadNewVersion = async () => {
-    try {
-      setLoading(true);
-      const base64 = await getDocumentAsBase64();
-      // Upload flow: call API to get upload URL then confirm
-      setError("Upload complete (placeholder - connect to document.confirmUpload)");
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Login view
-  if (view === "login") {
+  if (loading) {
     return (
-      <div style={styles.container}>
-        <h2 style={styles.title}>ClinScriptum</h2>
-        <p style={styles.subtitle}>Sign in to review findings</p>
-
-        {error && <div style={styles.error}>{error}</div>}
-
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={styles.input}
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={styles.input}
-        />
-        <button onClick={handleLogin} style={styles.button}>
-          Sign in
-        </button>
+      <div className={styles.loading}>
+        <Spinner size="large" />
+        <Text>Подключение к ClinScriptum...</Text>
       </div>
     );
   }
 
-  // Findings view
+  if (!isAuthenticated) {
+    return <LoginForm />;
+  }
+
+  if (!sessionContext) {
+    return <ManualModeSelector onSelect={setSessionCtx} />;
+  }
+
+  const mode = sessionContext.mode;
+  const docVersionId = sessionContext.docVersionId;
+
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h2 style={styles.title}>Findings</h2>
-        <div style={styles.tabs}>
-          <button
-            onClick={() => setView("findings")}
-            style={view === "findings" ? styles.tabActive : styles.tab}
-          >
-            Findings
-          </button>
-          <button
-            onClick={() => setView("upload")}
-            style={view === "upload" ? styles.tabActive : styles.tab}
-          >
-            Upload
-          </button>
-        </div>
+    <div className={styles.root}>
+      <div className={styles.topBar}>
+        <Text size={200} weight="semibold" style={{ color: tokens.colorBrandForeground1 }}>
+          ClinScriptum
+        </Text>
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<SignOut24Regular />}
+          onClick={logout}
+        />
       </div>
 
-      {error && <div style={styles.error}>{error}</div>}
-
-      {view === "findings" && (
+      {(mode === "intra_audit" || mode === "inter_audit") && docVersionId && (
         <>
-          <div style={styles.searchRow}>
-            <input
-              placeholder="Document Version ID"
-              value={docVersionId}
-              onChange={(e) => setDocVersionId(e.target.value)}
-              style={{ ...styles.input, flex: 1 }}
-            />
-            <button onClick={loadFindings} style={styles.buttonSmall} disabled={loading}>
-              {loading ? "..." : "Load"}
-            </button>
-          </div>
-
-          <div style={styles.findingsList}>
-            {findings.map((f) => (
-              <div key={f.id} style={styles.findingCard}>
-                <div style={styles.findingHeader}>
-                  <span
-                    style={{
-                      ...styles.badge,
-                      background: f.type === "editorial" ? "#dbeafe" : "#ffedd5",
-                      color: f.type === "editorial" ? "#1d4ed8" : "#c2410c",
-                    }}
-                  >
-                    {f.type}
-                  </span>
-                  <span
-                    style={{
-                      ...styles.badge,
-                      background: f.status === "pending" ? "#fef3c7" : "#d1fae5",
-                    }}
-                  >
-                    {f.status}
-                  </span>
-                </div>
-
-                <p style={styles.findingDesc}>{f.description}</p>
-
-                {f.suggestion && (
-                  <p style={styles.suggestion}>Fix: {f.suggestion}</p>
-                )}
-
-                <div style={styles.findingActions}>
-                  {f.sourceRef.textSnippet && (
-                    <button
-                      onClick={() => handleNavigate(f.sourceRef.textSnippet!)}
-                      style={styles.actionBtn}
-                    >
-                      Navigate
-                    </button>
-                  )}
-                  {f.suggestion && f.status === "pending" && (
-                    <button
-                      onClick={() => handleApplyFix(f)}
-                      style={{ ...styles.actionBtn, background: "#dcfce7" }}
-                    >
-                      Apply Fix
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-
-            {findings.length === 0 && !loading && (
-              <p style={styles.empty}>No findings loaded. Enter a version ID and click Load.</p>
+          <TabList
+            size="small"
+            selectedValue={activeTab}
+            onTabSelect={(_, d: SelectTabData) => setActiveTab(d.value as ActiveTab)}
+          >
+            <Tab value="findings" icon={<DocumentSearch24Regular />}>
+              Находки
+            </Tab>
+            <Tab value="upload" icon={<ArrowUpload24Regular />}>
+              Загрузить версию
+            </Tab>
+          </TabList>
+          <div className={styles.content}>
+            {activeTab === "findings" && mode === "intra_audit" && (
+              <FindingsPanel docVersionId={docVersionId} />
+            )}
+            {activeTab === "findings" && mode === "inter_audit" && sessionContext.protocolVersionId && (
+              <InterAuditPanel
+                docVersionId={docVersionId}
+                protocolVersionId={sessionContext.protocolVersionId}
+              />
+            )}
+            {activeTab === "upload" && (
+              <UploadPanel docVersionId={docVersionId} />
             )}
           </div>
         </>
       )}
 
-      {view === "upload" && (
-        <div style={{ padding: 16 }}>
-          <p style={styles.subtitle}>Upload the current document as a new version.</p>
-          <button onClick={handleUploadNewVersion} style={styles.button} disabled={loading}>
-            {loading ? "Uploading..." : "Upload New Version"}
-          </button>
-        </div>
+      {(mode === "generation_review" || mode === "generation_insert") && sessionContext.generatedDocId && (
+        <>
+          <TabList
+            size="small"
+            selectedValue={activeTab}
+            onTabSelect={(_, d: SelectTabData) => setActiveTab(d.value as ActiveTab)}
+          >
+            <Tab value="findings" icon={<Sparkle24Regular />}>
+              Генерация
+            </Tab>
+            <Tab value="upload" icon={<ArrowUpload24Regular />}>
+              Загрузить версию
+            </Tab>
+          </TabList>
+          <div className={styles.content}>
+            {activeTab === "findings" && (
+              <GenerationPanel
+                generatedDocId={sessionContext.generatedDocId}
+                mode={mode === "generation_review" ? "review" : "insert"}
+              />
+            )}
+            {activeTab === "upload" && docVersionId && (
+              <UploadPanel docVersionId={docVersionId} />
+            )}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: { fontFamily: "system-ui, sans-serif", padding: 16, maxWidth: 360 },
-  title: { fontSize: 18, fontWeight: 700, margin: "0 0 4px" },
-  subtitle: { fontSize: 13, color: "#6b7280", margin: "0 0 16px" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  tabs: { display: "flex", gap: 4 },
-  tab: { padding: "4px 10px", fontSize: 12, border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff", cursor: "pointer" },
-  tabActive: { padding: "4px 10px", fontSize: 12, border: "1px solid #4f6df5", borderRadius: 6, background: "#4f6df5", color: "#fff", cursor: "pointer" },
-  input: { display: "block", width: "100%", padding: "8px 12px", fontSize: 13, border: "1px solid #d1d5db", borderRadius: 8, marginBottom: 10, boxSizing: "border-box" as const },
-  button: { display: "block", width: "100%", padding: "8px 16px", fontSize: 13, fontWeight: 600, background: "#4f6df5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" },
-  buttonSmall: { padding: "8px 16px", fontSize: 13, fontWeight: 600, background: "#4f6df5", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" },
-  error: { background: "#fef2f2", color: "#dc2626", padding: 8, borderRadius: 8, fontSize: 12, marginBottom: 10 },
-  searchRow: { display: "flex", gap: 8, marginBottom: 12 },
-  findingsList: { display: "flex", flexDirection: "column" as const, gap: 10 },
-  findingCard: { border: "1px solid #e5e7eb", borderRadius: 10, padding: 12 },
-  findingHeader: { display: "flex", gap: 6, marginBottom: 6 },
-  badge: { padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 500 },
-  findingDesc: { fontSize: 13, color: "#111827", margin: "0 0 6px", lineHeight: 1.4 },
-  suggestion: { fontSize: 12, color: "#15803d", background: "#f0fdf4", padding: 6, borderRadius: 6, margin: "0 0 8px" },
-  findingActions: { display: "flex", gap: 6 },
-  actionBtn: { padding: "4px 10px", fontSize: 11, border: "1px solid #e5e7eb", borderRadius: 6, background: "#f9fafb", cursor: "pointer" },
-  empty: { fontSize: 13, color: "#9ca3af", textAlign: "center" as const, padding: 24 },
-};
+interface StudyDoc {
+  id: string;
+  title: string;
+  documents: {
+    id: string;
+    title: string;
+    type: string;
+    versions: { id: string; versionNumber: number; versionLabel: string | null; status: string }[];
+  }[];
+}
+
+function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => void }) {
+  const styles = useStyles();
+  const [studies, setStudies] = useState<StudyDoc[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedMode, setSelectedMode] = useState("intra_audit");
+
+  useEffect(() => {
+    trpcCall<StudyDoc[]>("wordAddin.getContext", {})
+      .then(setStudies)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className={styles.loading}>
+        <Spinner label="Загрузка документов..." />
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.selector}>
+      <Text weight="semibold" size={400}>
+        Выберите документ и режим
+      </Text>
+      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        Документ не был открыт из приложения. Выберите документ вручную.
+      </Text>
+
+      <Select
+        value={selectedMode}
+        onChange={(_, d) => setSelectedMode(d.value)}
+        size="small"
+      >
+        <option value="intra_audit">Внутридокументный аудит</option>
+        <option value="inter_audit">Междокументный аудит</option>
+      </Select>
+
+      <Divider />
+
+      {studies.map((study) => (
+        <div key={study.id} style={{ marginBottom: 12 }}>
+          <Text weight="semibold" size={200}>
+            {study.title}
+          </Text>
+          {study.documents.map((doc) =>
+            doc.versions.map((v) => (
+              <div
+                key={v.id}
+                className={styles.selectItem}
+                onClick={() =>
+                  onSelect({
+                    docVersionId: v.id,
+                    mode: selectedMode as any,
+                  })
+                }
+              >
+                <Text size={200}>
+                  {doc.title} — {v.versionLabel ?? `v${v.versionNumber}`}
+                </Text>
+                <br />
+                <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                  {doc.type} · {v.status}
+                </Text>
+              </div>
+            ))
+          )}
+        </div>
+      ))}
+
+      {studies.length === 0 && (
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+          Нет доступных документов
+        </Text>
+      )}
+    </div>
+  );
+}

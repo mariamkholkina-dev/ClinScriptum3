@@ -16,7 +16,9 @@ import {
   AlertTriangle,
   SkipForward,
   ChevronRight,
+  FileEdit,
 } from "lucide-react";
+import { openInWord } from "@/lib/open-in-word";
 
 /* ═══════════ Constants ═══════════ */
 
@@ -176,6 +178,14 @@ export default function GenerateDocPage() {
               {completedCount}/{totalCount} разделов
             </span>
           </div>
+          <button
+            onClick={() => openInWord({ mode: "generation_review", generatedDocId })}
+            disabled={doc.status !== "completed"}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            <FileEdit className="h-4 w-4" />
+            Открыть в Word
+          </button>
           <button
             onClick={handleExport}
             disabled={doc.status !== "completed"}
