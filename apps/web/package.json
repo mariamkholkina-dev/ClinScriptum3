@@ -22,6 +22,7 @@
     "tailwind-merge": "^2"
   },
   "devDependencies": {
+    "@clinscriptum/api": "*",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10",
