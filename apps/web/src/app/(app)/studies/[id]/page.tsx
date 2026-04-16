@@ -663,7 +663,7 @@ function VersionUploadForm({
         const doc = await createDoc.mutateAsync({
           studyId,
           type: docType as any,
-          title: DOC_TYPES.find((d) => d.type === docType)?.label ?? docType,
+          title: file.name.replace(/\.docx$/i, ""),
         });
         docId = doc.id;
       }
