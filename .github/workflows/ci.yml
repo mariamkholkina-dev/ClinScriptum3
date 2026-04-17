@@ -47,3 +47,6 @@ jobs:
       - run: npx prisma generate --schema=packages/db/prisma/schema.prisma
       - run: npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
       - run: npx turbo build
+      - run: npx turbo typecheck
+      - run: npx turbo lint
+      - run: npx turbo test

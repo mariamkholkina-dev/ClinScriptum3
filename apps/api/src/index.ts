@@ -5,7 +5,7 @@ import { appRouter } from "./routers/index.js";
 import { createContext } from "./trpc/context.js";
 import { config } from "./config.js";
 import { apiRateLimiter } from "./lib/rate-limiter.js";
-import { requestLogger } from "./lib/logger.js";
+import { requestLogger, logger } from "./lib/logger.js";
 
 const app = express();
 
@@ -48,7 +48,7 @@ app.post("/api/word-sessions", async (req, res) => {
 
     res.json({ sessionId });
   } catch (err) {
-    console.error("[word-sessions] Create error:", err);
+    logger.error("[word-sessions] Create error", { error: String(err) });
     res.status(500).json({ error: "Failed to create session" });
   }
 });
@@ -65,7 +65,7 @@ app.post("/api/word-sessions/:sessionId/exchange", async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    console.error("[word-sessions] Exchange error:", err);
+    logger.error("[word-sessions] Exchange error", { error: String(err) });
     res.status(500).json({ error: "Session exchange failed" });
   }
 });
@@ -125,7 +125,7 @@ app.get("/api/word-open/:sessionId", async (req, res) => {
     try {
       buffer = await storage.download(fileUrl);
     } catch (dlErr: any) {
-      console.error("[word-open] File not found in storage:", fileUrl, dlErr.message);
+      logger.error("[word-open] File not found in storage", { path: fileUrl, error: dlErr.message });
       res.status(404).json({ error: `Document file not found in storage: ${fileUrl}` });
       return;
     }
@@ -137,7 +137,7 @@ app.get("/api/word-open/:sessionId", async (req, res) => {
     res.setHeader("Content-Length", tagged.length);
     res.send(tagged);
   } catch (err) {
-    console.error("[word-open] Error:", err);
+    logger.error("[word-open] Error", { error: String(err) });
     res.status(500).json({ error: "Failed to prepare document" });
   }
 });
@@ -221,7 +221,7 @@ app.get("/api/audit-report/:versionId", async (req, res) => {
     res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
   } catch (err) {
-    console.error("[audit-report] Error:", err);
+    logger.error("[audit-report] Error", { error: String(err) });
     res.status(500).json({ error: "Report generation failed" });
   }
 });
@@ -328,7 +328,7 @@ app.get("/api/comparison-report/:oldVersionId/:newVersionId", async (req, res) =
     res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
   } catch (err) {
-    console.error("[comparison-report] Error:", err);
+    logger.error("[comparison-report] Error", { error: String(err) });
     res.status(500).json({ error: "Report generation failed" });
   }
 });
@@ -392,7 +392,7 @@ app.get("/api/inter-audit-report/:protocolVersionId/:checkedVersionId", async (r
     res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
   } catch (err) {
-    console.error("[inter-audit-report] Error:", err);
+    logger.error("[inter-audit-report] Error", { error: String(err) });
     res.status(500).json({ error: "Report generation failed" });
   }
 });
@@ -432,7 +432,7 @@ app.get("/api/generated-doc-export/:generatedDocId", async (req, res) => {
     res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
   } catch (err) {
-    console.error("[generated-doc-export] Error:", err);
+    logger.error("[generated-doc-export] Error", { error: String(err) });
     res.status(500).json({ error: "Export failed" });
   }
 });
@@ -446,7 +446,7 @@ app.use(
 );
 
 app.listen(config.port, () => {
-  console.log(`API server running on http://localhost:${config.port}`);
+  logger.info(`API server running on http://localhost:${config.port}`);
 });
 
 export type { AppRouter } from "./routers/index.js";

@@ -307,6 +307,10 @@ model ProcessingRun {
   type             ProcessingRunType
   status           ProcessingRunStatus @default(queued)
   ruleSetVersionId String?             @map("rule_set_version_id") @db.Uuid
+  attemptNumber    Int                 @default(1) @map("attempt_number")
+  maxAttempts      Int                 @default(3) @map("max_attempts")
+  lastError        String?             @map("last_error")
+  retriedFromId    String?             @map("retried_from_id") @db.Uuid
   createdAt        DateTime            @default(now()) @map("created_at")
   updatedAt        DateTime            @updatedAt @map("updated_at")
 
@@ -344,6 +348,8 @@ model ProcessingStep {
   level           PipelineLevel
   status          ProcessingStepStatus @default(pending)
   result          Json?                @db.JsonB
+  attemptNumber   Int                  @default(1) @map("attempt_number")
+  idempotencyKey  String?              @map("idempotency_key")
   startedAt       DateTime?            @map("started_at")
   completedAt     DateTime?            @map("completed_at")
 

@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { Request, Response, NextFunction } from "express";
+import { asyncContext, getRequestContext } from "@clinscriptum/shared";
 
 export interface LogEntry {
   timestamp: string;
@@ -13,10 +14,18 @@ export interface LogEntry {
   statusCode?: number;
   durationMs?: number;
   error?: string;
+  [key: string]: unknown;
 }
 
 function log(entry: LogEntry) {
-  const output = JSON.stringify(entry);
+  const ctx = getRequestContext();
+  const enriched: LogEntry = {
+    ...entry,
+    correlationId: entry.correlationId ?? ctx?.correlationId,
+    tenantId: entry.tenantId ?? ctx?.tenantId,
+    userId: entry.userId ?? ctx?.userId,
+  };
+  const output = JSON.stringify(enriched);
   if (entry.level === "error") {
     console.error(output);
   } else {
@@ -44,18 +53,24 @@ export function requestLogger() {
     const start = Date.now();
 
     res.setHeader("x-correlation-id", correlationId);
-    (req as any).correlationId = correlationId;
 
-    res.on("finish", () => {
-      logger.info("HTTP request", {
-        correlationId,
-        method: req.method,
-        path: req.path,
-        statusCode: res.statusCode,
-        durationMs: Date.now() - start,
+    const ctx = {
+      correlationId,
+      tenantId: (req as any).user?.tenantId,
+      userId: (req as any).user?.userId,
+    };
+
+    asyncContext.run(ctx, () => {
+      res.on("finish", () => {
+        logger.info("HTTP request", {
+          method: req.method,
+          path: req.path,
+          statusCode: res.statusCode,
+          durationMs: Date.now() - start,
+        });
       });
-    });
 
-    next();
+      next();
+    });
   };
 }

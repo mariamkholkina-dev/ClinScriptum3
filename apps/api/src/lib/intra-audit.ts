@@ -10,6 +10,7 @@
 
 import { prisma } from "@clinscriptum/db";
 import { llmAsk } from "./llm-gateway.js";
+import { logger } from "./logger.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
 
@@ -118,7 +119,7 @@ export async function runIntraDocAudit(versionId: string): Promise<string> {
     const facts = await loadFacts(versionId);
     const docType = version.document.type;
 
-    console.log(`[intra-audit] Starting for ${versionId}, ${sections.length} sections, ${facts.length} facts`);
+    logger.info("[intra-audit] Starting", { versionId, sectionCount: sections.length, factCount: facts.length });
 
     const allFindings: RawFinding[] = [];
 
@@ -128,25 +129,25 @@ export async function runIntraDocAudit(versionId: string): Promise<string> {
     allFindings.push(...runRequiredSectionsCheck(sections, docType));
     allFindings.push(...runRangeChecks(facts));
 
-    console.log(`[intra-audit] Deterministic: ${allFindings.length} findings`);
+    logger.info("[intra-audit] Deterministic findings", { count: allFindings.length });
 
     // 2. LLM cross-checks
     const llmFindings = await runLlmCrossChecks(sections);
     allFindings.push(...llmFindings);
-    console.log(`[intra-audit] LLM cross-check: ${llmFindings.length} findings`);
+    logger.info("[intra-audit] LLM cross-check findings", { count: llmFindings.length });
 
     // 3. LLM editorial checks
     const editorialFindings = await runEditorialChecks(sections);
     allFindings.push(...editorialFindings);
-    console.log(`[intra-audit] Editorial: ${editorialFindings.length} findings`);
+    logger.info("[intra-audit] Editorial findings", { count: editorialFindings.length });
 
     // 4. Save all findings
     const savedIds = await saveFindings(versionId, allFindings);
-    console.log(`[intra-audit] Saved ${savedIds.length} findings`);
+    logger.info("[intra-audit] Saved findings", { count: savedIds.length });
 
     // 5. QA verification
     await runQaVerification(savedIds);
-    console.log(`[intra-audit] QA verification complete`);
+    logger.info("[intra-audit] QA verification complete");
 
     // 6. Create/reset FindingReview for reviewer workflow
     await prisma.findingReview.upsert({
@@ -168,7 +169,7 @@ export async function runIntraDocAudit(versionId: string): Promise<string> {
         publishedAt: null,
       },
     });
-    console.log(`[intra-audit] FindingReview created/reset for ${versionId}`);
+    logger.info("[intra-audit] FindingReview created/reset", { versionId });
 
     await prisma.processingRun.update({
       where: { id: run.id },
@@ -180,10 +181,10 @@ export async function runIntraDocAudit(versionId: string): Promise<string> {
       data: { status: "parsed" },
     });
 
-    console.log(`[intra-audit] Done for ${versionId}`);
+    logger.info("[intra-audit] Done", { versionId });
     return run.id;
   } catch (err) {
-    console.error(`[intra-audit] Error:`, err);
+    logger.error("[intra-audit] Error", { error: String(err) });
     await prisma.processingRun.update({
       where: { id: run.id },
       data: { status: "failed" },
@@ -420,7 +421,7 @@ async function runLlmCrossChecks(sections: SectionData[]): Promise<RawFinding[]>
       }
       findings.push(...result);
     } catch (err) {
-      console.warn(`[intra-audit] LLM cross-check ${strategy.key} failed:`, err);
+      logger.warn("[intra-audit] LLM cross-check failed", { strategyKey: strategy.key, error: String(err) });
     }
   }
 
@@ -487,7 +488,7 @@ function parseLlmCrossCheckResponse(raw: string): RawFinding[] {
         },
       }));
   } catch (err) {
-    console.warn("[intra-audit] Failed to parse LLM cross-check response:", (raw ?? "").slice(0, 300));
+    logger.warn("[intra-audit] Failed to parse LLM cross-check response", { response: (raw ?? "").slice(0, 300) });
     return [];
   }
 }
@@ -511,7 +512,7 @@ async function runEditorialChecks(sections: SectionData[]): Promise<RawFinding[]
       }
       findings.push(...result);
     } catch (err) {
-      console.warn(`[intra-audit] Editorial check for ${zone} failed:`, err);
+      logger.warn("[intra-audit] Editorial check failed", { zone, error: String(err) });
     }
   }
 
@@ -569,7 +570,7 @@ function parseLlmEditorialResponse(raw: string, zone: string): RawFinding[] {
         };
       });
   } catch {
-    console.warn("[intra-audit] Failed to parse editorial response:", (raw ?? "").slice(0, 300));
+    logger.warn("[intra-audit] Failed to parse editorial response", { response: (raw ?? "").slice(0, 300) });
     return [];
   }
 }
@@ -629,7 +630,7 @@ async function runQaVerification(findingIds: string[]): Promise<void> {
         });
       }
     } catch (err) {
-      console.warn(`[intra-audit] QA batch failed:`, err);
+      logger.warn("[intra-audit] QA batch failed", { error: String(err) });
       await prisma.finding.updateMany({
         where: { id: { in: batchIds } },
         data: { qaVerified: true },

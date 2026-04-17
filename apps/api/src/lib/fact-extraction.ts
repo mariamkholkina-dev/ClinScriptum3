@@ -19,6 +19,7 @@ import {
   loadFactRegistry,
   type FactRegistryEntry,
 } from "../data/fact-registry.js";
+import { logger } from "./logger.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
 
@@ -79,7 +80,7 @@ function getMaxQaContextChars(): number {
 /* ═══════════════════════ Entry point ═══════════════════════ */
 
 export async function extractFactsForVersion(versionId: string) {
-  console.log(`[facts] Starting fact extraction for version ${versionId}`);
+  logger.info("[facts] Starting fact extraction", { versionId });
 
   const version = await prisma.documentVersion.findUniqueOrThrow({
     where: { id: versionId },
@@ -94,7 +95,7 @@ export async function extractFactsForVersion(versionId: string) {
 
   const isProtocol = version.document.type === "protocol";
   if (!isProtocol) {
-    console.log(`[facts] Skipping fact extraction: document type is "${version.document.type}"`);
+    logger.info("[facts] Skipping fact extraction: non-protocol document", { docType: version.document.type });
     return;
   }
 
@@ -110,13 +111,13 @@ export async function extractFactsForVersion(versionId: string) {
   });
 
   if (relevantSections.length === 0) {
-    console.log("[facts] No relevant sections found");
+    logger.info("[facts] No relevant sections found");
     return;
   }
 
   // 2. Подготовить текст документа с маркерами секций
   const maxDocumentChars = getMaxDocumentChars();
-  console.log(`[facts] Document text budget: ${maxDocumentChars} chars (from maxTokens=${config.llm("fact_extraction").maxTokens})`);
+  logger.info("[facts] Document text budget", { maxDocumentChars, maxTokens: config.llm("fact_extraction").maxTokens });
   const documentText = buildDocumentText(relevantSections, maxDocumentChars);
 
   // 3. Загрузить реестр фактов, отфильтровать по типу исследования
@@ -128,12 +129,12 @@ export async function extractFactsForVersion(versionId: string) {
 
   // 4. Извлечь факты через LLM
   const extracted = await llmExtractFacts(documentText, targetFacts, relevantSections);
-  console.log(`[facts] LLM extracted ${extracted.length} facts`);
+  logger.info("[facts] LLM extracted facts", { count: extracted.length });
 
   // 5. QA для низкоуверенных фактов
   const lowConfidence = extracted.filter((f) => f.confidence < LOW_CONFIDENCE_THRESHOLD && f.confidence > 0);
   if (lowConfidence.length > 0) {
-    console.log(`[facts] QA check for ${lowConfidence.length} low-confidence facts`);
+    logger.info("[facts] QA check for low-confidence facts", { count: lowConfidence.length });
     await qaCheckFacts(lowConfidence, documentText);
   }
 
@@ -145,7 +146,7 @@ export async function extractFactsForVersion(versionId: string) {
 
   // 7. Сохранить в БД
   await persistFacts(versionId, extracted, notFoundFacts);
-  console.log(`[facts] Saved ${extracted.length} found + ${notFoundFacts.length} not-found facts`);
+  logger.info("[facts] Saved facts", { foundCount: extracted.length, notFoundCount: notFoundFacts.length });
 }
 
 /* ═══════════════════════ Document text builder ═══════════════════════ */
@@ -232,7 +233,7 @@ async function llmExtractFacts(
 
     return parseLlmExtractionResponse(raw, targetFacts, sections);
   } catch (err) {
-    console.error("[facts] LLM extraction error:", err);
+    logger.error("[facts] LLM extraction error", { error: String(err) });
     return [];
   }
 }
@@ -295,7 +296,7 @@ function parseLlmExtractionResponse(
         };
       });
   } catch (err) {
-    console.warn("[facts] Failed to parse LLM extraction response:", (raw ?? "").slice(0, 300));
+    logger.warn("[facts] Failed to parse LLM extraction response", { response: (raw ?? "").slice(0, 300) });
     return [];
   }
 }
@@ -354,7 +355,7 @@ async function qaCheckFacts(
       }
     }
   } catch (err) {
-    console.warn("[facts] QA check error:", err);
+    logger.warn("[facts] QA check error", { error: String(err) });
   }
 }
 

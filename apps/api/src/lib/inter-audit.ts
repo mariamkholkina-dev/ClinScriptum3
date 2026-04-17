@@ -12,6 +12,7 @@
 
 import { prisma } from "@clinscriptum/db";
 import { llmAsk } from "./llm-gateway.js";
+import { logger } from "./logger.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
 
@@ -338,10 +339,12 @@ export async function runInterDocAudit(
     const protocolLabel = protocolVersion.versionLabel ?? `v${protocolVersion.versionNumber}`;
     const checkedLabel = checkedVersion.versionLabel ?? `v${checkedVersion.versionNumber}`;
 
-    console.log(
-      `[inter-audit] Starting: Protocol ${protocolLabel} vs ` +
-      `${checkedVersion.document.title} ${checkedLabel} (${checkGroups.length} groups)`
-    );
+    logger.info("[inter-audit] Starting", {
+      protocolLabel,
+      checkedDocTitle: checkedVersion.document.title,
+      checkedLabel,
+      groupCount: checkGroups.length,
+    });
 
     const allFindings: RawInterFinding[] = [];
 
@@ -350,7 +353,7 @@ export async function runInterDocAudit(
       const checkedText = extractZoneText(checkedSections, group.checkedDocZones);
 
       if (protoText.length < 50 || checkedText.length < 50) {
-        console.log(`[inter-audit] Skipping group ${group.id}: insufficient text`);
+        logger.info("[inter-audit] Skipping group: insufficient text", { groupId: group.id });
         continue;
       }
 
@@ -362,13 +365,13 @@ export async function runInterDocAudit(
           checkedDocType
         );
         allFindings.push(...findings);
-        console.log(`[inter-audit] Group ${group.id}: ${findings.length} findings`);
+        logger.info("[inter-audit] Group complete", { groupId: group.id, findingCount: findings.length });
       } catch (err) {
-        console.warn(`[inter-audit] Group ${group.id} failed:`, err);
+        logger.warn("[inter-audit] Group failed", { groupId: group.id, error: String(err) });
       }
     }
 
-    console.log(`[inter-audit] Total raw findings: ${allFindings.length}`);
+    logger.info("[inter-audit] Total raw findings", { count: allFindings.length });
 
     const savedIds = await saveFindings(
       checkedVersionId,
@@ -377,10 +380,10 @@ export async function runInterDocAudit(
       protocolLabel,
       allFindings
     );
-    console.log(`[inter-audit] Saved ${savedIds.length} findings`);
+    logger.info("[inter-audit] Saved findings", { count: savedIds.length });
 
     await runQaVerification(savedIds);
-    console.log(`[inter-audit] QA verification complete`);
+    logger.info("[inter-audit] QA verification complete");
 
     await prisma.findingReview.upsert({
       where: {
@@ -403,7 +406,7 @@ export async function runInterDocAudit(
         publishedAt: null,
       },
     });
-    console.log(`[inter-audit] FindingReview created/reset`);
+    logger.info("[inter-audit] FindingReview created/reset");
 
     await prisma.processingRun.update({
       where: { id: run.id },
@@ -415,10 +418,10 @@ export async function runInterDocAudit(
       data: { status: "parsed" },
     });
 
-    console.log(`[inter-audit] Done`);
+    logger.info("[inter-audit] Done");
     return run.id;
   } catch (err) {
-    console.error(`[inter-audit] Error:`, err);
+    logger.error("[inter-audit] Error", { error: String(err) });
     await prisma.processingRun
       .update({ where: { id: run.id }, data: { status: "failed" } })
       .catch(() => {});
@@ -553,7 +556,7 @@ function parseCheckGroupResponse(raw: string): RawInterFinding[] {
         checkedDocSection: item.checked_doc_section,
       }));
   } catch (err) {
-    console.warn("[inter-audit] Failed to parse LLM response:", (raw ?? "").slice(0, 300));
+    logger.warn("[inter-audit] Failed to parse LLM response", { response: (raw ?? "").slice(0, 300) });
     return [];
   }
 }
@@ -629,7 +632,7 @@ async function runQaVerification(findingIds: string[]): Promise<void> {
         });
       }
     } catch (err) {
-      console.warn(`[inter-audit] QA batch failed:`, err);
+      logger.warn("[inter-audit] QA batch failed", { error: String(err) });
       await prisma.finding.updateMany({
         where: { id: { in: batchIds } },
         data: { qaVerified: true },

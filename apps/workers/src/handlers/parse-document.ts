@@ -1,6 +1,7 @@
 import { prisma } from "@clinscriptum/db";
 import { parseDocx } from "@clinscriptum/doc-parser";
 import { createStorageProvider } from "../api-shared/storage.js";
+import { logger } from "../lib/logger.js";
 
 export async function handleParseDocument(data: { versionId: string }) {
   const version = await prisma.documentVersion.findUnique({
@@ -30,10 +31,12 @@ export async function handleParseDocument(data: { versionId: string }) {
 
     await saveSections(version.id, parsed.sections, null);
 
-    console.log(
-      `Parsed document ${version.id}: ${parsed.sections.length} top-level sections, ` +
-        `${parsed.metadata.totalTables} tables, ${parsed.metadata.totalFootnotes} footnotes`
-    );
+    logger.info("Parsed document", {
+      versionId: version.id,
+      sections: parsed.sections.length,
+      tables: parsed.metadata.totalTables,
+      footnotes: parsed.metadata.totalFootnotes,
+    });
 
     return { success: true, metadata: parsed.metadata };
   } catch (error) {

@@ -1,32 +1,18 @@
 import { z } from "zod";
-import { prisma } from "@clinscriptum/db";
 import { router, protectedProcedure } from "../trpc/trpc.js";
+import { withDomainErrors } from "../trpc/error-mapper.js";
+import { studyService } from "../services/study.service.js";
+
+const p = protectedProcedure.use(withDomainErrors);
 
 export const studyRouter = router({
-  list: protectedProcedure.query(async ({ ctx }) => {
-    return prisma.study.findMany({
-      where: { tenantId: ctx.user.tenantId },
-      orderBy: { createdAt: "desc" },
-    });
-  }),
+  list: p.query(({ ctx }) => studyService.list(ctx.user.tenantId)),
 
-  getById: protectedProcedure
+  getById: p
     .input(z.object({ id: z.string().uuid() }))
-    .query(async ({ ctx, input }) => {
-      return prisma.study.findFirst({
-        where: { id: input.id, tenantId: ctx.user.tenantId },
-        include: {
-          documents: {
-            include: {
-              versions: { orderBy: { versionNumber: "desc" } },
-            },
-            orderBy: { createdAt: "asc" },
-          },
-        },
-      });
-    }),
+    .query(({ ctx, input }) => studyService.getById(ctx.user.tenantId, input.id)),
 
-  create: protectedProcedure
+  create: p
     .input(
       z.object({
         title: z.string().min(1),
@@ -35,23 +21,11 @@ export const studyRouter = router({
         therapeuticArea: z.string().optional(),
         protocolTitle: z.string().optional(),
         phase: z.string().default(""),
-      })
+      }),
     )
-    .mutation(async ({ ctx, input }) => {
-      return prisma.study.create({
-        data: {
-          tenantId: ctx.user.tenantId,
-          title: input.title,
-          sponsor: input.sponsor || null,
-          drug: input.drug || null,
-          therapeuticArea: input.therapeuticArea || null,
-          protocolTitle: input.protocolTitle || null,
-          phase: input.phase,
-        },
-      });
-    }),
+    .mutation(({ ctx, input }) => studyService.create(ctx.user.tenantId, input)),
 
-  update: protectedProcedure
+  update: p
     .input(
       z.object({
         id: z.string().uuid(),
@@ -61,21 +35,14 @@ export const studyRouter = router({
         therapeuticArea: z.string().optional(),
         protocolTitle: z.string().optional(),
         phase: z.string().optional(),
-      })
+      }),
     )
-    .mutation(async ({ ctx, input }) => {
+    .mutation(({ ctx, input }) => {
       const { id, ...data } = input;
-      return prisma.study.updateMany({
-        where: { id, tenantId: ctx.user.tenantId },
-        data,
-      });
+      return studyService.update(ctx.user.tenantId, id, data);
     }),
 
-  delete: protectedProcedure
+  delete: p
     .input(z.object({ id: z.string().uuid() }))
-    .mutation(async ({ ctx, input }) => {
-      return prisma.study.deleteMany({
-        where: { id: input.id, tenantId: ctx.user.tenantId },
-      });
-    }),
+    .mutation(({ ctx, input }) => studyService.delete(ctx.user.tenantId, input.id)),
 });

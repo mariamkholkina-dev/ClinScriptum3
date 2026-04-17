@@ -26,6 +26,7 @@ import { llmAsk } from "./llm-gateway.js";
 import { extractFactsForVersion } from "./fact-extraction.js";
 import { detectSoaForVersion } from "./soa-detection.js";
 import { runIntraDocAudit } from "./intra-audit.js";
+import { logger } from "./logger.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
 
@@ -58,12 +59,12 @@ const LLM_QA_BATCH_SIZE = 10;
 
 export async function runProcessingPipeline(versionId: string) {
   try {
-    console.log(`[pipeline] Starting for version ${versionId}`);
+    logger.info("[pipeline] Starting", { versionId });
 
     // Stage 1: Parsing
     await setVersionStatus(versionId, "parsing");
     const sections = await parseDocument(versionId);
-    console.log(`[pipeline] Parsed ${sections.length} sections`);
+    logger.info("[pipeline] Parsed sections", { count: sections.length });
 
     // Stage 2: Section classification (3-step)
     await setVersionStatus(versionId, "classifying_sections");
@@ -71,15 +72,15 @@ export async function runProcessingPipeline(versionId: string) {
     // Step 2a: Deterministic rule engine
     const taxonomy = await loadTaxonomy();
     await classifySectionsDeterministic(versionId, taxonomy);
-    console.log(`[pipeline] Step 2a (deterministic) complete`);
+    logger.info("[pipeline] Step 2a (deterministic) complete");
 
     // Step 2b: LLM classification for low-confidence / unclassified sections
     await classifySectionsLlm(versionId, taxonomy);
-    console.log(`[pipeline] Step 2b (LLM classify) complete`);
+    logger.info("[pipeline] Step 2b (LLM classify) complete");
 
     // Step 2c: LLM QA validation
     await classifySectionsLlmQa(versionId, taxonomy);
-    console.log(`[pipeline] Step 2c (LLM QA) complete`);
+    logger.info("[pipeline] Step 2c (LLM QA) complete");
 
     // Stage 3: Fact extraction (only for protocol documents)
     const versionDoc = await prisma.documentVersion.findUnique({
@@ -106,9 +107,9 @@ export async function runProcessingPipeline(versionId: string) {
           where: { id: factRun.id },
           data: { status: "completed" },
         });
-        console.log(`[pipeline] Stage 3 (fact extraction) complete`);
+        logger.info("[pipeline] Stage 3 (fact extraction) complete");
       } catch (factErr) {
-        console.error(`[pipeline] Stage 3 (fact extraction) failed:`, factErr);
+        logger.error("[pipeline] Stage 3 (fact extraction) failed", { error: String(factErr) });
         await prisma.processingRun.update({
           where: { id: factRun.id },
           data: { status: "failed" },
@@ -136,9 +137,9 @@ export async function runProcessingPipeline(versionId: string) {
           where: { id: soaRun.id },
           data: { status: "completed" },
         });
-        console.log(`[pipeline] Stage 4 (SOA detection) complete`);
+        logger.info("[pipeline] Stage 4 (SOA detection) complete");
       } catch (soaErr) {
-        console.error(`[pipeline] Stage 4 (SOA detection) failed:`, soaErr);
+        logger.error("[pipeline] Stage 4 (SOA detection) failed", { error: String(soaErr) });
         await prisma.processingRun.update({
           where: { id: soaRun.id },
           data: { status: "failed" },
@@ -149,15 +150,15 @@ export async function runProcessingPipeline(versionId: string) {
     // Stage 5: Intra-document audit
     try {
       await runIntraDocAudit(versionId);
-      console.log(`[pipeline] Stage 5 (intra-audit) complete`);
+      logger.info("[pipeline] Stage 5 (intra-audit) complete");
     } catch (auditErr) {
-      console.error(`[pipeline] Stage 5 (intra-audit) failed:`, auditErr);
+      logger.error("[pipeline] Stage 5 (intra-audit) failed", { error: String(auditErr) });
       await setVersionStatus(versionId, "parsed").catch(() => {});
     }
 
-    console.log(`[pipeline] Done for version ${versionId}`);
+    logger.info("[pipeline] Done", { versionId });
   } catch (err) {
-    console.error(`[pipeline] Error for version ${versionId}:`, err);
+    logger.error("[pipeline] Error", { versionId, error: String(err) });
     await setVersionStatus(versionId, "error").catch(() => {});
   }
 }
@@ -346,7 +347,7 @@ function stripHtml(html: string): string {
 
 async function classifySectionsDeterministic(versionId: string, taxonomy: TaxonomyRule[]) {
   if (taxonomy.length === 0) {
-    console.warn("[pipeline] No taxonomy rules found, skipping deterministic step");
+    logger.warn("[pipeline] No taxonomy rules found, skipping deterministic step");
     return;
   }
 
@@ -424,11 +425,11 @@ async function classifySectionsLlm(versionId: string, taxonomy: TaxonomyRule[]) 
   );
 
   if (targets.length === 0) {
-    console.log("[pipeline] No low-confidence sections, skipping LLM classify");
+    logger.info("[pipeline] No low-confidence sections, skipping LLM classify");
     return;
   }
 
-  console.log(`[pipeline] LLM classify: ${targets.length} sections`);
+  logger.info("[pipeline] LLM classify", { sectionCount: targets.length });
 
   const taxonomyCatalog = buildTaxonomyCatalog(taxonomy);
   const validPatterns = taxonomy.map((r) => r.pattern);
@@ -452,7 +453,7 @@ async function classifySectionsLlm(versionId: string, taxonomy: TaxonomyRule[]) 
         });
       }
     } catch (err) {
-      console.warn(`[pipeline] LLM classify error for "${section.title}":`, err);
+      logger.warn("[pipeline] LLM classify error", { sectionTitle: section.title, error: String(err) });
     }
   }
 }
@@ -514,12 +515,12 @@ function parseLlmClassifyResponse(
     const obj = JSON.parse(jsonMatch[0]);
     if (!obj.section || typeof obj.confidence !== "number") return null;
     if (!validPatterns.includes(obj.section)) {
-      console.warn(`[pipeline] LLM returned unknown section code "${obj.section}", ignoring`);
+      logger.warn("[pipeline] LLM returned unknown section code, ignoring", { sectionCode: obj.section });
       return null;
     }
     return { section: obj.section, confidence: Math.min(Math.max(obj.confidence, 0), 1) };
   } catch {
-    console.warn("[pipeline] Failed to parse LLM classify response:", raw.slice(0, 200));
+    logger.warn("[pipeline] Failed to parse LLM classify response", { response: raw.slice(0, 200) });
     return null;
   }
 }
@@ -539,7 +540,7 @@ async function classifySectionsLlmQa(versionId: string, taxonomy: TaxonomyRule[]
 
   if (targets.length === 0) return;
 
-  console.log(`[pipeline] LLM QA: ${targets.length} sections in batches of ${LLM_QA_BATCH_SIZE}`);
+  logger.info("[pipeline] LLM QA", { sectionCount: targets.length, batchSize: LLM_QA_BATCH_SIZE });
 
   const taxonomyMap = new Map(taxonomy.map((r) => [r.pattern, r.config.titleRu]));
 
@@ -579,7 +580,7 @@ async function classifySectionsLlmQa(versionId: string, taxonomy: TaxonomyRule[]
         }
       }
     } catch (err) {
-      console.warn(`[pipeline] LLM QA batch error (batch ${i / LLM_QA_BATCH_SIZE}):`, err);
+      logger.warn("[pipeline] LLM QA batch error", { batch: i / LLM_QA_BATCH_SIZE, error: String(err) });
     }
   }
 }
@@ -643,7 +644,7 @@ function parseLlmQaResponse(
     return arr.map((item: any) => {
       const suggested = item.suggestedSection ?? undefined;
       if (suggested !== undefined && !validPatterns.includes(suggested)) {
-        console.warn(`[pipeline] LLM QA returned unknown section code "${suggested}", ignoring suggestion`);
+        logger.warn("[pipeline] LLM QA returned unknown section code, ignoring suggestion", { sectionCode: suggested });
         return { sectionId: item.id ?? "", correct: true };
       }
       return {
@@ -654,7 +655,7 @@ function parseLlmQaResponse(
       };
     });
   } catch {
-    console.warn("[pipeline] Failed to parse LLM QA response:", raw.slice(0, 300));
+    logger.warn("[pipeline] Failed to parse LLM QA response", { response: raw.slice(0, 300) });
     return sections.map((s) => ({ sectionId: s.id, correct: true }));
   }
 }

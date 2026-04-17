@@ -1,14 +1,7 @@
 import { prisma } from "@clinscriptum/db";
 import type { PipelineLevel, ProcessingStepStatus } from "@clinscriptum/shared";
-
-/**
- * 5-level pipeline orchestrator (URS-069):
- * 1. Deterministic (regex, rules)
- * 2. LLM Check (verification)
- * 3. LLM QA (arbitration on disagreements)
- * 4. Operator Review (optional, URS-071)
- * 5. User Validation (final confirmation)
- */
+import { logger } from "../lib/logger.js";
+import { recordPipelineMetric, recordPipelineComplete } from "../lib/metrics.js";
 
 export interface PipelineStepHandler {
   level: PipelineLevel;
@@ -43,10 +36,11 @@ const PIPELINE_ORDER: PipelineLevel[] = [
 export async function runPipeline(
   processingRunId: string,
   config: PipelineConfig,
-  handlers: Map<PipelineLevel, PipelineStepHandler>
+  handlers: Map<PipelineLevel, PipelineStepHandler>,
 ): Promise<void> {
   const run = await prisma.processingRun.findUnique({
     where: { id: processingRunId },
+    include: { steps: true },
   });
   if (!run) throw new Error(`Processing run ${processingRunId} not found`);
 
@@ -55,6 +49,10 @@ export async function runPipeline(
     data: { status: "running" },
   });
 
+  const existingSteps = new Map(
+    run.steps.map((s) => [s.level, s]),
+  );
+
   const context: PipelineContext = {
     processingRunId,
     docVersionId: run.docVersionId,
@@ -62,24 +60,53 @@ export async function runPipeline(
     previousResults: new Map(),
   };
 
+  const pipelineStart = Date.now();
+  let stepsCompleted = 0;
+
   try {
     for (const level of PIPELINE_ORDER) {
       if (level === "operator_review" && !config.operatorReviewEnabled) {
-        await createStep(processingRunId, level, "skipped");
+        if (!existingSteps.has(level)) {
+          await createStep(processingRunId, level, "skipped");
+        }
         continue;
       }
 
       const handler = handlers.get(level);
       if (!handler) {
-        await createStep(processingRunId, level, "skipped");
+        if (!existingSteps.has(level)) {
+          await createStep(processingRunId, level, "skipped");
+        }
         continue;
       }
 
+      const existing = existingSteps.get(level);
+      if (existing?.status === "completed") {
+        logger.info("Skipping already completed step", { processingRunId, pipelineLevel: level });
+        if (existing.result) {
+          context.previousResults.set(level, {
+            data: existing.result as Record<string, unknown>,
+            needsNextStep: true,
+          });
+        }
+        stepsCompleted++;
+        continue;
+      }
+
+      if (existing?.status === "failed") {
+        await prisma.processingStep.delete({ where: { id: existing.id } });
+      }
+
       const step = await createStep(processingRunId, level, "running");
+      const stepStart = Date.now();
+
+      logger.info("Pipeline step started", { processingRunId, pipelineLevel: level });
 
       try {
         const result = await handler.execute(context);
         context.previousResults.set(level, result);
+
+        const durationMs = Date.now() - stepStart;
 
         await prisma.processingStep.update({
           where: { id: step.id },
@@ -90,8 +117,16 @@ export async function runPipeline(
           },
         });
 
-        if (!result.needsNextStep) break;
+        stepsCompleted++;
+        recordPipelineMetric({ processingRunId, pipelineLevel: level, status: "completed", durationMs });
+
+        if (!result.needsNextStep) {
+          logger.info("Pipeline step halted early", { processingRunId, pipelineLevel: level });
+          break;
+        }
       } catch (err) {
+        const durationMs = Date.now() - stepStart;
+
         await prisma.processingStep.update({
           where: { id: step.id },
           data: {
@@ -99,6 +134,13 @@ export async function runPipeline(
             result: { error: (err as Error).message },
             completedAt: new Date(),
           },
+        });
+
+        recordPipelineMetric({ processingRunId, pipelineLevel: level, status: "failed", durationMs });
+        logger.error("Pipeline step failed", {
+          processingRunId,
+          pipelineLevel: level,
+          error: (err as Error).message,
         });
         throw err;
       }
@@ -108,10 +150,27 @@ export async function runPipeline(
       where: { id: processingRunId },
       data: { status: "completed" },
     });
+
+    recordPipelineComplete({
+      processingRunId,
+      totalDurationMs: Date.now() - pipelineStart,
+      stepsCompleted,
+      status: "completed",
+    });
   } catch (err) {
     await prisma.processingRun.update({
       where: { id: processingRunId },
-      data: { status: "failed" },
+      data: {
+        status: "failed",
+        lastError: (err as Error).message,
+      },
+    });
+
+    recordPipelineComplete({
+      processingRunId,
+      totalDurationMs: Date.now() - pipelineStart,
+      stepsCompleted,
+      status: "failed",
     });
     throw err;
   }
@@ -120,7 +179,7 @@ export async function runPipeline(
 async function createStep(
   processingRunId: string,
   level: PipelineLevel,
-  status: ProcessingStepStatus
+  status: ProcessingStepStatus,
 ) {
   return prisma.processingStep.create({
     data: {

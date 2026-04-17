@@ -16,6 +16,7 @@
  */
 
 import { prisma } from "@clinscriptum/db";
+import { logger } from "./logger.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
 
@@ -139,7 +140,7 @@ const MAX_FOOTNOTE_NUM = 30;
 /* ═══════════════════════ Entry point ═══════════════════════ */
 
 export async function detectSoaForVersion(versionId: string): Promise<void> {
-  console.log(`[soa] Starting SOA detection for version ${versionId}`);
+  logger.info("[soa] Starting SOA detection", { versionId });
 
   const version = await prisma.documentVersion.findUniqueOrThrow({
     where: { id: versionId },
@@ -153,12 +154,12 @@ export async function detectSoaForVersion(versionId: string): Promise<void> {
   });
 
   if (version.document.type !== "protocol") {
-    console.log(`[soa] Skipping: document type is "${version.document.type}"`);
+    logger.info("[soa] Skipping: non-protocol document", { docType: version.document.type });
     return;
   }
 
   const candidates = collectTableCandidates(version.sections);
-  console.log(`[soa] Found ${candidates.length} table candidates`);
+  logger.info("[soa] Found table candidates", { count: candidates.length });
 
   if (candidates.length === 0) return;
 
@@ -172,19 +173,19 @@ export async function detectSoaForVersion(versionId: string): Promise<void> {
     const isSoa = isTrueSoa(scoring);
     if (!isSoa) continue;
 
-    console.log(`[soa] SOA detected: "${candidate.title}" score=${scoring.score.toFixed(1)}`);
+    logger.info("[soa] SOA detected", { title: candidate.title, score: scoring.score.toFixed(1) });
 
     const result = buildSoaResult(candidate, scoring);
     if (result) soaTables.push(result);
   }
 
   if (soaTables.length === 0) {
-    console.log("[soa] No SOA tables detected");
+    logger.info("[soa] No SOA tables detected");
     return;
   }
 
   await persistSoaTables(versionId, soaTables);
-  console.log(`[soa] Saved ${soaTables.length} SOA table(s)`);
+  logger.info("[soa] Saved SOA tables", { count: soaTables.length });
 }
 
 /* ═══════════════════════ Phase 1: Collect candidates ═══════════════════════ */

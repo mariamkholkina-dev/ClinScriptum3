@@ -13,6 +13,7 @@ import { prisma } from "@clinscriptum/db";
 import { llmAsk } from "./llm-gateway.js";
 import { config } from "../config.js";
 import { getInterAuditChecksPrompt } from "./inter-audit.js";
+import { logger } from "./logger.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
 
@@ -85,10 +86,11 @@ export async function runDocGeneration(generatedDocId: string): Promise<void> {
 
   const protocolSections = await loadSections(doc.protocolVersionId);
 
-  console.log(
-    `[doc-gen] Starting ${docType.toUpperCase()} generation: ` +
-    `${doc.sections.length} sections from protocol ${doc.protocolVersionId}`
-  );
+  logger.info("[doc-gen] Starting generation", {
+    docType: docType.toUpperCase(),
+    sectionCount: doc.sections.length,
+    protocolVersionId: doc.protocolVersionId,
+  });
 
   try {
     for (const section of doc.sections) {
@@ -97,7 +99,7 @@ export async function runDocGeneration(generatedDocId: string): Promise<void> {
           where: { id: section.id },
           data: { status: "skipped" },
         });
-        console.log(`[doc-gen] Skipped: "${section.title}" (no mapped section)`);
+        logger.info("[doc-gen] Skipped: no mapped section", { sectionTitle: section.title });
         continue;
       }
 
@@ -118,7 +120,7 @@ export async function runDocGeneration(generatedDocId: string): Promise<void> {
             where: { id: section.id },
             data: { status: "skipped", content: "" },
           });
-          console.log(`[doc-gen] Skipped: "${section.title}" (insufficient source text)`);
+          logger.info("[doc-gen] Skipped: insufficient source text", { sectionTitle: section.title });
           continue;
         }
 
@@ -147,9 +149,7 @@ export async function runDocGeneration(generatedDocId: string): Promise<void> {
         );
 
         if (qaFindings.length > 0) {
-          console.log(
-            `[doc-gen] QA found ${qaFindings.length} issues in "${section.title}", regenerating`
-          );
+          logger.info("[doc-gen] QA found issues, regenerating", { sectionTitle: section.title, issueCount: qaFindings.length });
           generatedText = await regenerateWithFixes(
             docType,
             section.title,
@@ -168,9 +168,9 @@ export async function runDocGeneration(generatedDocId: string): Promise<void> {
           },
         });
 
-        console.log(`[doc-gen] Completed: "${section.title}"`);
+        logger.info("[doc-gen] Completed section", { sectionTitle: section.title });
       } catch (err) {
-        console.error(`[doc-gen] Section "${section.title}" failed:`, err);
+        logger.error("[doc-gen] Section failed", { sectionTitle: section.title, error: String(err) });
         await prisma.generatedDocSection.update({
           where: { id: section.id },
           data: { status: "failed" },
@@ -183,9 +183,9 @@ export async function runDocGeneration(generatedDocId: string): Promise<void> {
       data: { status: "completed" },
     });
 
-    console.log(`[doc-gen] Document generation completed: ${generatedDocId}`);
+    logger.info("[doc-gen] Document generation completed", { generatedDocId });
   } catch (err) {
-    console.error(`[doc-gen] Fatal error:`, err);
+    logger.error("[doc-gen] Fatal error", { error: String(err) });
     await prisma.generatedDoc
       .update({ where: { id: generatedDocId }, data: { status: "failed" } })
       .catch(() => {});
@@ -346,7 +346,7 @@ ${generatedText}`;
         generatedQuote: item.generated_quote,
       }));
   } catch {
-    console.warn(`[doc-gen] Failed to parse QA response for "${sectionTitle}"`);
+    logger.warn("[doc-gen] Failed to parse QA response", { sectionTitle });
     return [];
   }
 }
