@@ -29,7 +29,7 @@ spec:
               service:
                 name: {{ $.Release.Name }}-{{ .service }}
                 port:
-                  number: {{ if eq .service "api" }}{{ $.Values.service.api.port }}{{ else }}{{ $.Values.service.web.port }}{{ end }}
+                  number: {{ if eq .service "api" }}{{ $.Values.service.api.port }}{{ else if eq .service "rule-admin" }}{{ $.Values.service.ruleAdmin.port }}{{ else }}{{ $.Values.service.web.port }}{{ end }}
           {{- end }}
     {{- end }}
 {{- end }}

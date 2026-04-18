@@ -4,6 +4,8 @@
 
 ### Добавлено
 
+- **Деплой Rule Admin** — `Dockerfile.rule-admin` (standalone Next.js на порту 3002), Helm deployment + service + ingress на `admin.clinscriptum.com`, ресурсы и реплики в `values.yaml`
+
 - **Расширенный просмотрщик валидации парсинга** (`rule-admin`, golden-dataset detail page):
   - Иерархическое дерево секций с автоматической нумерацией (1, 1.1, 1.2, ...)
   - Раскрытие контента секции (параграфы, таблицы, сноски, списки) по клику

@@ -1,0 +1,31 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+
+FROM base AS builder
+COPY package.json package-lock.json turbo.json tsconfig.base.json ./
+COPY apps/rule-admin/package.json apps/rule-admin/
+COPY apps/api/package.json apps/api/
+COPY packages/shared/package.json packages/shared/
+COPY packages/db/package.json packages/db/
+
+RUN npm ci --workspace=@clinscriptum/rule-admin --workspace=@clinscriptum/api --include-workspace-root
+
+COPY packages/shared/ packages/shared/
+COPY packages/db/ packages/db/
+COPY apps/api/ apps/api/
+COPY apps/rule-admin/ apps/rule-admin/
+
+RUN npx prisma generate --schema=packages/db/prisma/schema.prisma
+
+ARG NEXT_PUBLIC_API_URL=https://admin.clinscriptum.ru/trpc
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npx turbo build --filter=@clinscriptum/rule-admin
+
+FROM base AS runner
+COPY --from=builder /app/apps/rule-admin/.next/standalone ./
+COPY --from=builder /app/apps/rule-admin/.next/static ./apps/rule-admin/.next/static
+
+EXPOSE 3002
+ENV NODE_ENV=production
+CMD ["node", "apps/rule-admin/server.js"]

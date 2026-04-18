@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-rule-admin
+  labels:
+    app: clinscriptum
+    component: rule-admin
+spec:
+  replicas: {{ .Values.replicaCount.ruleAdmin }}
+  selector:
+    matchLabels:
+      app: clinscriptum
+      component: rule-admin
+  template:
+    metadata:
+      labels:
+        app: clinscriptum
+        component: rule-admin
+    spec:
+      containers:
+        - name: rule-admin
+          image: "{{ .Values.image.registry }}{{ .Values.image.ruleAdmin.repository }}:{{ .Values.image.ruleAdmin.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 3002
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: "https://{{ (index .Values.ingress.hosts 0).host }}/trpc"
+          resources:
+            {{- toYaml .Values.resources.ruleAdmin | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-rule-admin
+spec:
+  type: {{ .Values.service.ruleAdmin.type }}
+  ports:
+    - port: {{ .Values.service.ruleAdmin.port }}
+      targetPort: 3002
+  selector:
+    app: clinscriptum
+    component: rule-admin

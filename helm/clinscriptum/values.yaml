@@ -2,6 +2,7 @@ replicaCount:
   api: 2
   web: 2
   workers: 2
+  ruleAdmin: 1
 
 image:
   registry: ""
@@ -14,6 +15,9 @@ image:
   workers:
     repository: clinscriptum/workers
     tag: latest
+  ruleAdmin:
+    repository: clinscriptum/rule-admin
+    tag: latest
   pullPolicy: IfNotPresent
 
 service:
@@ -23,6 +27,9 @@ service:
   web:
     type: ClusterIP
     port: 3000
+  ruleAdmin:
+    type: ClusterIP
+    port: 3002
 
 ingress:
   enabled: true
@@ -36,10 +43,17 @@ ingress:
           service: api
         - path: /health
           service: api
+    - host: admin.clinscriptum.com
+      paths:
+        - path: /
+          service: rule-admin
+        - path: /trpc
+          service: api
   tls:
     - secretName: clinscriptum-tls
       hosts:
         - app.clinscriptum.com
+        - admin.clinscriptum.com
 
 postgresql:
   enabled: true
@@ -85,6 +99,13 @@ resources:
       cpu: 2000m
       memory: 2Gi
   web:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  ruleAdmin:
     requests:
       cpu: 100m
       memory: 128Mi
