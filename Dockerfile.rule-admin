@@ -18,8 +18,7 @@ COPY packages/ui/package.json packages/ui/
 
 RUN npm install
 
-COPY packages/shared/ packages/shared/
-COPY packages/db/ packages/db/
+COPY packages/ packages/
 COPY apps/api/ apps/api/
 COPY apps/rule-admin/ apps/rule-admin/
 
