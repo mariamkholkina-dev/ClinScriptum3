@@ -3,12 +3,20 @@ WORKDIR /app
 
 FROM base AS builder
 COPY package.json package-lock.json turbo.json tsconfig.base.json ./
-COPY apps/rule-admin/package.json apps/rule-admin/
 COPY apps/api/package.json apps/api/
-COPY packages/shared/package.json packages/shared/
+COPY apps/rule-admin/package.json apps/rule-admin/
+COPY apps/web/package.json apps/web/
+COPY apps/word-addin/package.json apps/word-addin/
+COPY apps/workers/package.json apps/workers/
 COPY packages/db/package.json packages/db/
+COPY packages/diff-engine/package.json packages/diff-engine/
+COPY packages/doc-parser/package.json packages/doc-parser/
+COPY packages/llm-gateway/package.json packages/llm-gateway/
+COPY packages/rules-engine/package.json packages/rules-engine/
+COPY packages/shared/package.json packages/shared/
+COPY packages/ui/package.json packages/ui/
 
-RUN npm ci --workspace=@clinscriptum/rule-admin --workspace=@clinscriptum/api --include-workspace-root
+RUN npm ci
 
 COPY packages/shared/ packages/shared/
 COPY packages/db/ packages/db/
