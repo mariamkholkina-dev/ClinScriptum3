@@ -18,9 +18,7 @@ COPY packages/ui/package.json packages/ui/
 
 RUN npm install
 
-COPY packages/shared/ packages/shared/
-COPY packages/db/ packages/db/
-COPY packages/diff-engine/ packages/diff-engine/
+COPY packages/ packages/
 COPY apps/api/ apps/api/
 COPY apps/web/ apps/web/
 
