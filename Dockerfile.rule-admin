@@ -35,4 +35,5 @@ COPY --from=builder /app/apps/rule-admin/.next/static ./apps/rule-admin/.next/st
 
 EXPOSE 3002
 ENV NODE_ENV=production
+ENV PORT=3002
 CMD ["node", "apps/rule-admin/server.js"]
