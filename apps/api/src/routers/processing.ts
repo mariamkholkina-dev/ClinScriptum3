@@ -148,7 +148,7 @@ export const processingRouter = router({
       processingService.addSoaProcedure(ctx.user.tenantId, input.soaTableId, input.procedureName),
     ),
 
-  updateSectionStatus: p
+  updateSectionStructureStatus: p
     .input(
       z.object({
         sectionId: z.string().uuid(),
@@ -156,18 +156,41 @@ export const processingRouter = router({
       }),
     )
     .mutation(({ ctx, input }) =>
-      processingService.updateSectionStatus(ctx.user.tenantId, input.sectionId, input.status),
+      processingService.updateSectionStructureStatus(ctx.user.tenantId, input.sectionId, input.status),
     ),
 
-  bulkUpdateSectionStatus: p
+  updateSectionClassificationStatus: p
+    .input(
+      z.object({
+        sectionId: z.string().uuid(),
+        status: z.enum(["validated", "not_validated", "requires_rework"]),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      processingService.updateSectionClassificationStatus(ctx.user.tenantId, input.sectionId, input.status),
+    ),
+
+  bulkUpdateSectionStructureStatus: p
     .input(
       z.object({
         sectionIds: z.array(z.string().uuid()).min(1).max(200),
         status: z.enum(["validated", "not_validated", "requires_rework"]),
-        reviewComment: z.string().optional(),
+        structureComment: z.string().optional(),
       }),
     )
     .mutation(({ ctx, input }) =>
-      processingService.bulkUpdateSectionStatus(ctx.user.tenantId, input.sectionIds, input.status, input.reviewComment),
+      processingService.bulkUpdateSectionStructureStatus(ctx.user.tenantId, input.sectionIds, input.status, input.structureComment),
+    ),
+
+  bulkUpdateSectionClassificationStatus: p
+    .input(
+      z.object({
+        sectionIds: z.array(z.string().uuid()).min(1).max(200),
+        status: z.enum(["validated", "not_validated", "requires_rework"]),
+        classificationComment: z.string().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      processingService.bulkUpdateSectionClassificationStatus(ctx.user.tenantId, input.sectionIds, input.status, input.classificationComment),
     ),
 });

@@ -68,8 +68,8 @@ export function sortSections(sections: Section[], key: SortKey): Section[] {
       return copy.sort((a, b) => a.title.localeCompare(b.title, "ru"));
     case "level":
       return copy.sort((a, b) => a.level - b.level || a.order - b.order);
-    case "status":
-      return copy.sort((a, b) => a.status.localeCompare(b.status) || a.order - b.order);
+    case "structureStatus":
+      return copy.sort((a, b) => a.structureStatus.localeCompare(b.structureStatus) || a.order - b.order);
     case "blockCount":
       return copy.sort((a, b) => b.contentBlocks.length - a.contentBlocks.length || a.order - b.order);
     default:
@@ -83,7 +83,8 @@ export function filterSections(
   anomalies: Map<string, AnomalyType[]>,
 ): Section[] {
   return sections.filter((s) => {
-    if (filters.status && s.status !== filters.status) return false;
+    if (filters.structureStatus && s.structureStatus !== filters.structureStatus) return false;
+    if (filters.classificationStatus && s.classificationStatus !== filters.classificationStatus) return false;
 
     if (filters.level) {
       if (filters.level === "3+") {

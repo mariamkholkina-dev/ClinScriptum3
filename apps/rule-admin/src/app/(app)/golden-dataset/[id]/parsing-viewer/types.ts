@@ -14,7 +14,8 @@ export interface Section {
   classifiedBy: string | null;
   level: number;
   order: number;
-  status: "validated" | "not_validated" | "requires_rework";
+  structureStatus: "validated" | "not_validated" | "requires_rework";
+  classificationStatus: "validated" | "not_validated" | "requires_rework";
   contentBlocks: ContentBlock[];
 }
 
@@ -27,17 +28,19 @@ export interface DiffEntry {
   actual?: { level: number; order: number };
 }
 
-export type SortKey = "order" | "title" | "level" | "status" | "blockCount";
+export type SortKey = "order" | "title" | "level" | "structureStatus" | "blockCount";
 
 export interface FilterState {
-  status: "" | "validated" | "not_validated" | "requires_rework";
+  structureStatus: "" | "validated" | "not_validated" | "requires_rework";
+  classificationStatus: "" | "validated" | "not_validated" | "requires_rework";
   level: "" | "1" | "2" | "3+";
   hasContent: "" | "yes" | "no";
   anomaliesOnly: boolean;
 }
 
 export const EMPTY_FILTERS: FilterState = {
-  status: "",
+  structureStatus: "",
+  classificationStatus: "",
   level: "",
   hasContent: "",
   anomaliesOnly: false,

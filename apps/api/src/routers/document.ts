@@ -58,10 +58,16 @@ export const documentRouter = router({
       documentService.getVersion(ctx.user.tenantId, input.versionId),
     ),
 
-  validateAllSections: p
+  validateAllStructure: p
     .input(z.object({ versionId: z.string().uuid() }))
     .mutation(({ ctx, input }) =>
-      documentService.validateAllSections(ctx.user.tenantId, input.versionId),
+      documentService.validateAllStructure(ctx.user.tenantId, input.versionId),
+    ),
+
+  validateAllClassification: p
+    .input(z.object({ versionId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      documentService.validateAllClassification(ctx.user.tenantId, input.versionId),
     ),
 
   updateSectionClassification: p
@@ -69,7 +75,7 @@ export const documentRouter = router({
       z.object({
         sectionId: z.string().uuid(),
         standardSection: z.string().nullable(),
-        status: z.enum(["validated", "not_validated", "requires_rework"]).optional(),
+        classificationStatus: z.enum(["validated", "not_validated", "requires_rework"]).optional(),
       }),
     )
     .mutation(({ ctx, input }) =>
@@ -77,7 +83,7 @@ export const documentRouter = router({
         ctx.user.tenantId,
         input.sectionId,
         input.standardSection,
-        input.status,
+        input.classificationStatus,
       ),
     ),
 

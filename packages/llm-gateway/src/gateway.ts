@@ -39,7 +39,10 @@ export class LLMGateway {
   private resolveModel() {
     switch (this.config.provider) {
       case "openai": {
-        const openai = createOpenAI({ apiKey: this.config.apiKey });
+        const openai = createOpenAI({
+          apiKey: this.config.apiKey,
+          baseURL: this.config.baseUrl || undefined,
+        });
         return openai(this.config.model);
       }
       case "azure_openai": {

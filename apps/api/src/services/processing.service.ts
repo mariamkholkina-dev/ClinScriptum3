@@ -358,7 +358,7 @@ export const processingService = {
     return { success: true };
   },
 
-  async updateSectionStatus(
+  async updateSectionStructureStatus(
     tenantId: string,
     sectionId: string,
     status: "validated" | "not_validated" | "requires_rework",
@@ -371,15 +371,32 @@ export const processingService = {
 
     return prisma.section.update({
       where: { id: sectionId },
-      data: { status },
+      data: { structureStatus: status },
     });
   },
 
-  async bulkUpdateSectionStatus(
+  async updateSectionClassificationStatus(
+    tenantId: string,
+    sectionId: string,
+    status: "validated" | "not_validated" | "requires_rework",
+  ) {
+    const section = await prisma.section.findUnique({
+      where: { id: sectionId },
+      include: { docVersion: { include: { document: { include: { study: true } } } } },
+    });
+    requireTenantResource(section, tenantId, (s) => s.docVersion.document.study.tenantId);
+
+    return prisma.section.update({
+      where: { id: sectionId },
+      data: { classificationStatus: status },
+    });
+  },
+
+  async bulkUpdateSectionStructureStatus(
     tenantId: string,
     sectionIds: string[],
     status: "validated" | "not_validated" | "requires_rework",
-    reviewComment?: string,
+    structureComment?: string,
   ) {
     const sections = await prisma.section.findMany({
       where: { id: { in: sectionIds } },
@@ -396,9 +413,42 @@ export const processingService = {
       return { updated: 0 };
     }
 
-    const data: Record<string, unknown> = { status };
-    if (reviewComment !== undefined) {
-      data.reviewComment = reviewComment;
+    const data: Record<string, unknown> = { structureStatus: status };
+    if (structureComment !== undefined) {
+      data.structureComment = structureComment;
+    }
+
+    const result = await prisma.section.updateMany({
+      where: { id: { in: allowed } },
+      data,
+    });
+    return { updated: result.count };
+  },
+
+  async bulkUpdateSectionClassificationStatus(
+    tenantId: string,
+    sectionIds: string[],
+    status: "validated" | "not_validated" | "requires_rework",
+    classificationComment?: string,
+  ) {
+    const sections = await prisma.section.findMany({
+      where: { id: { in: sectionIds } },
+      select: {
+        id: true,
+        docVersion: { select: { document: { select: { study: { select: { tenantId: true } } } } } },
+      },
+    });
+    const allowed = sections
+      .filter((s) => s.docVersion.document.study.tenantId === tenantId)
+      .map((s) => s.id);
+
+    if (allowed.length === 0) {
+      return { updated: 0 };
+    }
+
+    const data: Record<string, unknown> = { classificationStatus: status };
+    if (classificationComment !== undefined) {
+      data.classificationComment = classificationComment;
     }
 
     const result = await prisma.section.updateMany({

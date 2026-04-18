@@ -181,8 +181,10 @@ model Section {
   llmConfidence   Float         @default(0) @map("llm_confidence")
   level           Int
   order           Int
-  status          SectionStatus @default(not_validated)
-  reviewComment   String?       @map("review_comment")
+  structureStatus      SectionStatus @default(not_validated) @map("structure_status")
+  classificationStatus SectionStatus @default(not_validated) @map("classification_status")
+  structureComment      String?       @map("structure_comment")
+  classificationComment String?       @map("classification_comment")
   sourceAnchor    Json          @map("source_anchor") @db.JsonB
 
   docVersion    DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)

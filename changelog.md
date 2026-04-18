@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-19
+
+### Изменено
+
+- **Разделение подтверждения структуры и классификации секций** — поле `Section.status` разделено на `structureStatus` (подтверждение парсинга: заголовки, границы, уровни) и `classificationStatus` (подтверждение классификации: привязка к стандартным секциям). Два независимых статуса, два бейджа в UI, две кнопки массового подтверждения.
+  - **Миграция БД**: `status` → `classification_status`, новая колонка `structure_status`; `review_comment` → `classification_comment`, новая колонка `structure_comment`
+  - **API**: `validateAllSections` → `validateAllStructure` + `validateAllClassification`; `updateSectionStatus` / `bulkUpdateSectionStatus` → раздельные эндпоинты для структуры и классификации
+  - **Frontend web**: страница документа — два бейджа (зелёный для структуры, синий для классификации), две кнопки массового подтверждения
+  - **Frontend rule-admin**: ParsingTreeViewer — два бейджа, фильтры по обоим статусам, bulk-операция привязана к структуре
+- **Исправлен LLM Gateway**: провайдер `"openai"` теперь передаёт `baseURL` в `createOpenAI()`, что позволяет использовать OpenAI-совместимые эндпоинты (RunPod, vLLM, Ollama и т.д.) через настройку Base URL
+
 ## 2026-04-18
 
 ### Добавлено

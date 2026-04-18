@@ -70,7 +70,7 @@ const SORT_LABELS: Record<SortKey, string> = {
   order: "По порядку",
   title: "По заголовку",
   level: "По уровню",
-  status: "По статусу",
+  structureStatus: "По статусу структуры",
   blockCount: "По кол-ву блоков",
 };
 
@@ -373,14 +373,25 @@ function ParsingToolbar({
         <Filter size={12} className="text-gray-400" />
 
         <select
-          value={filters.status}
-          onChange={(e) => onFiltersChange({ ...filters, status: e.target.value as FilterState["status"] })}
+          value={filters.structureStatus}
+          onChange={(e) => onFiltersChange({ ...filters, structureStatus: e.target.value as FilterState["structureStatus"] })}
           className="rounded border border-gray-300 px-2 py-1 text-xs"
         >
-          <option value="">Все статусы</option>
-          <option value="validated">Подтверждён</option>
-          <option value="not_validated">Не подтверждён</option>
-          <option value="requires_rework">На доработку</option>
+          <option value="">Структура: все</option>
+          <option value="validated">Структура: подтверждён</option>
+          <option value="not_validated">Структура: не подтверждён</option>
+          <option value="requires_rework">Структура: на доработку</option>
+        </select>
+
+        <select
+          value={filters.classificationStatus}
+          onChange={(e) => onFiltersChange({ ...filters, classificationStatus: e.target.value as FilterState["classificationStatus"] })}
+          className="rounded border border-gray-300 px-2 py-1 text-xs"
+        >
+          <option value="">Классификация: все</option>
+          <option value="validated">Классификация: подтверждён</option>
+          <option value="not_validated">Классификация: не подтверждён</option>
+          <option value="requires_rework">Классификация: на доработку</option>
         </select>
 
         <select
@@ -414,7 +425,7 @@ function ParsingToolbar({
           Только аномалии
         </label>
 
-        {(filters.status || filters.level || filters.hasContent || filters.anomaliesOnly) && (
+        {(filters.structureStatus || filters.classificationStatus || filters.level || filters.hasContent || filters.anomaliesOnly) && (
           <button
             onClick={() => onFiltersChange(EMPTY_FILTERS)}
             className="text-xs text-brand-600 hover:text-brand-700"
@@ -612,9 +623,14 @@ function SectionTreeRow({
           </span>
         ))}
 
-        {/* Status badge */}
-        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[section.status] ?? ""}`}>
-          {STATUS_LABEL[section.status] ?? section.status}
+        {/* Structure status badge */}
+        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[section.structureStatus] ?? ""}`}>
+          С: {STATUS_LABEL[section.structureStatus] ?? section.structureStatus}
+        </span>
+
+        {/* Classification status badge */}
+        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[section.classificationStatus] ?? ""}`}>
+          К: {STATUS_LABEL[section.classificationStatus] ?? section.classificationStatus}
         </span>
 
         {/* Confidence */}
@@ -713,7 +729,7 @@ export default function ParsingTreeViewer({
 
   // Bulk status update
   const utils = trpc.useUtils();
-  const bulkMutation = trpc.processing.bulkUpdateSectionStatus.useMutation({
+  const bulkStructureMutation = trpc.processing.bulkUpdateSectionStructureStatus.useMutation({
     onSuccess: () => {
       utils.document.getVersion.invalidate({ versionId });
       setSelectedIds(new Set());
@@ -721,14 +737,14 @@ export default function ParsingTreeViewer({
   });
 
   const bulkUpdate = useCallback(
-    (status: "validated" | "requires_rework", reviewComment?: string) => {
-      bulkMutation.mutate({
+    (status: "validated" | "requires_rework", structureComment?: string) => {
+      bulkStructureMutation.mutate({
         sectionIds: Array.from(selectedIds),
         status,
-        ...(reviewComment ? { reviewComment } : {}),
+        ...(structureComment ? { structureComment } : {}),
       });
     },
-    [selectedIds, bulkMutation],
+    [selectedIds, bulkStructureMutation],
   );
 
   // Toggle helpers

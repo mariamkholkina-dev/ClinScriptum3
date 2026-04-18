@@ -183,7 +183,8 @@ export const documentService = {
           classifiedBy: true,
           level: true,
           order: true,
-          status: true,
+          structureStatus: true,
+          classificationStatus: true,
           contentBlocks: {
             orderBy: { order: "asc" },
             select: { id: true, type: true, content: true, rawHtml: true, order: true },
@@ -208,7 +209,8 @@ export const documentService = {
       classifiedBy: string | null;
       level: number | null;
       order: number | null;
-      status: string | null;
+      structureStatus: string | null;
+      classificationStatus: string | null;
     };
     type RawBlockRow = {
       id: string;
@@ -222,7 +224,9 @@ export const documentService = {
     const rawSections = await prisma.$queryRaw<RawSectionRow[]>`
       SELECT s.id, s.title, s.standard_section AS "standardSection",
              s.confidence, s.classified_by AS "classifiedBy",
-             s.level, s."order", s.status::text AS status
+             s.level, s."order",
+             s.structure_status::text AS "structureStatus",
+             s.classification_status::text AS "classificationStatus"
       FROM sections s WHERE s.doc_version_id = ${versionId}::uuid
       ORDER BY s."order" ASC
     `;
@@ -254,7 +258,8 @@ export const documentService = {
       classifiedBy: s.classifiedBy,
       level: Number(s.level ?? 1),
       order: Number(s.order ?? 0),
-      status: validStatuses.has(s.status ?? "") ? s.status : "not_validated",
+      structureStatus: validStatuses.has(s.structureStatus ?? "") ? s.structureStatus : "not_validated",
+      classificationStatus: validStatuses.has(s.classificationStatus ?? "") ? s.classificationStatus : "not_validated",
       contentBlocks: (blocksBySection.get(s.id) ?? []).map((b) => ({
         id: b.id,
         type: validTypes.has(b.type ?? "") ? b.type : "paragraph",
@@ -265,7 +270,7 @@ export const documentService = {
     }));
   },
 
-  async validateAllSections(tenantId: string, versionId: string) {
+  async validateAllStructure(tenantId: string, versionId: string) {
     const version = await prisma.documentVersion.findUnique({
       where: { id: versionId },
       include: { document: { include: { study: true } } },
@@ -274,7 +279,21 @@ export const documentService = {
 
     await prisma.section.updateMany({
       where: { docVersionId: versionId },
-      data: { status: "validated" },
+      data: { structureStatus: "validated" },
+    });
+    return { success: true };
+  },
+
+  async validateAllClassification(tenantId: string, versionId: string) {
+    const version = await prisma.documentVersion.findUnique({
+      where: { id: versionId },
+      include: { document: { include: { study: true } } },
+    });
+    requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
+
+    await prisma.section.updateMany({
+      where: { docVersionId: versionId },
+      data: { classificationStatus: "validated" },
     });
     return { success: true };
   },
@@ -283,7 +302,7 @@ export const documentService = {
     tenantId: string,
     sectionId: string,
     standardSection: string | null,
-    status?: "validated" | "not_validated" | "requires_rework",
+    classificationStatus?: "validated" | "not_validated" | "requires_rework",
   ) {
     const section = await prisma.section.findUnique({
       where: { id: sectionId },
@@ -295,7 +314,7 @@ export const documentService = {
       where: { id: sectionId },
       data: {
         standardSection,
-        status: status ?? section.status,
+        classificationStatus: classificationStatus ?? section.classificationStatus,
       },
     });
   },

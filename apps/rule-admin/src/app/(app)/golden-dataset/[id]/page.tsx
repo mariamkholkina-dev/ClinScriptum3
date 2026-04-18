@@ -373,7 +373,8 @@ function SectionsViewer({ versionId }: { versionId: string }) {
                   ) : <span className="text-xs text-gray-400">—</span>}
                 </td>
                 <td className="px-3 py-2 text-xs text-gray-600">
-                  {STATUS_LABEL[s.status as string] ?? (s.status as string) ?? "—"}
+                  С: {STATUS_LABEL[s.structureStatus as string] ?? (s.structureStatus as string) ?? "—"}{" / "}
+                  К: {STATUS_LABEL[s.classificationStatus as string] ?? (s.classificationStatus as string) ?? "—"}
                 </td>
                 <td className="px-3 py-2 text-xs text-gray-500">
                   {Array.isArray(s.contentBlocks) ? s.contentBlocks.length : 0}

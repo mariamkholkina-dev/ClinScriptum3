@@ -5,7 +5,8 @@ export interface Section {
   standardSection: string | null;
   level: number;
   order: number;
-  status: SectionStatus;
+  structureStatus: SectionStatus;
+  classificationStatus: SectionStatus;
   sourceAnchor: import("./document.js").SourceAnchor;
   content: ContentBlock[];
 }

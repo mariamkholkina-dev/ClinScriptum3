@@ -48,10 +48,16 @@ const VERSION_STATUS_LABELS: Record<string, string> = {
   error: "Ошибка",
 };
 
-const SECTION_STATUS_LABELS: Record<string, string> = {
-  validated: "Подтверждена",
-  not_validated: "Не проверена",
-  requires_rework: "Требует доработки",
+const STRUCTURE_STATUS_LABELS: Record<string, string> = {
+  validated: "Структура подтверждена",
+  not_validated: "Структура не проверена",
+  requires_rework: "Структура: доработка",
+};
+
+const CLASSIFICATION_STATUS_LABELS: Record<string, string> = {
+  validated: "Классификация подтверждена",
+  not_validated: "Классификация не проверена",
+  requires_rework: "Классификация: доработка",
 };
 
 const CLASSIFIED_BY_LABELS: Record<string, string> = {
@@ -668,7 +674,10 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const contentPanelRef = useRef<HTMLDivElement | null>(null);
 
-  const validateAll = trpc.document.validateAllSections.useMutation({
+  const validateAllStructure = trpc.document.validateAllStructure.useMutation({
+    onSuccess: onRefetch,
+  });
+  const validateAllClassification = trpc.document.validateAllClassification.useMutation({
     onSuccess: onRefetch,
   });
   const updateClassification = trpc.document.updateSectionClassification.useMutation({
@@ -680,14 +689,18 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
   const lowConfidenceSections = useMemo(
     () =>
       version.sections.filter(
-        (s: any) => s.confidence < CONFIDENCE_THRESHOLD && s.status !== "validated"
+        (s: any) => s.confidence < CONFIDENCE_THRESHOLD && s.classificationStatus !== "validated"
       ),
     [version.sections]
   );
 
-  const allValidated = version.sections.every((s: any) => s.status === "validated");
-  const unvalidatedCount = version.sections.filter(
-    (s: any) => s.status !== "validated"
+  const allStructureValidated = version.sections.every((s: any) => s.structureStatus === "validated");
+  const allClassificationValidated = version.sections.every((s: any) => s.classificationStatus === "validated");
+  const unvalidatedStructureCount = version.sections.filter(
+    (s: any) => s.structureStatus !== "validated"
+  ).length;
+  const unvalidatedClassificationCount = version.sections.filter(
+    (s: any) => s.classificationStatus !== "validated"
   ).length;
 
   const scrollToSection = (sectionId: string) => {
@@ -723,16 +736,29 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
         {/* Actions */}
         <div className="space-y-2 flex-shrink-0">
           <button
-            onClick={() => validateAll.mutate({ versionId: version.id })}
-            disabled={allValidated || validateAll.isPending}
+            onClick={() => validateAllStructure.mutate({ versionId: version.id })}
+            disabled={allStructureValidated || validateAllStructure.isPending}
             className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
           >
-            {validateAll.isPending ? (
+            {validateAllStructure.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Check className="h-4 w-4" />
             )}
-            Подтвердить все секции
+            Подтвердить структуру
+          </button>
+
+          <button
+            onClick={() => validateAllClassification.mutate({ versionId: version.id })}
+            disabled={allClassificationValidated || validateAllClassification.isPending}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {validateAllClassification.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            Подтвердить классификацию
           </button>
 
           {lowConfidenceSections.length > 0 && (
@@ -745,12 +771,12 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
             </button>
           )}
 
-          {!allValidated && (
+          {(!allStructureValidated || !allClassificationValidated) && (
             <p className="text-xs text-gray-500 text-center">
-              {unvalidatedCount} из {version.sections.length} секций не подтверждены
+              Структура: {unvalidatedStructureCount} не подтв. · Классификация: {unvalidatedClassificationCount} не подтв.
             </p>
           )}
-          {allValidated && (
+          {allStructureValidated && allClassificationValidated && (
             <p className="text-xs text-green-600 text-center font-medium">
               Все секции подтверждены
             </p>
@@ -768,7 +794,7 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
       {/* Right: Document content — own scroll */}
       <div ref={contentPanelRef} className="col-span-9 overflow-auto space-y-4 pr-1">
         {version.sections.map((section: any) => {
-          const isLowConf = section.confidence < CONFIDENCE_THRESHOLD && section.status !== "validated";
+          const isLowConf = section.confidence < CONFIDENCE_THRESHOLD && section.classificationStatus !== "validated";
           const isActive = activeSectionId === section.id;
 
           return (
@@ -790,7 +816,7 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
                   updateClassification.mutate({
                     sectionId: section.id,
                     standardSection,
-                    status: "validated",
+                    classificationStatus: "validated",
                   });
                 }}
               />
@@ -875,10 +901,11 @@ function SectionTree({
           if (!visibleSet.has(section.id)) return null;
 
           const isLowConf =
-            section.confidence < CONFIDENCE_THRESHOLD && section.status !== "validated";
+            section.confidence < CONFIDENCE_THRESHOLD && section.classificationStatus !== "validated";
           const isActive = activeSectionId === section.id;
           const isParent = hasChildren[section.id];
           const isCollapsed = collapsed[section.id];
+          const bothValidated = section.structureStatus === "validated" && section.classificationStatus === "validated";
 
           return (
             <div
@@ -917,7 +944,7 @@ function SectionTree({
                 {isLowConf && (
                   <AlertTriangle className="h-3 w-3 text-amber-500 flex-shrink-0" />
                 )}
-                {section.status === "validated" && (
+                {bothValidated && (
                   <Check className="h-3 w-3 text-green-500 flex-shrink-0" />
                 )}
                 <span className="truncate">{section.title}</span>
@@ -990,16 +1017,28 @@ function SectionHeader({
             </span>
           )}
 
-          {/* Status */}
+          {/* Structure status */}
           <span
             className={cn(
               "rounded-full px-2 py-0.5 text-xs font-medium",
-              section.status === "validated" && "bg-green-100 text-green-700",
-              section.status === "not_validated" && "bg-gray-100 text-gray-600",
-              section.status === "requires_rework" && "bg-red-100 text-red-700"
+              section.structureStatus === "validated" && "bg-green-100 text-green-700",
+              section.structureStatus === "not_validated" && "bg-gray-100 text-gray-600",
+              section.structureStatus === "requires_rework" && "bg-red-100 text-red-700"
             )}
           >
-            {SECTION_STATUS_LABELS[section.status] ?? section.status}
+            {STRUCTURE_STATUS_LABELS[section.structureStatus] ?? section.structureStatus}
+          </span>
+
+          {/* Classification status */}
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-xs font-medium",
+              section.classificationStatus === "validated" && "bg-blue-100 text-blue-700",
+              section.classificationStatus === "not_validated" && "bg-gray-100 text-gray-600",
+              section.classificationStatus === "requires_rework" && "bg-red-100 text-red-700"
+            )}
+          >
+            {CLASSIFICATION_STATUS_LABELS[section.classificationStatus] ?? section.classificationStatus}
           </span>
 
           {isLowConf && (
