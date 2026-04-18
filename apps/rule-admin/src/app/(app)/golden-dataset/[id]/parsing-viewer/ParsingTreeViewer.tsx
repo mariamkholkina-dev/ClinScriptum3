@@ -923,7 +923,7 @@ export default function ParsingTreeViewer({
         hasDiffData={hasDiffData}
         showSource={showSource}
         onToggleSource={() => setShowSource((p) => !p)}
-        bulkPending={bulkMutation.isPending}
+        bulkPending={bulkStructureMutation.isPending}
       />
 
       {/* Diff results */}
