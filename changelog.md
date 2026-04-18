@@ -5,6 +5,7 @@
 ### Добавлено
 
 - **Деплой Rule Admin** — `Dockerfile.rule-admin` (standalone Next.js на порту 3002), Helm deployment + service + ingress на `admin.clinscriptum.com`, ресурсы и реплики в `values.yaml`
+- **Обновление Docker-образов на Node 24** — все Dockerfile (`api`, `web`, `workers`, `rule-admin`) переведены с `node:20-alpine` на `node:24-alpine` для совместимости с npm 11 и актуальным `package-lock.json`; все Dockerfile теперь копируют полный набор workspace `package.json` и используют `npm ci` без `--workspace` фильтра
 
 - **Расширенный просмотрщик валидации парсинга** (`rule-admin`, golden-dataset detail page):
   - Иерархическое дерево секций с автоматической нумерацией (1, 1.1, 1.2, ...)

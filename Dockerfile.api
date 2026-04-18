@@ -1,17 +1,22 @@
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 WORKDIR /app
 
 FROM base AS builder
 COPY package.json package-lock.json turbo.json tsconfig.base.json ./
 COPY apps/api/package.json apps/api/
+COPY apps/rule-admin/package.json apps/rule-admin/
+COPY apps/web/package.json apps/web/
+COPY apps/word-addin/package.json apps/word-addin/
+COPY apps/workers/package.json apps/workers/
 COPY packages/db/package.json packages/db/
-COPY packages/shared/package.json packages/shared/
-COPY packages/llm-gateway/package.json packages/llm-gateway/
 COPY packages/diff-engine/package.json packages/diff-engine/
 COPY packages/doc-parser/package.json packages/doc-parser/
+COPY packages/llm-gateway/package.json packages/llm-gateway/
 COPY packages/rules-engine/package.json packages/rules-engine/
+COPY packages/shared/package.json packages/shared/
+COPY packages/ui/package.json packages/ui/
 
-RUN npm ci --workspace=@clinscriptum/api --include-workspace-root
+RUN npm ci
 
 COPY taxonomy.yaml ./
 COPY packages/ packages/
