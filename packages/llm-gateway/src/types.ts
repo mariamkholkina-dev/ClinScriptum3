@@ -1,4 +1,4 @@
-export type LLMProvider = "openai" | "anthropic" | "azure_openai" | "qwen";
+export type LLMProvider = "openai" | "anthropic" | "azure_openai" | "qwen" | "yandexgpt";
 
 export interface LLMConfig {
   provider: LLMProvider;

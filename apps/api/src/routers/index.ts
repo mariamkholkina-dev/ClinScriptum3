@@ -9,6 +9,11 @@ import { auditRouter } from "./audit.js";
 import { wordAddinRouter } from "./word-addin.js";
 import { tuningRouter } from "./tuning.js";
 import { findingReviewRouter } from "./finding-review.js";
+import { ruleManagementRouter } from "./rule-management.js";
+import { llmConfigRouter } from "./llm-config.js";
+import { goldenDatasetRouter } from "./golden-dataset.js";
+import { evaluationRouter } from "./evaluation.js";
+import { qualityRouter } from "./quality.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -21,6 +26,11 @@ export const appRouter = router({
   wordAddin: wordAddinRouter,
   tuning: tuningRouter,
   findingReview: findingReviewRouter,
+  ruleManagement: ruleManagementRouter,
+  llmConfig: llmConfigRouter,
+  goldenDataset: goldenDatasetRouter,
+  evaluation: evaluationRouter,
+  quality: qualityRouter,
 });
 
 export type AppRouter = typeof appRouter;

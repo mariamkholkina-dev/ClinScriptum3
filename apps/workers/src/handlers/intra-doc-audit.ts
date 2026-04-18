@@ -1,5 +1,6 @@
-import { prisma } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot } from "@clinscriptum/db";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
+import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
 import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeline/orchestrator.js";
 
@@ -76,8 +77,8 @@ export async function handleIntraDocAudit(data: {
       // URS-075/076: Build full document text for LLM context
       const fullDocText = buildFullDocumentText(sections);
 
-      const apiKey = process.env.LLM_API_KEY;
-      if (!apiKey) {
+      const llmConfig = await getEffectiveLlmConfig("intra_audit", ctx.tenantId);
+      if (!llmConfig.apiKey) {
         return {
           data: { message: "LLM API key not configured, skipping LLM audit" },
           needsNextStep: true,
@@ -85,11 +86,11 @@ export async function handleIntraDocAudit(data: {
       }
 
       const gateway = new LLMGateway({
-        provider: (process.env.LLM_PROVIDER as any) ?? "openai",
-        model: process.env.LLM_MODEL ?? "gpt-4o",
-        apiKey,
-        baseUrl: process.env.LLM_BASE_URL,
-        temperature: 0.1,
+        provider: llmConfig.provider as LLMProvider,
+        model: llmConfig.model,
+        apiKey: llmConfig.apiKey,
+        baseUrl: llmConfig.baseUrl || undefined,
+        temperature: llmConfig.temperature,
       });
 
       const response = await gateway.generate({
@@ -125,6 +126,7 @@ export async function handleIntraDocAudit(data: {
           tokensUsed: response.usage.totalTokens,
         },
         needsNextStep: true,
+        llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
       };
     },
   };

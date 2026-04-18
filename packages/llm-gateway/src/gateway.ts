@@ -61,8 +61,15 @@ export class LLMGateway {
         const anthropic = createAnthropic({ apiKey: this.config.apiKey });
         return anthropic(this.config.model);
       }
+      case "yandexgpt": {
+        const yandex = createOpenAI({
+          apiKey: this.config.apiKey,
+          baseURL: this.config.baseUrl ?? "https://llm.api.cloud.yandex.net/foundationModels/v1",
+        });
+        return yandex(this.config.model);
+      }
       default:
-        throw new Error(`Unsupported provider: ${this.config.provider satisfies never}`);
+        throw new Error(`Unsupported provider: ${this.config.provider}`);
     }
   }
 }

@@ -1,14 +1,25 @@
 export type LlmTask =
   | "section_classify"
+  | "section_classify_qa"
   | "fact_extraction"
   | "fact_extraction_qa"
+  | "soa_detection"
+  | "soa_detection_qa"
   | "intra_audit"
   | "intra_audit_qa"
   | "inter_audit"
   | "inter_audit_qa"
+  | "fact_audit_intra"
+  | "fact_audit_intra_qa"
+  | "fact_audit_inter"
+  | "fact_audit_inter_qa"
   | "generation"
   | "generation_qa"
-  | "impact_analysis";
+  | "impact_analysis"
+  | "impact_analysis_qa"
+  | "change_classification"
+  | "change_classification_qa"
+  | "correction_recommend";
 
 export interface LlmTaskConfig {
   provider: string;
@@ -20,14 +31,27 @@ export interface LlmTaskConfig {
 }
 
 const DEFAULT_MAX_TOKENS: Record<string, number> = {
+  section_classify: 2048,
+  section_classify_qa: 2048,
   fact_extraction: 16384,
   fact_extraction_qa: 4096,
+  soa_detection: 8192,
+  soa_detection_qa: 4096,
   intra_audit: 4096,
   intra_audit_qa: 2048,
   inter_audit: 8192,
   inter_audit_qa: 4096,
+  fact_audit_intra: 4096,
+  fact_audit_intra_qa: 2048,
+  fact_audit_inter: 8192,
+  fact_audit_inter_qa: 4096,
   generation: 8192,
   generation_qa: 4096,
+  impact_analysis: 8192,
+  impact_analysis_qa: 4096,
+  change_classification: 4096,
+  change_classification_qa: 2048,
+  correction_recommend: 8192,
 };
 
 const GLOBAL_DEFAULT_MAX_TOKENS = 2048;
@@ -52,7 +76,7 @@ export const config = {
   refreshTokenExpiresInDays: parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS ?? "30", 10),
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(",")
-    : ["http://localhost:3000", "https://localhost:3001"],
+    : ["http://localhost:3000", "https://localhost:3001", "http://localhost:3002"],
 
   storage: {
     type: (process.env.STORAGE_TYPE ?? "local") as "local" | "s3",

@@ -12,12 +12,14 @@ export interface PipelineContext {
   processingRunId: string;
   docVersionId: string;
   studyId: string;
+  tenantId: string;
   previousResults: Map<PipelineLevel, StepResult>;
 }
 
 export interface StepResult {
   data: Record<string, unknown>;
   needsNextStep: boolean;
+  llmConfigSnapshot?: Record<string, unknown>;
 }
 
 export interface PipelineConfig {
@@ -40,7 +42,7 @@ export async function runPipeline(
 ): Promise<void> {
   const run = await prisma.processingRun.findUnique({
     where: { id: processingRunId },
-    include: { steps: true },
+    include: { steps: true, study: { select: { tenantId: true } } },
   });
   if (!run) throw new Error(`Processing run ${processingRunId} not found`);
 
@@ -57,6 +59,7 @@ export async function runPipeline(
     processingRunId,
     docVersionId: run.docVersionId,
     studyId: run.studyId,
+    tenantId: run.study.tenantId,
     previousResults: new Map(),
   };
 
@@ -113,6 +116,7 @@ export async function runPipeline(
           data: {
             status: "completed",
             result: result.data as any,
+            llmConfigSnapshot: result.llmConfigSnapshot as any ?? undefined,
             completedAt: new Date(),
           },
         });

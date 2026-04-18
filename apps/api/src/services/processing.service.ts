@@ -374,4 +374,37 @@ export const processingService = {
       data: { status },
     });
   },
+
+  async bulkUpdateSectionStatus(
+    tenantId: string,
+    sectionIds: string[],
+    status: "validated" | "not_validated" | "requires_rework",
+    reviewComment?: string,
+  ) {
+    const sections = await prisma.section.findMany({
+      where: { id: { in: sectionIds } },
+      select: {
+        id: true,
+        docVersion: { select: { document: { select: { study: { select: { tenantId: true } } } } } },
+      },
+    });
+    const allowed = sections
+      .filter((s) => s.docVersion.document.study.tenantId === tenantId)
+      .map((s) => s.id);
+
+    if (allowed.length === 0) {
+      return { updated: 0 };
+    }
+
+    const data: Record<string, unknown> = { status };
+    if (reviewComment !== undefined) {
+      data.reviewComment = reviewComment;
+    }
+
+    const result = await prisma.section.updateMany({
+      where: { id: { in: allowed } },
+      data,
+    });
+    return { updated: result.count };
+  },
 };

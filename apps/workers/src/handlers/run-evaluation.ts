@@ -1,0 +1,388 @@
+import { prisma } from "@clinscriptum/db";
+import { logger } from "../lib/logger.js";
+
+interface StageMetrics {
+  total: number;
+  passed: number;
+  failed: number;
+  passRate: number;
+  avgPrecision: number | null;
+  avgRecall: number | null;
+  avgF1: number | null;
+}
+
+export async function handleRunEvaluation(data: { evaluationRunId: string }) {
+  const startTime = Date.now();
+
+  const run = await prisma.evaluationRun.findUnique({
+    where: { id: data.evaluationRunId },
+    include: {
+      ruleSetVersion: true,
+      llmConfig: true,
+    },
+  });
+
+  if (!run) {
+    throw new Error(`EvaluationRun ${data.evaluationRunId} not found`);
+  }
+
+  await prisma.evaluationRun.update({
+    where: { id: run.id },
+    data: { status: "running" },
+  });
+
+  try {
+    const goldenSamples = await prisma.goldenSample.findMany({
+      where: { tenantId: run.tenantId },
+      include: {
+        stageStatuses: {
+          where: { status: "approved" },
+        },
+        documents: {
+          include: {
+            documentVersion: true,
+          },
+        },
+      },
+    });
+
+    const samplesWithApproved = goldenSamples.filter(
+      (s) => s.stageStatuses.length > 0,
+    );
+
+    logger.info("Starting evaluation run", {
+      evaluationRunId: run.id,
+      totalSamples: samplesWithApproved.length,
+      stages: [
+        ...new Set(samplesWithApproved.flatMap((s) => s.stageStatuses.map((ss) => ss.stage))),
+      ],
+    });
+
+    let totalResults = 0;
+    let passedResults = 0;
+    let failedResults = 0;
+    const stageAggregation: Record<string, { precisions: number[]; recalls: number[]; f1s: number[]; passed: number; total: number }> = {};
+
+    for (const sample of samplesWithApproved) {
+      for (const stageStatus of sample.stageStatuses) {
+        const stage = stageStatus.stage;
+        const expected = stageStatus.expectedResults as Record<string, unknown>;
+
+        const primaryDoc = sample.documents[0];
+        if (!primaryDoc) {
+          logger.warn("Golden sample has no documents, skipping", {
+            goldenSampleId: sample.id,
+          });
+          continue;
+        }
+
+        const docVersionId = primaryDoc.documentVersionId;
+        const stageStart = Date.now();
+
+        try {
+          const actual = await loadActualResults(docVersionId, stage);
+          const { precision, recall, f1, diff } = compareResults(expected, actual);
+          const status = f1 !== null && f1 >= 0.8 ? "pass" : "fail";
+
+          await prisma.evaluationResult.create({
+            data: {
+              evaluationRunId: run.id,
+              goldenSampleId: sample.id,
+              stage,
+              status,
+              expected: expected as object,
+              actual: actual as object,
+              diff: diff as object,
+              precision,
+              recall,
+              f1,
+              latencyMs: Date.now() - stageStart,
+            },
+          });
+
+          totalResults++;
+          if (status === "pass") passedResults++;
+          else failedResults++;
+
+          if (!stageAggregation[stage]) {
+            stageAggregation[stage] = { precisions: [], recalls: [], f1s: [], passed: 0, total: 0 };
+          }
+          stageAggregation[stage].total++;
+          if (status === "pass") stageAggregation[stage].passed++;
+          if (precision !== null) stageAggregation[stage].precisions.push(precision);
+          if (recall !== null) stageAggregation[stage].recalls.push(recall);
+          if (f1 !== null) stageAggregation[stage].f1s.push(f1);
+        } catch (err) {
+          await prisma.evaluationResult.create({
+            data: {
+              evaluationRunId: run.id,
+              goldenSampleId: sample.id,
+              stage,
+              status: "error",
+              expected: expected as object,
+              actual: {},
+              diff: { error: (err as Error).message },
+              latencyMs: Date.now() - stageStart,
+            },
+          });
+          totalResults++;
+          failedResults++;
+
+          logger.error("Error evaluating stage for sample", {
+            evaluationRunId: run.id,
+            goldenSampleId: sample.id,
+            stage,
+            error: (err as Error).message,
+          });
+        }
+      }
+    }
+
+    const metrics: Record<string, StageMetrics> = {};
+    for (const [stage, agg] of Object.entries(stageAggregation)) {
+      metrics[stage] = {
+        total: agg.total,
+        passed: agg.passed,
+        failed: agg.total - agg.passed,
+        passRate: agg.total > 0 ? agg.passed / agg.total : 0,
+        avgPrecision: agg.precisions.length > 0 ? avg(agg.precisions) : null,
+        avgRecall: agg.recalls.length > 0 ? avg(agg.recalls) : null,
+        avgF1: agg.f1s.length > 0 ? avg(agg.f1s) : null,
+      };
+    }
+
+    let delta: Record<string, unknown> | undefined;
+    if (run.comparedToRunId) {
+      delta = await computeDelta(run.id, run.comparedToRunId);
+    }
+
+    const durationMs = Date.now() - startTime;
+
+    await prisma.evaluationRun.update({
+      where: { id: run.id },
+      data: {
+        status: "completed",
+        metrics: metrics as object,
+        durationMs,
+        totalSamples: totalResults,
+        passedSamples: passedResults,
+        failedSamples: failedResults,
+        completedAt: new Date(),
+        ...(delta ? { delta: delta as object } : {}),
+      },
+    });
+
+    logger.info("Evaluation run completed", {
+      evaluationRunId: run.id,
+      totalResults,
+      passedResults,
+      failedResults,
+      durationMs,
+    });
+
+    return { success: true, totalResults, passedResults, failedResults };
+  } catch (error) {
+    await prisma.evaluationRun.update({
+      where: { id: run.id },
+      data: {
+        status: "failed",
+        metrics: { error: (error as Error).message },
+        durationMs: Date.now() - startTime,
+        completedAt: new Date(),
+      },
+    });
+
+    logger.error("Evaluation run failed", {
+      evaluationRunId: run.id,
+      error: (error as Error).message,
+    });
+
+    throw error;
+  }
+}
+
+async function loadActualResults(
+  docVersionId: string,
+  stage: string,
+): Promise<Record<string, unknown>> {
+  switch (stage) {
+    case "classification": {
+      const sections = await prisma.section.findMany({
+        where: { docVersionId },
+        orderBy: { order: "asc" },
+        select: { id: true, title: true, standardSection: true },
+      });
+      return {
+        sections: sections.map((s) => ({
+          id: s.id,
+          title: s.title,
+          standardSection: s.standardSection,
+        })),
+      };
+    }
+    case "extraction": {
+      const facts = await prisma.fact.findMany({
+        where: { docVersionId },
+        select: {
+          id: true,
+          factKey: true,
+          factCategory: true,
+          value: true,
+          confidence: true,
+          factClass: true,
+        },
+      });
+      return {
+        facts: facts.map((f) => ({
+          id: f.id,
+          factKey: f.factKey,
+          factCategory: f.factCategory,
+          value: f.value,
+          confidence: f.confidence,
+          factClass: f.factClass,
+        })),
+      };
+    }
+    case "contradiction_detection": {
+      const facts = await prisma.fact.findMany({
+        where: { docVersionId, hasContradiction: true },
+        select: { id: true, factKey: true, value: true },
+      });
+      return { contradictions: facts };
+    }
+    default:
+      return {};
+  }
+}
+
+function compareResults(
+  expected: Record<string, unknown>,
+  actual: Record<string, unknown>,
+): { precision: number | null; recall: number | null; f1: number | null; diff: Record<string, unknown> } {
+  const expectedKeys = extractKeys(expected);
+  const actualKeys = extractKeys(actual);
+
+  if (expectedKeys.size === 0 && actualKeys.size === 0) {
+    return { precision: 1, recall: 1, f1: 1, diff: { matches: true } };
+  }
+
+  if (expectedKeys.size === 0 || actualKeys.size === 0) {
+    return {
+      precision: actualKeys.size === 0 ? 1 : 0,
+      recall: expectedKeys.size === 0 ? 1 : 0,
+      f1: 0,
+      diff: {
+        missing: [...expectedKeys].filter((k) => !actualKeys.has(k)),
+        extra: [...actualKeys].filter((k) => !expectedKeys.has(k)),
+      },
+    };
+  }
+
+  const truePositives = [...expectedKeys].filter((k) => actualKeys.has(k)).length;
+  const precision = actualKeys.size > 0 ? truePositives / actualKeys.size : 0;
+  const recall = expectedKeys.size > 0 ? truePositives / expectedKeys.size : 0;
+  const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+
+  return {
+    precision,
+    recall,
+    f1,
+    diff: {
+      truePositives,
+      missing: [...expectedKeys].filter((k) => !actualKeys.has(k)),
+      extra: [...actualKeys].filter((k) => !expectedKeys.has(k)),
+    },
+  };
+}
+
+function extractKeys(data: Record<string, unknown>): Set<string> {
+  const keys = new Set<string>();
+  for (const [key, value] of Object.entries(data)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === "object" && item !== null) {
+          const identifier =
+            (item as Record<string, unknown>).factKey ??
+            (item as Record<string, unknown>).standardSection ??
+            (item as Record<string, unknown>).id ??
+            JSON.stringify(item);
+          keys.add(`${key}:${String(identifier)}`);
+        } else {
+          keys.add(`${key}:${String(item)}`);
+        }
+      }
+    } else {
+      keys.add(`${key}:${String(value)}`);
+    }
+  }
+  return keys;
+}
+
+async function computeDelta(
+  currentRunId: string,
+  comparedToRunId: string,
+): Promise<Record<string, unknown>> {
+  const [currentResults, comparedResults] = await Promise.all([
+    prisma.evaluationResult.findMany({ where: { evaluationRunId: currentRunId } }),
+    prisma.evaluationResult.findMany({ where: { evaluationRunId: comparedToRunId } }),
+  ]);
+
+  const currentByStage = groupByStage(currentResults);
+  const comparedByStage = groupByStage(comparedResults);
+
+  const allStages = new Set([
+    ...Object.keys(currentByStage),
+    ...Object.keys(comparedByStage),
+  ]);
+
+  const delta: Record<string, unknown> = {};
+  for (const stage of allStages) {
+    const curr = currentByStage[stage];
+    const prev = comparedByStage[stage];
+    delta[stage] = {
+      current: curr ?? null,
+      previous: prev ?? null,
+      precisionDelta: safeDelta(curr?.avgPrecision, prev?.avgPrecision),
+      recallDelta: safeDelta(curr?.avgRecall, prev?.avgRecall),
+      f1Delta: safeDelta(curr?.avgF1, prev?.avgF1),
+    };
+  }
+
+  return delta;
+}
+
+function groupByStage(
+  results: Array<{
+    stage: string;
+    precision: number | null;
+    recall: number | null;
+    f1: number | null;
+  }>,
+): Record<string, { avgPrecision: number | null; avgRecall: number | null; avgF1: number | null }> {
+  const groups: Record<string, typeof results> = {};
+  for (const r of results) {
+    (groups[r.stage] ??= []).push(r);
+  }
+
+  const out: Record<string, { avgPrecision: number | null; avgRecall: number | null; avgF1: number | null }> = {};
+  for (const [stage, items] of Object.entries(groups)) {
+    const precisions = items.map((r) => r.precision).filter((v): v is number => v != null);
+    const recalls = items.map((r) => r.recall).filter((v): v is number => v != null);
+    const f1s = items.map((r) => r.f1).filter((v): v is number => v != null);
+    out[stage] = {
+      avgPrecision: precisions.length > 0 ? avg(precisions) : null,
+      avgRecall: recalls.length > 0 ? avg(recalls) : null,
+      avgF1: f1s.length > 0 ? avg(f1s) : null,
+    };
+  }
+  return out;
+}
+
+function avg(nums: number[]): number {
+  return nums.reduce((s, n) => s + n, 0) / nums.length;
+}
+
+function safeDelta(a: number | null | undefined, b: number | null | undefined): number | null {
+  if (a == null || b == null) return null;
+  return a - b;
+}

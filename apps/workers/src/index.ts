@@ -12,6 +12,9 @@ import { handleExtractFacts } from "./handlers/extract-facts.js";
 import { handleIntraDocAudit } from "./handlers/intra-doc-audit.js";
 import { handleGenerateICF } from "./handlers/generate-icf.js";
 import { handleGenerateCSR } from "./handlers/generate-csr.js";
+import { handleRunEvaluation } from "./handlers/run-evaluation.js";
+import { handleRunBatchEvaluation } from "./handlers/run-batch-evaluation.js";
+import { handleAnalyzeCorrections } from "./handlers/analyze-corrections.js";
 
 const connection = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: null,
@@ -51,6 +54,12 @@ const worker = new Worker(
           return handleGenerateICF(job.data);
         case "generate_csr":
           return handleGenerateCSR(job.data);
+        case "run_evaluation":
+          return handleRunEvaluation(job.data);
+        case "run_batch_evaluation":
+          return handleRunBatchEvaluation(job.data);
+        case "analyze_corrections":
+          return handleAnalyzeCorrections(job.data);
         default:
           logger.warn(`Unknown job type: ${job.name}`);
       }

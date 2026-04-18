@@ -31,6 +31,20 @@ const isAdmin = middleware(async ({ ctx, next }) => {
 
 export const adminProcedure = t.procedure.use(isAdmin);
 
+const QUALITY_ROLES = new Set(["rule_admin", "rule_approver", "tenant_admin"]);
+
+const isQualityUser = middleware(async ({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({ code: "UNAUTHORIZED" });
+  }
+  if (!QUALITY_ROLES.has(ctx.user.role)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Quality system access required" });
+  }
+  return next({ ctx: { user: ctx.user } });
+});
+
+export const qualityProcedure = t.procedure.use(isQualityUser);
+
 const REVIEWER_ROLES = new Set(["findings_reviewer", "rule_admin", "tenant_admin"]);
 
 const isReviewer = middleware(async ({ ctx, next }) => {

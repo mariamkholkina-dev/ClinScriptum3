@@ -1,5 +1,6 @@
-import { prisma } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot } from "@clinscriptum/db";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
+import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
 import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeline/orchestrator.js";
 
@@ -86,8 +87,8 @@ export async function handleGenerateICF(data: {
   const llmCheckHandler: PipelineStepHandler = {
     level: "llm_check",
     async execute(ctx: PipelineContext): Promise<StepResult> {
-      const apiKey = process.env.LLM_API_KEY;
-      if (!apiKey) {
+      const llmConfig = await getEffectiveLlmConfig("generation", ctx.tenantId);
+      if (!llmConfig.apiKey) {
         return {
           data: { message: "LLM API key not configured" },
           needsNextStep: true,
@@ -99,11 +100,11 @@ export async function handleGenerateICF(data: {
       const facts = (prev?.data?.facts ?? []) as Array<{ key: string; value: string }>;
 
       const gateway = new LLMGateway({
-        provider: (process.env.LLM_PROVIDER as any) ?? "openai",
-        model: process.env.LLM_MODEL ?? "gpt-4o",
-        apiKey,
-        baseUrl: process.env.LLM_BASE_URL,
-        temperature: 0.3,
+        provider: llmConfig.provider as LLMProvider,
+        model: llmConfig.model,
+        apiKey: llmConfig.apiKey,
+        baseUrl: llmConfig.baseUrl || undefined,
+        temperature: llmConfig.temperature,
       });
 
       const generated: ICFSection[] = [];
@@ -153,6 +154,7 @@ export async function handleGenerateICF(data: {
           sections: generated,
         },
         needsNextStep: true,
+        llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
       };
     },
   };

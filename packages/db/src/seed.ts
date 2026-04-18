@@ -63,6 +63,34 @@ async function main() {
     },
   });
 
+  const ruleAdminHash = await hashPassword("changeme123");
+  await prisma.user.upsert({
+    where: { email: "ruleadmin@demo.clinscriptum.com" },
+    update: { passwordHash: ruleAdminHash },
+    create: {
+      id: randomUUID(),
+      tenantId: tenant.id,
+      email: "ruleadmin@demo.clinscriptum.com",
+      passwordHash: ruleAdminHash,
+      name: "Demo Rule Admin",
+      role: "rule_admin",
+    },
+  });
+
+  const ruleApproverHash = await hashPassword("changeme123");
+  await prisma.user.upsert({
+    where: { email: "ruleapprover@demo.clinscriptum.com" },
+    update: { passwordHash: ruleApproverHash },
+    create: {
+      id: randomUUID(),
+      tenantId: tenant.id,
+      email: "ruleapprover@demo.clinscriptum.com",
+      passwordHash: ruleApproverHash,
+      name: "Demo Rule Approver",
+      role: "rule_approver",
+    },
+  });
+
   console.log("Seed completed.");
 }
 

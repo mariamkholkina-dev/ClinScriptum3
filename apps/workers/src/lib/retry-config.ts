@@ -12,6 +12,9 @@ const RETRY_CONFIGS: Record<string, JobRetryConfig> = {
   intra_doc_audit: { attempts: 2, backoff: { type: "exponential", delay: 10000 } },
   generate_icf: { attempts: 2, backoff: { type: "exponential", delay: 15000 } },
   generate_csr: { attempts: 2, backoff: { type: "exponential", delay: 15000 } },
+  run_evaluation: { attempts: 2, backoff: { type: "exponential", delay: 10000 } },
+  run_batch_evaluation: { attempts: 2, backoff: { type: "exponential", delay: 10000 } },
+  analyze_corrections: { attempts: 1, backoff: { type: "exponential", delay: 5000 } },
 };
 
 const DEFAULT_CONFIG: JobRetryConfig = {

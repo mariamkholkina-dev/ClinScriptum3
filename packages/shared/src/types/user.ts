@@ -8,4 +8,4 @@ export interface User {
   updatedAt: Date;
 }
 
-export type UserRole = "writer" | "qc_operator" | "findings_reviewer" | "rule_admin" | "tenant_admin";
+export type UserRole = "writer" | "qc_operator" | "findings_reviewer" | "rule_admin" | "tenant_admin" | "rule_approver";

@@ -158,4 +158,16 @@ export const processingRouter = router({
     .mutation(({ ctx, input }) =>
       processingService.updateSectionStatus(ctx.user.tenantId, input.sectionId, input.status),
     ),
+
+  bulkUpdateSectionStatus: p
+    .input(
+      z.object({
+        sectionIds: z.array(z.string().uuid()).min(1).max(200),
+        status: z.enum(["validated", "not_validated", "requires_rework"]),
+        reviewComment: z.string().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      processingService.bulkUpdateSectionStatus(ctx.user.tenantId, input.sectionIds, input.status, input.reviewComment),
+    ),
 });

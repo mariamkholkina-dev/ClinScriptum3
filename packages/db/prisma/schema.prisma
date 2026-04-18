@@ -43,6 +43,15 @@ model User {
   refreshTokens  RefreshToken[]
   findingReviews FindingReview[]
 
+  goldenSamplesCreated      GoldenSample[]             @relation("GoldenSampleCreator")
+  goldenStageReviews        GoldenSampleStageStatus[]  @relation("StageReviewer")
+  goldenStageApprovals      GoldenSampleStageStatus[]  @relation("StageApprover")
+  evaluationRunsCreated     EvaluationRun[]
+  correctionRecords         CorrectionRecord[]
+  correctionRecommendations CorrectionRecommendation[] @relation("RecommendationReviewer")
+  approvalRequests          ApprovalRequest[]          @relation("ApprovalRequester")
+  approvalReviews           ApprovalRequest[]          @relation("ApprovalReviewer")
+
   @@index([tenantId])
   @@map("users")
 }
@@ -52,6 +61,7 @@ enum UserRole {
   qc_operator
   findings_reviewer
   rule_admin
+  rule_approver
   tenant_admin
 }
 
@@ -134,6 +144,9 @@ model DocumentVersion {
   tuningSessions  TuningSession[]
   findingReviews  FindingReview[]
 
+  goldenSampleDocuments GoldenSampleDocument[]
+  correctionRecords     CorrectionRecord[]
+
   @@unique([documentId, versionNumber])
   @@index([documentId])
   @@map("document_versions")
@@ -169,6 +182,7 @@ model Section {
   level           Int
   order           Int
   status          SectionStatus @default(not_validated)
+  reviewComment   String?       @map("review_comment")
   sourceAnchor    Json          @map("source_anchor") @db.JsonB
 
   docVersion    DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
@@ -347,9 +361,10 @@ model ProcessingStep {
   processingRunId String               @map("processing_run_id") @db.Uuid
   level           PipelineLevel
   status          ProcessingStepStatus @default(pending)
-  result          Json?                @db.JsonB
-  attemptNumber   Int                  @default(1) @map("attempt_number")
-  idempotencyKey  String?              @map("idempotency_key")
+  result            Json?                @db.JsonB
+  llmConfigSnapshot Json?                @map("llm_config_snapshot") @db.JsonB
+  attemptNumber     Int                  @default(1) @map("attempt_number")
+  idempotencyKey    String?              @map("idempotency_key")
   startedAt       DateTime?            @map("started_at")
   completedAt     DateTime?            @map("completed_at")
 
@@ -436,7 +451,26 @@ model RuleSet {
 
 enum RuleSetType {
   section_classification
+  section_classification_qa
   fact_extraction
+  fact_extraction_qa
+  soa_detection
+  soa_detection_qa
+  intra_audit
+  intra_audit_qa
+  inter_audit
+  inter_audit_qa
+  fact_audit_intra
+  fact_audit_intra_qa
+  fact_audit_inter
+  fact_audit_inter_qa
+  generation
+  generation_qa
+  impact_analysis
+  impact_analysis_qa
+  change_classification
+  change_classification_qa
+  correction_recommend
   soa_identification
   audit
 }
@@ -451,22 +485,36 @@ model RuleSetVersion {
   ruleSet        RuleSet         @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
   rules          Rule[]
   processingRuns ProcessingRun[]
+  evaluationRuns EvaluationRun[]
 
   @@unique([ruleSetId, version])
   @@map("rule_set_versions")
 }
 
 model Rule {
-  id               String @id @default(uuid()) @db.Uuid
-  ruleSetVersionId String @map("rule_set_version_id") @db.Uuid
+  id               String        @id @default(uuid()) @db.Uuid
+  ruleSetVersionId String        @map("rule_set_version_id") @db.Uuid
   name             String
   pattern          String
-  config           Json   @default("{}") @db.JsonB
+  config           Json          @default("{}") @db.JsonB
+  documentType     DocumentType? @map("document_type")
+  stage            String?
+  subStage         RuleSubStage? @map("sub_stage")
+  promptTemplate   String?       @map("prompt_template")
+  isEnabled        Boolean       @default(true) @map("is_enabled")
+  requiresFacts    Boolean       @default(false) @map("requires_facts")
+  requiresSoa      Boolean       @default(false) @map("requires_soa")
+  order            Int           @default(0)
 
   ruleSetVersion RuleSetVersion @relation(fields: [ruleSetVersionId], references: [id], onDelete: Cascade)
 
   @@index([ruleSetVersionId])
   @@map("rules")
+}
+
+enum RuleSubStage {
+  analysis
+  qa
 }
 
 // ─── Document Templates ───────────────────────────────────────
@@ -705,4 +753,302 @@ model GenerationVerdict {
 
   @@index([tuningSessionId])
   @@map("generation_verdicts")
+}
+
+// ─── LLM Configuration ──────────────────────────────────────
+
+model LlmConfig {
+  id                String          @id @default(uuid()) @db.Uuid
+  tenantId          String?         @map("tenant_id") @db.Uuid
+  name              String
+  taskId            String          @map("task_id")
+  provider          String
+  baseUrl           String          @default("") @map("base_url")
+  apiKey            String          @default("") @map("api_key")
+  model             String
+  temperature       Float           @default(0.1)
+  maxOutputTokens   Int             @default(2048) @map("max_output_tokens")
+  maxInputTokens    Int?            @map("max_input_tokens")
+  contextStrategy   ContextStrategy @default(chunk) @map("context_strategy")
+  chunkSizeChars    Int?            @map("chunk_size_chars")
+  chunkOverlapChars Int?            @map("chunk_overlap_chars")
+  modelWindowChars  Int?            @map("model_window_chars")
+  rateLimit         Int?            @map("rate_limit")
+  timeoutMs         Int?            @map("timeout_ms")
+  coldStartMs       Int?            @map("cold_start_ms")
+  costPerInputKTokens  Float?      @map("cost_per_input_k_tokens")
+  costPerOutputKTokens Float?      @map("cost_per_output_k_tokens")
+  isActive          Boolean         @default(true) @map("is_active")
+  isDefault         Boolean         @default(false) @map("is_default")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  evaluationRuns EvaluationRun[]
+
+  @@index([taskId])
+  @@map("llm_configs")
+}
+
+enum ContextStrategy {
+  chunk
+  multi_chunk
+  full_document
+  multi_document
+}
+
+// ─── Golden Dataset ─────────────────────────────────────────
+
+model GoldenSample {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  name        String
+  description String?
+  sampleType  GoldenSampleType @map("sample_type")
+  createdById String           @map("created_by_id") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  createdBy     User                      @relation("GoldenSampleCreator", fields: [createdById], references: [id])
+  documents     GoldenSampleDocument[]
+  stageStatuses GoldenSampleStageStatus[]
+  evaluationResults EvaluationResult[]
+
+  @@index([tenantId])
+  @@map("golden_samples")
+}
+
+enum GoldenSampleType {
+  single_document
+  multi_document
+}
+
+model GoldenSampleDocument {
+  id              String       @id @default(uuid()) @db.Uuid
+  goldenSampleId  String       @map("golden_sample_id") @db.Uuid
+  documentVersionId String     @map("document_version_id") @db.Uuid
+  documentType    DocumentType @map("document_type")
+  role            String       @default("primary")
+  order           Int          @default(0)
+
+  goldenSample    GoldenSample    @relation(fields: [goldenSampleId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+
+  @@index([goldenSampleId])
+  @@map("golden_sample_documents")
+}
+
+model GoldenSampleStageStatus {
+  id              String             @id @default(uuid()) @db.Uuid
+  goldenSampleId  String             @map("golden_sample_id") @db.Uuid
+  stage           String
+  status          GoldenStageStatus  @default(draft)
+  expectedResults Json               @default("{}") @map("expected_results") @db.JsonB
+  reviewComment   String?            @map("review_comment")
+  reviewedById    String?            @map("reviewed_by_id") @db.Uuid
+  approvedById    String?            @map("approved_by_id") @db.Uuid
+  reviewedAt      DateTime?          @map("reviewed_at")
+  approvedAt      DateTime?          @map("approved_at")
+
+  goldenSample GoldenSample @relation(fields: [goldenSampleId], references: [id], onDelete: Cascade)
+  reviewedBy   User?        @relation("StageReviewer", fields: [reviewedById], references: [id])
+  approvedBy   User?        @relation("StageApprover", fields: [approvedById], references: [id])
+
+  @@unique([goldenSampleId, stage])
+  @@map("golden_sample_stage_statuses")
+}
+
+enum GoldenStageStatus {
+  draft
+  in_review
+  approved
+}
+
+// ─── Evaluation ─────────────────────────────────────────────
+
+model EvaluationRun {
+  id               String              @id @default(uuid()) @db.Uuid
+  tenantId         String              @map("tenant_id") @db.Uuid
+  name             String?
+  type             EvaluationRunType
+  status           EvaluationRunStatus @default(queued)
+  ruleSetVersionId String?             @map("rule_set_version_id") @db.Uuid
+  llmConfigId      String?             @map("llm_config_id") @db.Uuid
+  contextStrategy  ContextStrategy?    @map("context_strategy_override")
+  chunkSizeChars   Int?                @map("chunk_size_chars_override")
+
+  metrics        Json    @default("{}") @db.JsonB
+  cost           Float?
+  durationMs     Int?    @map("duration_ms")
+  totalSamples   Int     @default(0) @map("total_samples")
+  passedSamples  Int     @default(0) @map("passed_samples")
+  failedSamples  Int     @default(0) @map("failed_samples")
+
+  comparedToRunId String? @map("compared_to_run_id") @db.Uuid
+  delta           Json?   @db.JsonB
+
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  ruleSetVersion RuleSetVersion?   @relation(fields: [ruleSetVersionId], references: [id])
+  llmConfig      LlmConfig?        @relation(fields: [llmConfigId], references: [id])
+  comparedToRun  EvaluationRun?    @relation("EvalComparison", fields: [comparedToRunId], references: [id])
+  comparedByRuns EvaluationRun[]   @relation("EvalComparison")
+  createdBy      User              @relation(fields: [createdById], references: [id])
+  results        EvaluationResult[]
+
+  @@index([tenantId])
+  @@map("evaluation_runs")
+}
+
+enum EvaluationRunType {
+  single
+  batch
+  llm_comparison
+  context_window_test
+}
+
+enum EvaluationRunStatus {
+  queued
+  running
+  completed
+  failed
+}
+
+model EvaluationResult {
+  id              String               @id @default(uuid()) @db.Uuid
+  evaluationRunId String               @map("evaluation_run_id") @db.Uuid
+  goldenSampleId  String               @map("golden_sample_id") @db.Uuid
+  stage           String
+  status          EvaluationResultStatus @default(pending)
+
+  expected  Json  @default("{}") @db.JsonB
+  actual    Json  @default("{}") @db.JsonB
+  diff      Json  @default("{}") @db.JsonB
+
+  algoResult Json?    @map("algo_result") @db.JsonB
+  llmResult  Json?    @map("llm_result") @db.JsonB
+  agreement  Boolean? @map("algo_llm_agreement")
+
+  precision  Float?
+  recall     Float?
+  f1         Float?
+  latencyMs  Int?     @map("latency_ms")
+  tokenCost  Float?   @map("token_cost")
+
+  evaluationRun EvaluationRun @relation(fields: [evaluationRunId], references: [id], onDelete: Cascade)
+  goldenSample  GoldenSample  @relation(fields: [goldenSampleId], references: [id], onDelete: Cascade)
+
+  @@index([evaluationRunId])
+  @@index([goldenSampleId])
+  @@map("evaluation_results")
+}
+
+enum EvaluationResultStatus {
+  pending
+  pass
+  fail
+  error
+  skipped
+}
+
+// ─── Correction Records & Recommendations ───────────────────
+
+model CorrectionRecord {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  userRole        String   @map("user_role")
+  documentVersionId String @map("document_version_id") @db.Uuid
+  stage           String
+  entityType      String   @map("entity_type")
+  entityId        String   @map("entity_id") @db.Uuid
+
+  originalValue  Json @map("original_value") @db.JsonB
+  correctedValue Json @map("corrected_value") @db.JsonB
+  context        Json @default("{}") @db.JsonB
+
+  isProcessed      Boolean  @default(false) @map("is_processed")
+  recommendationId String?  @map("recommendation_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user             User                      @relation(fields: [userId], references: [id])
+  documentVersion  DocumentVersion           @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+  recommendation   CorrectionRecommendation? @relation(fields: [recommendationId], references: [id])
+
+  @@index([tenantId])
+  @@index([stage])
+  @@index([isProcessed])
+  @@map("correction_records")
+}
+
+model CorrectionRecommendation {
+  id              String                       @id @default(uuid()) @db.Uuid
+  tenantId        String                       @map("tenant_id") @db.Uuid
+  stage           String
+  pattern         String
+  frequency       Int                          @default(0)
+  suggestedChange String                       @map("suggested_change")
+  affectedRuleId  String?                      @map("affected_rule_id") @db.Uuid
+  status          CorrectionRecommendationStatus @default(pending)
+  reviewedById    String?                      @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime?                    @map("reviewed_at")
+  comment         String?
+  createdAt       DateTime                     @default(now()) @map("created_at")
+
+  reviewedBy  User?              @relation("RecommendationReviewer", fields: [reviewedById], references: [id])
+  corrections CorrectionRecord[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("correction_recommendations")
+}
+
+enum CorrectionRecommendationStatus {
+  pending
+  accepted
+  rejected
+  implemented
+}
+
+// ─── Approval Workflow ──────────────────────────────────────
+
+model ApprovalRequest {
+  id            String              @id @default(uuid()) @db.Uuid
+  tenantId      String              @map("tenant_id") @db.Uuid
+  type          ApprovalType
+  status        ApprovalStatus      @default(pending)
+  requestedById String              @map("requested_by_id") @db.Uuid
+  reviewedById  String?             @map("reviewed_by_id") @db.Uuid
+
+  title       String
+  description String
+  context     Json    @default("{}") @db.JsonB
+
+  entityType String @map("entity_type")
+  entityId   String @map("entity_id")
+
+  comment     String?
+  requestedAt DateTime  @default(now()) @map("requested_at")
+  reviewedAt  DateTime? @map("reviewed_at")
+
+  requestedBy User  @relation("ApprovalRequester", fields: [requestedById], references: [id])
+  reviewedBy  User? @relation("ApprovalReviewer", fields: [reviewedById], references: [id])
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("approval_requests")
+}
+
+enum ApprovalType {
+  rule_change
+  prompt_change
+  golden_sample_approval
+  verdict_approval
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
 }
