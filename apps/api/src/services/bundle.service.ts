@@ -131,7 +131,7 @@ class BundleService {
       }),
     ]);
 
-    logger.info("Bundle activated", { bundleId, tenantId });
+    logger.info("Bundle activated", { bundleId, tenantId: tenantId ?? undefined });
     return prisma.ruleSetBundle.findUnique({ where: { id: bundleId } });
   }
 
