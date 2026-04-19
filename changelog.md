@@ -2,6 +2,12 @@
 
 ## 2026-04-19
 
+### Исправлено
+
+- **Основной пайплайн обработки (`processing-pipeline.ts`) подключён к системе бандлов** — при загрузке документа автоматически резолвится активный бандл для тенанта; все `ProcessingRun`, создаваемые in-process пайплайном, теперь записывают `ruleSetBundleId`; таксономия загружается через `loadRulesForType(bundleId, type)` вместо прямого запроса к активной версии
+- **Автоматическое определение активного бандла при запуске обработки** — `processingService.startRun()` теперь резолвит активный бандл через `resolveActiveBundle(tenantId)`, если `bundleId` не передан явно. Это гарантирует, что все шаги пайплайна используют одну и ту же версию правил
+- **Оптимизация `loadRulesForType`** — устранён лишний запрос к БД: `findFirst` теперь фильтрует по типу RuleSet в запросе, а не проверяет тип в JS после получения произвольной записи
+
 ### Добавлено
 
 - **Seed реестра фактов** (`seed-fact-registry.ts`) — 60 определений фактов из 9 категорий (protocol_meta, study, study_design, population, treatment, intervention, endpoints, statistics, bioequivalence) загружаются из `fact-registry.yaml` в RuleSet типа `fact_extraction`. Скрипт `seed:facts`, добавлен в `seed:all`

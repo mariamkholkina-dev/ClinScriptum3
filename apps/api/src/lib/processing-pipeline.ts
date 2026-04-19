@@ -20,7 +20,7 @@
  * Всё выполняется in-process (без Redis/BullMQ) для простоты локальной разработки.
  */
 
-import { prisma } from "@clinscriptum/db";
+import { prisma, resolveActiveBundle, loadRulesForType, snapshotRules } from "@clinscriptum/db";
 import { storage } from "./storage.js";
 import { llmAsk } from "./llm-gateway.js";
 import { extractFactsForVersion } from "./fact-extraction.js";
@@ -61,6 +61,16 @@ export async function runProcessingPipeline(versionId: string) {
   try {
     logger.info("[pipeline] Starting", { versionId });
 
+    const versionDoc = await prisma.documentVersion.findUnique({
+      where: { id: versionId },
+      include: { document: { include: { study: true } } },
+    });
+    const tenantId = versionDoc?.document.study.tenantId ?? null;
+    const studyId = versionDoc?.document.studyId;
+
+    const bundleId = await resolveActiveBundle(tenantId);
+    logger.info("[pipeline] Resolved bundle", { bundleId, tenantId: tenantId ?? undefined });
+
     // Stage 1: Parsing
     await setVersionStatus(versionId, "parsing");
     const sections = await parseDocument(versionId);
@@ -69,34 +79,26 @@ export async function runProcessingPipeline(versionId: string) {
     // Stage 2: Section classification (3-step)
     await setVersionStatus(versionId, "classifying_sections");
 
-    // Step 2a: Deterministic rule engine
-    const taxonomy = await loadTaxonomy();
+    const taxonomy = await loadTaxonomyFromBundle(bundleId);
     await classifySectionsDeterministic(versionId, taxonomy);
     logger.info("[pipeline] Step 2a (deterministic) complete");
 
-    // Step 2b: LLM classification for low-confidence / unclassified sections
     await classifySectionsLlm(versionId, taxonomy);
     logger.info("[pipeline] Step 2b (LLM classify) complete");
 
-    // Step 2c: LLM QA validation
     await classifySectionsLlmQa(versionId, taxonomy);
     logger.info("[pipeline] Step 2c (LLM QA) complete");
-
-    // Stage 3: Fact extraction (only for protocol documents)
-    const versionDoc = await prisma.documentVersion.findUnique({
-      where: { id: versionId },
-      include: { document: { include: { study: true } } },
-    });
 
     if (versionDoc?.document.type === "protocol") {
       await setVersionStatus(versionId, "extracting_facts");
 
       const factRun = await prisma.processingRun.create({
         data: {
-          studyId: versionDoc.document.studyId,
+          studyId: studyId!,
           docVersionId: versionId,
           type: "fact_extraction",
           status: "running",
+          ruleSetBundleId: bundleId,
         },
       });
 
@@ -117,16 +119,16 @@ export async function runProcessingPipeline(versionId: string) {
       }
     }
 
-    // Stage 4: SOA detection (only for protocol documents)
     if (versionDoc?.document.type === "protocol") {
       await setVersionStatus(versionId, "detecting_soa");
 
       const soaRun = await prisma.processingRun.create({
         data: {
-          studyId: versionDoc.document.studyId,
+          studyId: studyId!,
           docVersionId: versionId,
           type: "soa_detection",
           status: "running",
+          ruleSetBundleId: bundleId,
         },
       });
 
@@ -147,7 +149,6 @@ export async function runProcessingPipeline(versionId: string) {
       }
     }
 
-    // Stage 5: Intra-document audit
     try {
       await runIntraDocAudit(versionId);
       logger.info("[pipeline] Stage 5 (intra-audit) complete");
@@ -156,7 +157,7 @@ export async function runProcessingPipeline(versionId: string) {
       await setVersionStatus(versionId, "parsed").catch(() => {});
     }
 
-    logger.info("[pipeline] Done", { versionId });
+    logger.info("[pipeline] Done", { versionId, bundleId });
   } catch (err) {
     logger.error("[pipeline] Error", { versionId, error: String(err) });
     await setVersionStatus(versionId, "error").catch(() => {});
@@ -661,7 +662,16 @@ function parseLlmQaResponse(
   }
 }
 
-async function loadTaxonomy(): Promise<TaxonomyRule[]> {
+async function loadTaxonomyFromBundle(bundleId: string | null): Promise<TaxonomyRule[]> {
+  const resolved = await loadRulesForType(bundleId, "section_classification");
+  if (resolved) {
+    return resolved.rules.map((r) => ({
+      name: r.name,
+      pattern: r.pattern,
+      config: r.config as any,
+    }));
+  }
+
   const ruleSet = await prisma.ruleSet.findFirst({
     where: { type: "section_classification" },
     include: {

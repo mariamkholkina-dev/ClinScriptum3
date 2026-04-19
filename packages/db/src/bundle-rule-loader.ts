@@ -72,7 +72,10 @@ export async function loadRulesForType(
 ): Promise<ResolvedRuleSet | null> {
   if (bundleId) {
     const entry = await prisma.ruleSetBundleEntry.findFirst({
-      where: { bundleId },
+      where: {
+        bundleId,
+        ruleSetVersion: { ruleSet: { type } },
+      },
       include: {
         ruleSetVersion: {
           include: {
@@ -82,44 +85,8 @@ export async function loadRulesForType(
         },
       },
     });
-    if (entry && entry.ruleSetVersion.ruleSet.type === type) {
+    if (entry) {
       const v = entry.ruleSetVersion;
-      return {
-        ruleSetVersionId: v.id,
-        ruleSetId: v.ruleSet.id,
-        ruleSetName: v.ruleSet.name,
-        ruleSetType: v.ruleSet.type,
-        rules: v.rules.map((r) => ({
-          id: r.id,
-          name: r.name,
-          pattern: r.pattern,
-          config: r.config,
-          documentType: r.documentType,
-          stage: r.stage,
-          subStage: r.subStage,
-          promptTemplate: r.promptTemplate,
-          isEnabled: r.isEnabled,
-          requiresFacts: r.requiresFacts,
-          requiresSoa: r.requiresSoa,
-          order: r.order,
-        })),
-      };
-    }
-
-    const allEntries = await prisma.ruleSetBundleEntry.findMany({
-      where: { bundleId },
-      include: {
-        ruleSetVersion: {
-          include: {
-            rules: { where: { isEnabled: true }, orderBy: { order: "asc" } },
-            ruleSet: { select: { id: true, name: true, type: true } },
-          },
-        },
-      },
-    });
-    const match = allEntries.find((e) => e.ruleSetVersion.ruleSet.type === type);
-    if (match) {
-      const v = match.ruleSetVersion;
       return {
         ruleSetVersionId: v.id,
         ruleSetId: v.ruleSet.id,
@@ -176,6 +143,20 @@ export async function loadRulesForType(
       order: r.order,
     })),
   };
+}
+
+export async function resolveActiveBundle(
+  tenantId: string | null,
+): Promise<string | null> {
+  const bundle = await prisma.ruleSetBundle.findFirst({
+    where: {
+      isActive: true,
+      OR: tenantId ? [{ tenantId }, { tenantId: null }] : [{ tenantId: null }],
+    },
+    orderBy: { tenantId: "desc" },
+    select: { id: true },
+  });
+  return bundle?.id ?? null;
 }
 
 export function snapshotRules(

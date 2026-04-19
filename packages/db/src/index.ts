@@ -17,5 +17,5 @@ export type * from "@prisma/client";
 export { getEffectiveLlmConfig, toConfigSnapshot } from "./llm-config-resolver.js";
 export type { LlmTaskConfig, LlmConfigSnapshot } from "./llm-config-resolver.js";
 export { loadGenerationPrompts } from "./generation-prompts.js";
-export { loadBundleRules, loadRulesForType, snapshotRules } from "./bundle-rule-loader.js";
+export { loadBundleRules, loadRulesForType, snapshotRules, resolveActiveBundle } from "./bundle-rule-loader.js";
 export type { ResolvedRuleSet } from "./bundle-rule-loader.js";

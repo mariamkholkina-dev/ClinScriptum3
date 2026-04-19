@@ -1,4 +1,4 @@
-import { prisma } from "@clinscriptum/db";
+import { prisma, resolveActiveBundle } from "@clinscriptum/db";
 import { loadFactRegistry, FACT_CATEGORY_LABELS } from "../data/fact-registry.js";
 import { DomainError } from "./errors.js";
 import { requireTenantResource } from "./tenant-guard.js";
@@ -19,13 +19,16 @@ export const processingService = {
     });
     requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
 
+    const bundleId = input.bundleId
+      ?? await resolveActiveBundle(tenantId);
+
     const run = await prisma.processingRun.create({
       data: {
         studyId: version.document.studyId,
         docVersionId: input.docVersionId,
         type: input.type as any,
         ruleSetVersionId: input.ruleSetVersionId ?? null,
-        ruleSetBundleId: input.bundleId ?? null,
+        ruleSetBundleId: bundleId,
       },
     });
     return { runId: run.id, status: run.status };
