@@ -36,7 +36,6 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Расхождения", href: "/disagreements", icon: <AlertTriangle size={20} /> },
   { label: "Корректировки", href: "/corrections", icon: <PenLine size={20} /> },
   { label: "Правила и промпты", href: "/rules", icon: <BookOpen size={20} /> },
-  { label: "Промпты генерации", href: "/generation-prompts", icon: <FileText size={20} /> },
   { label: "SOA", href: "/soa", icon: <Table2 size={20} /> },
   { label: "Согласования", href: "/approvals", icon: <ShieldCheck size={20} />, approverOnly: true },
   { label: "Пакетное тестирование", href: "/batch-testing", icon: <TestTubes size={20} /> },

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import {
   BookOpen,
@@ -55,6 +56,9 @@ interface RuleEditorState {
 /* ═══════════════ Component ═══════════════ */
 
 export default function RulesPage() {
+  const searchParams = useSearchParams();
+  const initialGroup = searchParams.get("group");
+
   const [selectedRuleSetId, setSelectedRuleSetId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(Object.keys(RULE_SET_TYPE_GROUPS)));
   const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
@@ -67,6 +71,7 @@ export default function RulesPage() {
   const [diffVersionId2, setDiffVersionId2] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
 
+  const [didAutoSelect, setDidAutoSelect] = useState(false);
   const utils = trpc.useUtils();
 
   const ruleSetsQuery = trpc.ruleManagement.listRuleSets.useQuery({});
@@ -128,6 +133,18 @@ export default function RulesPage() {
       utils.ruleManagement.getActiveVersion.invalidate();
     },
   });
+
+  useEffect(() => {
+    if (!initialGroup || didAutoSelect || !ruleSetsQuery.data) return;
+    const types = RULE_SET_TYPE_GROUPS[initialGroup];
+    if (!types) return;
+    const first = ruleSetsQuery.data.find((rs: any) => types.includes(rs.type));
+    if (first) {
+      setSelectedRuleSetId((first as any).id);
+      setExpandedGroups(new Set([initialGroup]));
+    }
+    setDidAutoSelect(true);
+  }, [initialGroup, didAutoSelect, ruleSetsQuery.data]);
 
   /* ═══════════════ Helpers ═══════════════ */
 
