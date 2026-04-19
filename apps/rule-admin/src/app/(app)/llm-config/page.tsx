@@ -575,7 +575,6 @@ export default function LlmConfigPage() {
                   ["taskId", "Задача"],
                   ["provider", "Провайдер"],
                   ["model", "Модель"],
-                  ["isActive", "Статус"],
                 ] as const).map(([key, label]) => (
                   <th
                     key={key}
@@ -592,6 +591,22 @@ export default function LlmConfigPage() {
                     </span>
                   </th>
                 ))}
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                  Базовый URL
+                </th>
+                <th
+                  onClick={() => toggleSort("isActive")}
+                  className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    Статус
+                    {sortKey === "isActive" ? (
+                      sortDir === "asc" ? <ChevronUp size={14} className="text-brand-600" /> : <ChevronDown size={14} className="text-brand-600" />
+                    ) : (
+                      <ArrowUpDown size={12} className="opacity-40" />
+                    )}
+                  </span>
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   По умолчанию
                 </th>
@@ -617,6 +632,9 @@ export default function LlmConfigPage() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-sm font-mono text-gray-600">
                     {config.model}
+                  </td>
+                  <td className="max-w-[200px] truncate px-4 py-3 text-sm text-gray-500" title={config.baseUrl ?? ""}>
+                    {config.baseUrl || <span className="text-gray-300">—</span>}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <Badge variant={config.isActive ? "green" : "gray"}>
