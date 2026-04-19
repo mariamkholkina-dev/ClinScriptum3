@@ -13,6 +13,7 @@ export interface PipelineContext {
   docVersionId: string;
   studyId: string;
   tenantId: string;
+  bundleId: string | null;
   previousResults: Map<PipelineLevel, StepResult>;
 }
 
@@ -20,6 +21,7 @@ export interface StepResult {
   data: Record<string, unknown>;
   needsNextStep: boolean;
   llmConfigSnapshot?: Record<string, unknown>;
+  ruleSnapshot?: Record<string, unknown>;
 }
 
 export interface PipelineConfig {
@@ -60,6 +62,7 @@ export async function runPipeline(
     docVersionId: run.docVersionId,
     studyId: run.studyId,
     tenantId: run.study.tenantId,
+    bundleId: (run as any).ruleSetBundleId ?? null,
     previousResults: new Map(),
   };
 
@@ -117,6 +120,7 @@ export async function runPipeline(
             status: "completed",
             result: result.data as any,
             llmConfigSnapshot: result.llmConfigSnapshot as any ?? undefined,
+            ruleSnapshot: result.ruleSnapshot as any ?? undefined,
             completedAt: new Date(),
           },
         });

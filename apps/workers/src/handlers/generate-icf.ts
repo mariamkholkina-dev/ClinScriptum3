@@ -1,4 +1,5 @@
-import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadGenerationPrompts } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadRulesForType, snapshotRules } from "@clinscriptum/db";
+import { toGenerationPrompts } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
@@ -107,8 +108,11 @@ export async function handleGenerateICF(data: {
         temperature: llmConfig.temperature,
       });
 
-      const ICF_RULESET_ID = "00000000-0000-0000-0000-000000000202";
-      const { systemPrompt: dbSystemPrompt, sectionPrompts } = await loadGenerationPrompts(ICF_RULESET_ID);
+      const genRules = await loadRulesForType(ctx.bundleId, "generation");
+      const icfRules = genRules
+        ? genRules.rules.filter((r) => !r.documentType || r.documentType === "icf")
+        : [];
+      const { systemPrompt: dbSystemPrompt, sectionPrompts } = toGenerationPrompts(icfRules);
       const fallbackPrompt = dbSystemPrompt ?? ICF_GENERATION_PROMPT;
 
       const generated: ICFSection[] = [];
@@ -161,6 +165,10 @@ export async function handleGenerateICF(data: {
         },
         needsNextStep: true,
         llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
+        ruleSnapshot: snapshotRules(genRules?.rules, {
+          ruleSetVersionId: genRules?.ruleSetVersionId,
+          ruleSetType: "generation",
+        }),
       };
     },
   };

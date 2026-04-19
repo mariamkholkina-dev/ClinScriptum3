@@ -1,4 +1,5 @@
-import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadGenerationPrompts } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadRulesForType, snapshotRules } from "@clinscriptum/db";
+import { toGenerationPrompts } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
@@ -89,8 +90,11 @@ export async function handleGenerateCSR(data: {
         temperature: llmConfig.temperature,
       });
 
-      const CSR_RULESET_ID = "00000000-0000-0000-0000-000000000203";
-      const { systemPrompt: dbSystemPrompt, sectionPrompts } = await loadGenerationPrompts(CSR_RULESET_ID);
+      const genRules = await loadRulesForType(ctx.bundleId, "generation");
+      const csrRules = genRules
+        ? genRules.rules.filter((r) => !r.documentType || r.documentType === "csr")
+        : [];
+      const { systemPrompt: dbSystemPrompt, sectionPrompts } = toGenerationPrompts(csrRules);
       const fallbackPrompt = dbSystemPrompt ?? CSR_GENERATION_PROMPT;
 
       const generated: Array<{ title: string; standardSection: string; content: string; priority: number }> = [];
@@ -135,6 +139,10 @@ export async function handleGenerateCSR(data: {
         data: { generatedSections: generated.length, sections: generated },
         needsNextStep: true,
         llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
+        ruleSnapshot: snapshotRules(genRules?.rules, {
+          ruleSetVersionId: genRules?.ruleSetVersionId,
+          ruleSetType: "generation",
+        }),
       };
     },
   };

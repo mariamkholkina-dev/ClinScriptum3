@@ -1,5 +1,5 @@
-import { prisma } from "@clinscriptum/db";
-import { RulesEngine } from "@clinscriptum/rules-engine";
+import { prisma, loadRulesForType, snapshotRules } from "@clinscriptum/db";
+import { RulesEngine, toSectionMappingRules } from "@clinscriptum/rules-engine";
 import { runPipeline } from "../pipeline/orchestrator.js";
 import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeline/orchestrator.js";
 
@@ -16,7 +16,10 @@ export async function handleClassifySections(data: {
         orderBy: { order: "asc" },
       });
 
-      const engine = new RulesEngine();
+      const resolved = await loadRulesForType(ctx.bundleId, "section_classification");
+      const engine = resolved
+        ? new RulesEngine({ sectionMappings: toSectionMappingRules(resolved.rules) })
+        : new RulesEngine();
       const classifier = engine.getSectionClassifier();
 
       const results = sections.map((section) => {
@@ -43,6 +46,10 @@ export async function handleClassifySections(data: {
           results,
         },
         needsNextStep: results.some((r) => !r.standardSection || r.confidence < 0.8),
+        ruleSnapshot: snapshotRules(resolved?.rules, {
+          ruleSetVersionId: resolved?.ruleSetVersionId,
+          ruleSetType: "section_classification",
+        }),
       };
     },
   };

@@ -5,6 +5,7 @@ export interface ProcessingRun {
   type: ProcessingRunType;
   status: ProcessingRunStatus;
   ruleSetVersionId: string | null;
+  ruleSetBundleId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

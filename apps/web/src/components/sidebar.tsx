@@ -12,7 +12,6 @@ import {
   Settings,
   GitCompare,
   Wand2,
-  SlidersHorizontal,
   ClipboardCheck,
   PanelLeftClose,
   PanelLeftOpen,
@@ -31,9 +30,7 @@ const reviewerNavItems = [
   { href: "/finding-review", label: "Ревью findings", icon: ClipboardCheck },
 ];
 
-const adminNavItems = [
-  { href: "/tuning", label: "Тюнинг", icon: SlidersHorizontal },
-];
+const adminNavItems: typeof navItems = [];
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const pathname = usePathname();

@@ -1,5 +1,5 @@
-import { prisma } from "@clinscriptum/db";
-import { RulesEngine, detectContradictions } from "@clinscriptum/rules-engine";
+import { prisma, loadRulesForType, snapshotRules } from "@clinscriptum/db";
+import { RulesEngine, detectContradictions, toFactExtractionRules } from "@clinscriptum/rules-engine";
 import { runPipeline } from "../pipeline/orchestrator.js";
 import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeline/orchestrator.js";
 
@@ -16,7 +16,10 @@ export async function handleExtractFacts(data: {
         orderBy: { order: "asc" },
       });
 
-      const engine = new RulesEngine();
+      const resolved = await loadRulesForType(ctx.bundleId, "fact_extraction");
+      const engine = resolved
+        ? new RulesEngine({ factExtractions: toFactExtractionRules(resolved.rules) })
+        : new RulesEngine();
       const extractor = engine.getFactExtractor();
 
       const sectionData = sections.map((s) => ({
@@ -52,6 +55,10 @@ export async function handleExtractFacts(data: {
           factKeys: [...new Set(extracted.map((f) => f.factKey))],
         },
         needsNextStep: extracted.length > 0,
+        ruleSnapshot: snapshotRules(resolved?.rules, {
+          ruleSetVersionId: resolved?.ruleSetVersionId,
+          ruleSetType: "fact_extraction",
+        }),
       };
     },
   };

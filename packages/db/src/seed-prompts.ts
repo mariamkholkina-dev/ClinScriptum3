@@ -995,6 +995,40 @@ async function main() {
     console.log(`Seeded ${rs.rules.length} prompt(s) for "${rs.name}"`);
   }
 
+  // Create Default Bundle with all active versions
+  const DEFAULT_BUNDLE_ID = "00000000-0000-0000-0000-000000000300";
+  await prisma.$executeRaw`
+    INSERT INTO rule_set_bundles (id, name, description, is_active, created_at)
+    VALUES (${DEFAULT_BUNDLE_ID}::uuid, 'Default Bundle', 'System default bundle with all seeded rule set versions', true, NOW())
+    ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description
+  `.catch(() => {
+    // Table may not exist yet in older schemas - skip silently
+  });
+
+  try {
+    const activeVersions = await prisma.ruleSetVersion.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+
+    // Clear existing entries
+    await prisma.$executeRaw`
+      DELETE FROM rule_set_bundle_entries WHERE bundle_id = ${DEFAULT_BUNDLE_ID}::uuid
+    `;
+
+    for (const v of activeVersions) {
+      await prisma.$executeRaw`
+        INSERT INTO rule_set_bundle_entries (id, bundle_id, rule_set_version_id)
+        VALUES (gen_random_uuid(), ${DEFAULT_BUNDLE_ID}::uuid, ${v.id}::uuid)
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    console.log(`Default Bundle: ${activeVersions.length} version(s) linked`);
+  } catch {
+    console.log("Skipping bundle seed (table may not exist)");
+  }
+
   console.log("Prompt seed complete!");
 }
 

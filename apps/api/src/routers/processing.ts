@@ -21,6 +21,7 @@ export const processingRouter = router({
           "version_comparison",
         ]),
         ruleSetVersionId: z.string().uuid().optional(),
+        bundleId: z.string().uuid().optional(),
       }),
     )
     .mutation(({ ctx, input }) => processingService.startRun(ctx.user.tenantId, input)),

@@ -1,4 +1,5 @@
-import { prisma, getEffectiveLlmConfig, toConfigSnapshot } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadRulesForType, snapshotRules } from "@clinscriptum/db";
+import { toAuditPrompt } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
@@ -93,8 +94,11 @@ export async function handleIntraDocAudit(data: {
         temperature: llmConfig.temperature,
       });
 
+      const auditRules = await loadRulesForType(ctx.bundleId, "intra_audit");
+      const auditSystemPrompt = (auditRules ? toAuditPrompt(auditRules.rules) : null) ?? AUDIT_SYSTEM_PROMPT;
+
       const response = await gateway.generate({
-        system: AUDIT_SYSTEM_PROMPT,
+        system: auditSystemPrompt,
         messages: [
           {
             role: "user",
@@ -127,6 +131,10 @@ export async function handleIntraDocAudit(data: {
         },
         needsNextStep: true,
         llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
+        ruleSnapshot: snapshotRules(auditRules?.rules, {
+          ruleSetVersionId: auditRules?.ruleSetVersionId,
+          ruleSetType: "intra_audit",
+        }),
       };
     },
   };

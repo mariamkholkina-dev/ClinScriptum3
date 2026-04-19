@@ -14,6 +14,7 @@ import { llmConfigRouter } from "./llm-config.js";
 import { goldenDatasetRouter } from "./golden-dataset.js";
 import { evaluationRouter } from "./evaluation.js";
 import { qualityRouter } from "./quality.js";
+import { bundleRouter } from "./bundle.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -31,6 +32,7 @@ export const appRouter = router({
   goldenDataset: goldenDatasetRouter,
   evaluation: evaluationRouter,
   quality: qualityRouter,
+  bundle: bundleRouter,
 });
 
 export type AppRouter = typeof appRouter;

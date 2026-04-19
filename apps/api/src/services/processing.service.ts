@@ -10,6 +10,7 @@ export const processingService = {
       docVersionId: string;
       type: string;
       ruleSetVersionId?: string;
+      bundleId?: string;
     },
   ) {
     const version = await prisma.documentVersion.findUnique({
@@ -24,6 +25,7 @@ export const processingService = {
         docVersionId: input.docVersionId,
         type: input.type as any,
         ruleSetVersionId: input.ruleSetVersionId ?? null,
+        ruleSetBundleId: input.bundleId ?? null,
       },
     });
     return { runId: run.id, status: run.status };

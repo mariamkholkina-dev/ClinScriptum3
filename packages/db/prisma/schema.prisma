@@ -323,6 +323,7 @@ model ProcessingRun {
   type             ProcessingRunType
   status           ProcessingRunStatus @default(queued)
   ruleSetVersionId String?             @map("rule_set_version_id") @db.Uuid
+  ruleSetBundleId  String?             @map("rule_set_bundle_id") @db.Uuid
   attemptNumber    Int                 @default(1) @map("attempt_number")
   maxAttempts      Int                 @default(3) @map("max_attempts")
   lastError        String?             @map("last_error")
@@ -333,6 +334,7 @@ model ProcessingRun {
   study          Study            @relation(fields: [studyId], references: [id], onDelete: Cascade)
   docVersion     DocumentVersion  @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
   ruleSetVersion RuleSetVersion?  @relation(fields: [ruleSetVersionId], references: [id])
+  ruleSetBundle  RuleSetBundle?   @relation(fields: [ruleSetBundleId], references: [id])
   steps          ProcessingStep[]
 
   @@index([studyId])
@@ -365,6 +367,7 @@ model ProcessingStep {
   status          ProcessingStepStatus @default(pending)
   result            Json?                @db.JsonB
   llmConfigSnapshot Json?                @map("llm_config_snapshot") @db.JsonB
+  ruleSnapshot      Json?                @map("rule_snapshot") @db.JsonB
   attemptNumber     Int                  @default(1) @map("attempt_number")
   idempotencyKey    String?              @map("idempotency_key")
   startedAt       DateTime?            @map("started_at")
@@ -437,6 +440,36 @@ enum SoaStatus {
   validated
 }
 
+// ─── Rule Set Bundles ────────────────────────────────────────
+
+model RuleSetBundle {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String?  @map("tenant_id") @db.Uuid
+  name        String
+  description String?
+  isActive    Boolean  @default(false) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  entries        RuleSetBundleEntry[]
+  processingRuns ProcessingRun[]
+
+  @@index([tenantId])
+  @@map("rule_set_bundles")
+}
+
+model RuleSetBundleEntry {
+  id               String @id @default(uuid()) @db.Uuid
+  bundleId         String @map("bundle_id") @db.Uuid
+  ruleSetVersionId String @map("rule_set_version_id") @db.Uuid
+
+  bundle         RuleSetBundle  @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  ruleSetVersion RuleSetVersion @relation(fields: [ruleSetVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([bundleId, ruleSetVersionId])
+  @@index([bundleId])
+  @@map("rule_set_bundle_entries")
+}
+
 // ─── Rule Sets ───────────────────────────────────────────────
 
 model RuleSet {
@@ -484,10 +517,11 @@ model RuleSetVersion {
   isActive  Boolean  @default(false) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
 
-  ruleSet        RuleSet         @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
+  ruleSet        RuleSet              @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
   rules          Rule[]
   processingRuns ProcessingRun[]
   evaluationRuns EvaluationRun[]
+  bundleEntries  RuleSetBundleEntry[]
 
   @@unique([ruleSetId, version])
   @@map("rule_set_versions")
