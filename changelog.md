@@ -2,6 +2,10 @@
 
 ## 2026-04-19
 
+### Добавлено
+
+- **Seed реестра фактов** (`seed-fact-registry.ts`) — 60 определений фактов из 9 категорий (protocol_meta, study, study_design, population, treatment, intervention, endpoints, statistics, bioequivalence) загружаются из `fact-registry.yaml` в RuleSet типа `fact_extraction`. Скрипт `seed:facts`, добавлен в `seed:all`
+
 ### Изменено
 
 - **Разделение подтверждения структуры и классификации секций** — поле `Section.status` разделено на `structureStatus` (подтверждение парсинга: заголовки, границы, уровни) и `classificationStatus` (подтверждение классификации: привязка к стандартным секциям). Два независимых статуса, два бейджа в UI, две кнопки массового подтверждения.

@@ -20,7 +20,8 @@
     "seed": "tsx src/seed.ts",
     "seed:prompts": "tsx src/seed-prompts.ts",
     "seed:taxonomy": "tsx src/seed-taxonomy.ts",
-    "seed:all": "tsx src/seed.ts && tsx src/seed-taxonomy.ts && tsx src/seed-prompts.ts",
+    "seed:facts": "tsx src/seed-fact-registry.ts",
+    "seed:all": "tsx src/seed.ts && tsx src/seed-taxonomy.ts && tsx src/seed-fact-registry.ts && tsx src/seed-prompts.ts",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },
