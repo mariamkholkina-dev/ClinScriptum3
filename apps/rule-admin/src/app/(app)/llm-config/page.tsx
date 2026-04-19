@@ -535,6 +535,16 @@ export default function LlmConfigPage() {
         )}
       </div>
 
+      {/* Count + sort info */}
+      {configsQuery.data && configsQuery.data.length > 0 && (
+        <div className="flex items-center justify-between text-xs text-gray-500">
+          <span>
+            Показано {displayedConfigs.length} из {configsQuery.data.length} конфигураций
+          </span>
+          <span>Сортировка по заголовку колонки (клик для переключения)</span>
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
         {configsQuery.isLoading ? (
@@ -570,14 +580,14 @@ export default function LlmConfigPage() {
                   <th
                     key={key}
                     onClick={() => toggleSort(key)}
-                    className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 hover:text-gray-700"
+                    className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 hover:bg-gray-100 hover:text-gray-700"
                   >
                     <span className="inline-flex items-center gap-1">
                       {label}
                       {sortKey === key ? (
-                        sortDir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                        sortDir === "asc" ? <ChevronUp size={14} className="text-brand-600" /> : <ChevronDown size={14} className="text-brand-600" />
                       ) : (
-                        <ArrowUpDown size={12} className="opacity-30" />
+                        <ArrowUpDown size={12} className="opacity-40" />
                       )}
                     </span>
                   </th>
@@ -631,10 +641,11 @@ export default function LlmConfigPage() {
                       </button>
                       <button
                         onClick={() => { setCloneSource(config); setCloneTargetTasks([]); }}
-                        title="Клонировать на задачи"
-                        className="rounded p-1.5 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600"
+                        title="Клонировать на несколько задач"
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-gray-500 hover:bg-indigo-50 hover:text-indigo-600"
                       >
-                        <Copy size={16} />
+                        <Copy size={14} />
+                        <span>Клон</span>
                       </button>
                       {!config.isDefault && (
                         <button
