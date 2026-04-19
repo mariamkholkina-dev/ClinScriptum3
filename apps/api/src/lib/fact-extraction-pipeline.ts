@@ -12,6 +12,7 @@ import { prisma, loadRulesForType, snapshotRules, getEffectiveLlmConfig, toConfi
 import { RulesEngine, detectContradictions, toFactExtractionRules } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
+import { loadFactRegistry } from "../data/fact-registry.js";
 import { logger } from "./logger.js";
 
 const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "appendix"];
@@ -51,12 +52,7 @@ export async function handleExtractFacts(data: {
     await completeStep(step1.id, deterResult);
     logger.info("[facts] Level 1 (deterministic) complete", deterResult.data);
 
-    if ((deterResult.data.totalExtracted as number) === 0) {
-      await prisma.processingRun.update({ where: { id: data.processingRunId }, data: { status: "completed" } });
-      return;
-    }
-
-    // Level 2: LLM Check
+    // Level 2: LLM Check (runs even if deterministic found nothing — LLM discovers facts regex missed)
     const step2 = await createStep(data.processingRunId, "llm_check");
     const llmResult = await runLlmCheck(ctx);
     await completeStep(step2.id, llmResult);
@@ -162,9 +158,7 @@ async function runLlmCheck(ctx: { docVersionId: string; tenantId: string }): Pro
   }
 
   const facts = await prisma.fact.findMany({ where: { docVersionId: ctx.docVersionId } });
-  if (facts.length === 0) {
-    return { data: { message: "No facts to verify" } };
-  }
+  const isDiscoveryMode = facts.length === 0;
 
   const sections = await prisma.section.findMany({
     where: { docVersionId: ctx.docVersionId },
@@ -183,11 +177,46 @@ async function runLlmCheck(ctx: { docVersionId: string; tenantId: string }): Pro
     .join("")
     .slice(0, 60_000);
 
-  const factList = facts
-    .map((f) => `- ${f.factCategory}.${f.factKey}: "${f.value}" (confidence: ${f.confidence})`)
-    .join("\n");
+  let systemPrompt: string;
+  let userPrompt: string;
 
-  const systemPrompt = `Ты — эксперт по клиническим протоколам. Проверь извлечённые факты.
+  if (isDiscoveryMode) {
+    const registry = loadFactRegistry();
+    const registryList = registry
+      .map((r) => `- ${r.category}.${r.factKey}: ${r.description} (тип: ${r.valueType}, метки: ${r.labelsRu.join(", ")})`)
+      .join("\n");
+
+    systemPrompt = `Ты — эксперт по клиническим протоколам. Извлеки факты из документа.
+
+Тебе дан реестр известных фактов — найди их значения в тексте документа.
+Также найди другие важные факты, которых нет в реестре.
+
+Для каждого факта:
+1. Укажи ключ факта (category.key из реестра, или новый).
+2. Укажи извлечённое значение.
+3. Укажи уверенность (0.0–1.0).
+4. Укажи фрагмент текста-источника (до 200 символов).
+
+Верни СТРОГО JSON (без markdown):
+{
+  "verified": [],
+  "new_facts": [
+    {
+      "fact_key": "category.key",
+      "value": "значение",
+      "confidence": 0.85,
+      "source_text": "фрагмент из документа"
+    }
+  ]
+}`;
+
+    userPrompt = `РЕЕСТР ФАКТОВ:\n${registryList}\n\nДОКУМЕНТ:\n${docText}`;
+  } else {
+    const factList = facts
+      .map((f) => `- ${f.factCategory}.${f.factKey}: "${f.value}" (confidence: ${f.confidence})`)
+      .join("\n");
+
+    systemPrompt = `Ты — эксперт по клиническим протоколам. Проверь извлечённые факты.
 
 Для каждого факта:
 1. Подтверди или исправь значение на основе текста документа.
@@ -216,6 +245,9 @@ async function runLlmCheck(ctx: { docVersionId: string; tenantId: string }): Pro
   ]
 }`;
 
+    userPrompt = `ИЗВЛЕЧЁННЫЕ ФАКТЫ:\n${factList}\n\nДОКУМЕНТ:\n${docText}`;
+  }
+
   const gateway = new LLMGateway({
     provider: llmConfig.provider as LLMProvider,
     model: llmConfig.model,
@@ -226,7 +258,7 @@ async function runLlmCheck(ctx: { docVersionId: string; tenantId: string }): Pro
 
   const response = await gateway.generate({
     system: systemPrompt,
-    messages: [{ role: "user", content: `ИЗВЛЕЧЁННЫЕ ФАКТЫ:\n${factList}\n\nДОКУМЕНТ:\n${docText}` }],
+    messages: [{ role: "user", content: userPrompt }],
     maxTokens: 4096,
   });
 

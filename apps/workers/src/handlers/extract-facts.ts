@@ -63,7 +63,7 @@ export async function handleExtractFacts(data: {
           contradictions: contradictions.length,
           factKeys: [...new Set(extracted.map((f) => f.factKey))],
         },
-        needsNextStep: extracted.length > 0,
+        needsNextStep: true,
         ruleSnapshot: snapshotRules(resolved?.rules, {
           ruleSetVersionId: resolved?.ruleSetVersionId,
           ruleSetType: "fact_extraction",
@@ -84,10 +84,7 @@ export async function handleExtractFacts(data: {
       const facts = await prisma.fact.findMany({
         where: { docVersionId: ctx.docVersionId },
       });
-
-      if (facts.length === 0) {
-        return { data: { message: "No facts to verify" }, needsNextStep: false };
-      }
+      const isDiscoveryMode = facts.length === 0;
 
       const sections = await prisma.section.findMany({
         where: { docVersionId: ctx.docVersionId },
@@ -110,11 +107,55 @@ export async function handleExtractFacts(data: {
         .join("")
         .slice(0, 60_000);
 
-      const factList = facts
-        .map((f) => `- ${f.factCategory}.${f.factKey}: "${f.value}" (confidence: ${f.confidence})`)
-        .join("\n");
+      let systemPrompt: string;
+      let userPrompt: string;
 
-      const systemPrompt = `Ты — эксперт по клиническим протоколам. Проверь извлечённые факты.
+      if (isDiscoveryMode) {
+        const resolved = await loadRulesForType(ctx.bundleId, "fact_extraction");
+        const registryRules = resolved?.rules ?? [];
+        const registryList = registryRules
+          .filter((r) => r.pattern !== "system_prompt")
+          .map((r) => {
+            const cfg = (r.config ?? {}) as Record<string, unknown>;
+            const desc = (cfg.description as string) ?? r.name;
+            const valueType = (cfg.valueType as string) ?? "string";
+            const labels = Array.isArray(cfg.labelsRu) ? (cfg.labelsRu as string[]).join(", ") : "";
+            const category = (cfg.category as string) ?? "general";
+            return `- ${category}.${r.pattern}: ${desc} (тип: ${valueType}${labels ? `, метки: ${labels}` : ""})`;
+          })
+          .join("\n");
+
+        systemPrompt = `Ты — эксперт по клиническим протоколам. Извлеки факты из документа.
+
+Тебе дан реестр известных фактов — найди их значения в тексте документа.
+Также найди другие важные факты, которых нет в реестре.
+
+Для каждого факта:
+1. Укажи ключ факта (category.key из реестра, или новый).
+2. Укажи извлечённое значение.
+3. Укажи уверенность (0.0–1.0).
+4. Укажи фрагмент текста-источника (до 200 символов).
+
+Верни СТРОГО JSON (без markdown):
+{
+  "verified": [],
+  "new_facts": [
+    {
+      "fact_key": "category.key",
+      "value": "значение",
+      "confidence": 0.85,
+      "source_text": "фрагмент из документа"
+    }
+  ]
+}`;
+
+        userPrompt = `РЕЕСТР ФАКТОВ:\n${registryList}\n\nДОКУМЕНТ:\n${docText}`;
+      } else {
+        const factList = facts
+          .map((f) => `- ${f.factCategory}.${f.factKey}: "${f.value}" (confidence: ${f.confidence})`)
+          .join("\n");
+
+        systemPrompt = `Ты — эксперт по клиническим протоколам. Проверь извлечённые факты.
 
 Для каждого факта:
 1. Подтверди или исправь значение на основе текста документа.
@@ -143,7 +184,8 @@ export async function handleExtractFacts(data: {
   ]
 }`;
 
-      const userPrompt = `ИЗВЛЕЧЁННЫЕ ФАКТЫ:\n${factList}\n\nДОКУМЕНТ:\n${docText}`;
+        userPrompt = `ИЗВЛЕЧЁННЫЕ ФАКТЫ:\n${factList}\n\nДОКУМЕНТ:\n${docText}`;
+      }
 
       const gateway = new LLMGateway({
         provider: llmConfig.provider as LLMProvider,
