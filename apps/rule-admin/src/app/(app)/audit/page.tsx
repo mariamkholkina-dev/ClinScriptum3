@@ -93,52 +93,85 @@ function ExpandedRow({ runId }: { runId: string }) {
   if (!run) return <tr><td colSpan={9} className="px-4 py-3 text-sm text-gray-500">Загрузка...</td></tr>;
 
   const steps = run.steps ?? [];
-  if (steps.length === 0) {
-    return <tr><td colSpan={9} className="px-4 py-3 text-sm text-gray-400">Нет этапов</td></tr>;
-  }
 
   return (
     <>
-      <tr className="bg-gray-50">
-        <td />
-        <td colSpan={8}>
-          <table className="w-full">
-            <thead>
-              <tr className="text-xs text-gray-500 uppercase">
-                <th className="px-3 py-1 text-left font-medium">Уровень</th>
-                <th className="px-3 py-1 text-left font-medium">Статус</th>
-                <th className="px-3 py-1 text-left font-medium">LLM конфиг</th>
-                <th className="px-3 py-1 text-left font-medium">Правила</th>
-                <th className="px-3 py-1 text-left font-medium">Начало</th>
-                <th className="px-3 py-1 text-left font-medium">Длительность</th>
-              </tr>
-            </thead>
-            <tbody>
-              {steps.map((step: any) => {
-                const dur = step.startedAt && step.completedAt
-                  ? Math.round((new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime()) / 1000)
-                  : null;
-                return (
-                  <tr key={step.id} className="border-t border-gray-100">
-                    <td className="px-3 py-1.5 text-sm">{LEVEL_LABELS[step.level] ?? step.level}</td>
-                    <td className="px-3 py-1.5">
-                      <Badge label={STATUS_LABELS[step.status] ?? step.status} className={STATUS_COLORS[step.status] ?? "bg-gray-100"} />
-                    </td>
-                    <td className="px-3 py-1.5"><LlmConfigCell snapshot={step.llmConfigSnapshot} /></td>
-                    <td className="px-3 py-1.5"><RuleSnapshotCell snapshot={step.ruleSnapshot} /></td>
-                    <td className="px-3 py-1.5 text-xs text-gray-500">
-                      {step.startedAt ? new Date(step.startedAt).toLocaleTimeString("ru") : "—"}
-                    </td>
-                    <td className="px-3 py-1.5 text-xs text-gray-500">
-                      {dur !== null ? `${dur}с` : "—"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </td>
-      </tr>
+      {run.status === "failed" && run.lastError && (
+        <tr className="bg-red-50">
+          <td />
+          <td colSpan={8} className="px-4 py-3">
+            <div className="text-xs font-medium text-red-700">Ошибка обработки</div>
+            <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded border border-red-200 bg-white p-2 text-xs text-red-800">
+              {run.lastError}
+            </pre>
+            {(run.attemptNumber > 1 || run.maxAttempts > 1) && (
+              <div className="mt-1 text-xs text-red-500">
+                Попытка {run.attemptNumber} из {run.maxAttempts}
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+      {steps.length === 0 ? (
+        <tr><td colSpan={9} className="px-4 py-3 text-sm text-gray-400">Нет этапов</td></tr>
+      ) : (
+        <tr className="bg-gray-50">
+          <td />
+          <td colSpan={8}>
+            <table className="w-full">
+              <thead>
+                <tr className="text-xs text-gray-500 uppercase">
+                  <th className="px-3 py-1 text-left font-medium">Уровень</th>
+                  <th className="px-3 py-1 text-left font-medium">Статус</th>
+                  <th className="px-3 py-1 text-left font-medium">LLM конфиг</th>
+                  <th className="px-3 py-1 text-left font-medium">Правила</th>
+                  <th className="px-3 py-1 text-left font-medium">Начало</th>
+                  <th className="px-3 py-1 text-left font-medium">Длительность</th>
+                </tr>
+              </thead>
+              <tbody>
+                {steps.map((step: any) => {
+                  const dur = step.startedAt && step.completedAt
+                    ? Math.round((new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime()) / 1000)
+                    : null;
+                  const stepResult = step.result as Record<string, unknown> | null;
+                  const stepError = step.status === "failed" && stepResult?.error
+                    ? String(stepResult.error)
+                    : null;
+                  return (
+                    <Fragment key={step.id}>
+                      <tr className={`border-t border-gray-100 ${step.status === "failed" ? "bg-red-50/50" : ""}`}>
+                        <td className="px-3 py-1.5 text-sm">{LEVEL_LABELS[step.level] ?? step.level}</td>
+                        <td className="px-3 py-1.5">
+                          <Badge label={STATUS_LABELS[step.status] ?? step.status} className={STATUS_COLORS[step.status] ?? "bg-gray-100"} />
+                        </td>
+                        <td className="px-3 py-1.5"><LlmConfigCell snapshot={step.llmConfigSnapshot} /></td>
+                        <td className="px-3 py-1.5"><RuleSnapshotCell snapshot={step.ruleSnapshot} /></td>
+                        <td className="px-3 py-1.5 text-xs text-gray-500">
+                          {step.startedAt ? new Date(step.startedAt).toLocaleTimeString("ru") : "—"}
+                        </td>
+                        <td className="px-3 py-1.5 text-xs text-gray-500">
+                          {dur !== null ? `${dur}с` : "—"}
+                        </td>
+                      </tr>
+                      {stepError && (
+                        <tr className="bg-red-50/30">
+                          <td />
+                          <td colSpan={5} className="px-3 pb-2">
+                            <pre className="max-h-20 overflow-auto whitespace-pre-wrap rounded border border-red-200 bg-white p-1.5 text-xs text-red-700">
+                              {stepError}
+                            </pre>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      )}
     </>
   );
 }
@@ -398,6 +431,11 @@ export default function AuditPage() {
                         </td>
                         <td className="px-4 py-3">
                           <Badge label={STATUS_LABELS[run.status] ?? run.status} className={STATUS_COLORS[run.status] ?? "bg-gray-100"} />
+                          {run.status === "failed" && run.lastError && (
+                            <div className="mt-1 max-w-xs truncate text-xs text-red-600" title={run.lastError}>
+                              {run.lastError}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           {run.ruleSetBundle ? (
