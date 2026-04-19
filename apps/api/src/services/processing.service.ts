@@ -51,6 +51,39 @@ export const processingService = {
     });
   },
 
+  async listAllRuns(tenantId: string, opts: { limit: number; cursor?: string; type?: string; status?: string }) {
+    const where: any = { study: { tenantId } };
+    if (opts.type) where.type = opts.type;
+    if (opts.status) where.status = opts.status;
+    if (opts.cursor) where.createdAt = { lt: (await prisma.processingRun.findUnique({ where: { id: opts.cursor }, select: { createdAt: true } }))?.createdAt };
+
+    const runs = await prisma.processingRun.findMany({
+      where,
+      include: {
+        steps: { orderBy: { startedAt: "asc" } },
+        ruleSetBundle: { select: { id: true, name: true } },
+        docVersion: {
+          select: {
+            id: true,
+            versionNumber: true,
+            document: { select: { id: true, title: true, type: true } },
+          },
+        },
+        study: { select: { id: true, title: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: opts.limit + 1,
+    });
+
+    const hasMore = runs.length > opts.limit;
+    if (hasMore) runs.pop();
+
+    return {
+      runs,
+      nextCursor: hasMore ? runs[runs.length - 1]!.id : null,
+    };
+  },
+
   async listFacts(tenantId: string, docVersionId: string) {
     const version = await prisma.documentVersion.findUnique({
       where: { id: docVersionId },

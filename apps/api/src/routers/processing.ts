@@ -1,11 +1,24 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../trpc/trpc.js";
+import { router, protectedProcedure, qualityProcedure } from "../trpc/trpc.js";
 import { withDomainErrors } from "../trpc/error-mapper.js";
 import { processingService } from "../services/processing.service.js";
 
 const p = protectedProcedure.use(withDomainErrors);
+const qp = qualityProcedure.use(withDomainErrors);
 
 export const processingRouter = router({
+  listAllRuns: qp
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(100).default(30),
+        cursor: z.string().uuid().optional(),
+        type: z.string().optional(),
+        status: z.string().optional(),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      processingService.listAllRuns(ctx.user.tenantId, input),
+    ),
   startRun: p
     .input(
       z.object({
