@@ -46,6 +46,12 @@ export const documentRouter = router({
       documentService.confirmUpload(ctx.user.tenantId, input.versionId, input.fileBuffer),
     ),
 
+  reprocessVersion: p
+    .input(z.object({ versionId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      documentService.reprocessVersion(ctx.user.tenantId, input.versionId),
+    ),
+
   getVersionStatuses: p
     .input(z.object({ versionIds: z.array(z.string().uuid()).min(1).max(50) }))
     .query(({ ctx, input }) =>

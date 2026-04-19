@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { trpc } from "@/lib/trpc";
-import { FlaskConical, Plus } from "lucide-react";
+import { FlaskConical, Plus, Search, X } from "lucide-react";
 
 export default function StudiesPage() {
   const utils = trpc.useUtils();
@@ -28,6 +28,47 @@ export default function StudiesPage() {
   const [newProtocolTitle, setNewProtocolTitle] = useState("");
   const [newPhase, setNewPhase] = useState("");
 
+  const [searchText, setSearchText] = useState("");
+  const [filterPhase, setFilterPhase] = useState("");
+  const [filterSponsor, setFilterSponsor] = useState("");
+  const [filterArea, setFilterArea] = useState("");
+
+  const allStudies = studiesQuery.data ?? [];
+
+  const uniquePhases = useMemo(
+    () => [...new Set(allStudies.map((s) => s.phase).filter(Boolean))].sort(),
+    [allStudies],
+  );
+  const uniqueSponsors = useMemo(
+    () => [...new Set(allStudies.map((s) => s.sponsor).filter(Boolean) as string[])].sort(),
+    [allStudies],
+  );
+  const uniqueAreas = useMemo(
+    () => [...new Set(allStudies.map((s) => s.therapeuticArea).filter(Boolean) as string[])].sort(),
+    [allStudies],
+  );
+
+  const filteredStudies = useMemo(() => {
+    let list = allStudies;
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      list = list.filter(
+        (s) =>
+          s.title.toLowerCase().includes(q) ||
+          (s.protocolTitle && s.protocolTitle.toLowerCase().includes(q)) ||
+          (s.sponsor && s.sponsor.toLowerCase().includes(q)) ||
+          (s.drug && s.drug.toLowerCase().includes(q)) ||
+          (s.therapeuticArea && s.therapeuticArea.toLowerCase().includes(q)),
+      );
+    }
+    if (filterPhase) list = list.filter((s) => s.phase === filterPhase);
+    if (filterSponsor) list = list.filter((s) => s.sponsor === filterSponsor);
+    if (filterArea) list = list.filter((s) => s.therapeuticArea === filterArea);
+    return list;
+  }, [allStudies, searchText, filterPhase, filterSponsor, filterArea]);
+
+  const hasFilters = searchText || filterPhase || filterSponsor || filterArea;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -40,6 +81,71 @@ export default function StudiesPage() {
           Новое исследование
         </button>
       </div>
+
+      {/* Search & Filters */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="Поиск по номеру, названию, спонсору, препарату..."
+            className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+        </div>
+        {uniquePhases.length > 0 && (
+          <select
+            value={filterPhase}
+            onChange={(e) => setFilterPhase(e.target.value)}
+            className="rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-8 text-sm text-gray-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          >
+            <option value="">Все фазы</option>
+            {uniquePhases.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        )}
+        {uniqueSponsors.length > 1 && (
+          <select
+            value={filterSponsor}
+            onChange={(e) => setFilterSponsor(e.target.value)}
+            className="rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-8 text-sm text-gray-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          >
+            <option value="">Все спонсоры</option>
+            {uniqueSponsors.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        )}
+        {uniqueAreas.length > 1 && (
+          <select
+            value={filterArea}
+            onChange={(e) => setFilterArea(e.target.value)}
+            className="rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-8 text-sm text-gray-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          >
+            <option value="">Все терапевтические области</option>
+            {uniqueAreas.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+        )}
+        {hasFilters && (
+          <button
+            onClick={() => { setSearchText(""); setFilterPhase(""); setFilterSponsor(""); setFilterArea(""); }}
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50"
+          >
+            <X className="h-3.5 w-3.5" />
+            Сбросить
+          </button>
+        )}
+      </div>
+
+      {hasFilters && (
+        <p className="text-xs text-gray-500">
+          Найдено: {filteredStudies.length} из {allStudies.length}
+        </p>
+      )}
 
       {showCreate && (
         <form
@@ -121,7 +227,7 @@ export default function StudiesPage() {
       {studiesQuery.isLoading && <p className="text-sm text-gray-500">Загрузка...</p>}
 
       <div className="space-y-3">
-        {studiesQuery.data?.map((study) => (
+        {filteredStudies.map((study) => (
           <Link
             key={study.id}
             href={`/studies/${study.id}`}

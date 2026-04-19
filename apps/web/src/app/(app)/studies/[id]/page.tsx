@@ -31,6 +31,7 @@ import {
   Pencil,
   ChevronDown,
   ChevronUp,
+  RotateCcw,
 } from "lucide-react";
 
 /* ──────────────────────── Types & Constants ──────────────────────── */
@@ -430,6 +431,7 @@ function DocumentsTab({
 
   const deleteVersion = trpc.document.deleteVersion.useMutation({ onSuccess: onRefetch });
   const setCurrent = trpc.document.setCurrentVersion.useMutation({ onSuccess: onRefetch });
+  const reprocessVersion = trpc.document.reprocessVersion.useMutation({ onSuccess: onRefetch });
 
   const handleDownload = async (versionId: string) => {
     const token = (await import("@/lib/auth-store")).useAuthStore.getState().accessToken;
@@ -588,6 +590,18 @@ function DocumentsTab({
                     versionLabel={ver.versionLabel || `v${ver.versionNumber}`}
                     allVersions={selectedDoc?.versions ?? []}
                   />
+                  <button
+                    onClick={() => {
+                      if (confirm("Перезапустить разбор? Вся история обработки будет удалена.")) {
+                        reprocessVersion.mutate({ versionId: ver.id });
+                      }
+                    }}
+                    className="rounded-lg p-2 text-gray-400 hover:bg-orange-50 hover:text-orange-600"
+                    title="Перезапустить разбор документа"
+                    disabled={reprocessVersion.isPending}
+                  >
+                    <RotateCcw className={cn("h-4 w-4", reprocessVersion.isPending && "animate-spin")} />
+                  </button>
                   <button
                     onClick={() => handleDownload(ver.id)}
                     className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"

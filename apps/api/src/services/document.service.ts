@@ -136,6 +136,39 @@ export const documentService = {
     return { versionId: version.id, status: "parsing" as const };
   },
 
+  async reprocessVersion(tenantId: string, versionId: string) {
+    const version = await prisma.documentVersion.findUnique({
+      where: { id: versionId },
+      include: { document: { include: { study: true } } },
+    });
+    requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
+
+    await prisma.$transaction([
+      prisma.processingStep.deleteMany({
+        where: { processingRun: { docVersionId: versionId } },
+      }),
+      prisma.processingRun.deleteMany({ where: { docVersionId: versionId } }),
+      prisma.finding.deleteMany({ where: { docVersionId: versionId } }),
+      prisma.fact.deleteMany({ where: { docVersionId: versionId } }),
+      prisma.soaCell.deleteMany({ where: { soaTable: { docVersionId: versionId } } }),
+      prisma.soaTable.deleteMany({ where: { docVersionId: versionId } }),
+      prisma.contentBlock.deleteMany({ where: { section: { docVersionId: versionId } } }),
+      prisma.section.deleteMany({ where: { docVersionId: versionId } }),
+      prisma.documentVersion.update({
+        where: { id: versionId },
+        data: { status: "uploading" },
+      }),
+    ]);
+
+    logger.info("[reprocess] Cleared history, restarting pipeline", { versionId });
+
+    runProcessingPipeline(versionId).catch((err) =>
+      logger.error(`[pipeline] Background error for ${versionId}:`, { error: String(err) }),
+    );
+
+    return { versionId, status: "parsing" as const };
+  },
+
   async getVersionStatuses(tenantId: string, versionIds: string[]) {
     const versions = await prisma.documentVersion.findMany({
       where: { id: { in: versionIds } },
