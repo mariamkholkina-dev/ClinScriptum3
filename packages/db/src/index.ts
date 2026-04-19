@@ -16,3 +16,4 @@ export { PrismaClient } from "@prisma/client";
 export type * from "@prisma/client";
 export { getEffectiveLlmConfig, toConfigSnapshot } from "./llm-config-resolver.js";
 export type { LlmTaskConfig, LlmConfigSnapshot } from "./llm-config-resolver.js";
+export { loadGenerationPrompts } from "./generation-prompts.js";

@@ -6,6 +6,7 @@
 
 - **Seed реестра фактов** (`seed-fact-registry.ts`) — 60 определений фактов из 9 категорий (protocol_meta, study, study_design, population, treatment, intervention, endpoints, statistics, bioequivalence) загружаются из `fact-registry.yaml` в RuleSet типа `fact_extraction`. Скрипт `seed:facts`, добавлен в `seed:all`
 - **Промпты генерации перенесены в общий rule set** — страница `/generation-prompts` теперь редиректит на `/rules?group=Генерация`; отдельный пункт sidebar убран; страница `/rules` поддерживает query-параметр `group` для автовыбора группы и первого RuleSet
+- **Per-section generation prompts** — каждый раздел ICF (12 секций) и CSR (15 секций) теперь имеет индивидуальный промпт в БД, редактируемый через Rule Admin. Хелпер `loadGenerationPrompts()` в `packages/db` загружает активные промпты из RuleSet; воркеры `generate-icf` и `generate-csr` используют цепочку fallback: промпт секции → системный промпт из БД → захардкоженная константа. Seed `seed-prompts.ts` расширен на 27 новых правил (12 ICF + 15 CSR)
 
 ### Изменено
 

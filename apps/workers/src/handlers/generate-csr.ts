@@ -1,4 +1,4 @@
-import { prisma, getEffectiveLlmConfig, toConfigSnapshot } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadGenerationPrompts } from "@clinscriptum/db";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
@@ -89,6 +89,10 @@ export async function handleGenerateCSR(data: {
         temperature: llmConfig.temperature,
       });
 
+      const CSR_RULESET_ID = "00000000-0000-0000-0000-000000000203";
+      const { systemPrompt: dbSystemPrompt, sectionPrompts } = await loadGenerationPrompts(CSR_RULESET_ID);
+      const fallbackPrompt = dbSystemPrompt ?? CSR_GENERATION_PROMPT;
+
       const generated: Array<{ title: string; standardSection: string; content: string; priority: number }> = [];
 
       // URS-082: Priority first 10 sections
@@ -107,8 +111,10 @@ export async function handleGenerateCSR(data: {
 
         const factsContext = facts.map((f) => `${f.key}: ${f.value}`).join("\n");
 
+        const sectionPrompt = sectionPrompts.get(csrSection.standardSection) ?? fallbackPrompt;
+
         const response = await gateway.generate({
-          system: CSR_GENERATION_PROMPT,
+          system: sectionPrompt,
           messages: [
             {
               role: "user",

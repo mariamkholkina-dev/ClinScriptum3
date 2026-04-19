@@ -1,4 +1,4 @@
-import { prisma, getEffectiveLlmConfig, toConfigSnapshot } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadGenerationPrompts } from "@clinscriptum/db";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
@@ -107,6 +107,10 @@ export async function handleGenerateICF(data: {
         temperature: llmConfig.temperature,
       });
 
+      const ICF_RULESET_ID = "00000000-0000-0000-0000-000000000202";
+      const { systemPrompt: dbSystemPrompt, sectionPrompts } = await loadGenerationPrompts(ICF_RULESET_ID);
+      const fallbackPrompt = dbSystemPrompt ?? ICF_GENERATION_PROMPT;
+
       const generated: ICFSection[] = [];
 
       for (const icfSection of ICF_SECTIONS) {
@@ -127,8 +131,10 @@ export async function handleGenerateICF(data: {
 
         const factsContext = facts.map((f) => `${f.key}: ${f.value}`).join("\n");
 
+        const sectionPrompt = sectionPrompts.get(icfSection.standardSection) ?? fallbackPrompt;
+
         const response = await gateway.generate({
-          system: ICF_GENERATION_PROMPT,
+          system: sectionPrompt,
           messages: [
             {
               role: "user",
