@@ -1,4 +1,4 @@
-import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadRulesForType, snapshotRules } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadRulesForType, snapshotRules, getInputBudgetChars } from "@clinscriptum/db";
 import { toGenerationPrompts } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
@@ -113,7 +113,9 @@ export async function handleGenerateCSR(data: {
           continue;
         }
 
+        const inputBudget = getInputBudgetChars(llmConfig);
         const factsContext = facts.map((f) => `${f.key}: ${f.value}`).join("\n");
+        const trimmedSource = sourceContent.slice(0, inputBudget);
 
         const sectionPrompt = sectionPrompts.get(csrSection.standardSection) ?? fallbackPrompt;
 
@@ -123,13 +125,13 @@ export async function handleGenerateCSR(data: {
             {
               role: "user",
               content: `Generate the CSR section "${csrSection.title}" based on:\n\n` +
-                `PROTOCOL CONTENT:\n${sourceContent}\n\n` +
+                `PROTOCOL CONTENT:\n${trimmedSource}\n\n` +
                 `KEY FACTS:\n${factsContext}\n\n` +
                 `Convert future tense to past tense. This is a Clinical Study Report, ` +
                 `so describe what WAS done, not what WILL be done.`,
             },
           ],
-          maxTokens: 2048,
+          maxTokens: llmConfig.maxTokens,
         });
 
         generated.push({ ...csrSection, content: response.content });

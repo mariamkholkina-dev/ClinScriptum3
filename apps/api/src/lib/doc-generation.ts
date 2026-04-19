@@ -10,8 +10,8 @@
  */
 
 import { prisma } from "@clinscriptum/db";
-import { llmAsk } from "./llm-gateway.js";
-import { config } from "../config.js";
+import { llmAsk, llmGetConfig } from "./llm-gateway.js";
+import { config, getInputBudgetChars } from "../config.js";
 import { getInterAuditChecksPrompt } from "./inter-audit.js";
 import { logger } from "./logger.js";
 
@@ -109,10 +109,13 @@ export async function runDocGeneration(generatedDocId: string): Promise<void> {
           data: { status: "generating" },
         });
 
+        const genCfg = await llmGetConfig("generation");
+        const genInputBudget = getInputBudgetChars(genCfg);
+
         const sourceText = extractSourceText(
           protocolSections,
           section.standardSection,
-          config.generation.modelWindowChars
+          genInputBudget
         );
 
         if (sourceText.length < 30) {
@@ -135,16 +138,19 @@ export async function runDocGeneration(generatedDocId: string): Promise<void> {
           data: { status: "qa_checking", content: generatedText },
         });
 
+        const qaCfg = await llmGetConfig("generation_qa");
+        const qaInputBudget = getInputBudgetChars(qaCfg);
+
         const qaSourceText = extractSourceText(
           protocolSections,
           section.standardSection,
-          config.generation.qaWindowChars
+          qaInputBudget
         );
 
         const qaFindings = await runSectionQa(
           docType,
           section.title,
-          generatedText.slice(0, config.generation.qaWindowChars),
+          generatedText.slice(0, qaInputBudget),
           qaSourceText
         );
 
@@ -374,9 +380,10 @@ QA-проверка выявила противоречия с исходным 
 ${docType === "icf" ? "Сохраняй простой понятный язык для обычного человека." : "Сохраняй профессиональный стиль, прошедшее время."}
 Возвращай ТОЛЬКО исправленный текст раздела.`;
 
-  const maxWindow = config.generation.modelWindowChars;
-  const trimmedSource = sourceText.slice(0, Math.floor(maxWindow * 0.4));
-  const trimmedCurrent = currentText.slice(0, Math.floor(maxWindow * 0.4));
+  const regenCfg = await llmGetConfig("generation");
+  const regenBudget = getInputBudgetChars(regenCfg);
+  const trimmedSource = sourceText.slice(0, Math.floor(regenBudget * 0.4));
+  const trimmedCurrent = currentText.slice(0, Math.floor(regenBudget * 0.4));
 
   const userPrompt = `РАЗДЕЛ: ${sectionTitle}
 

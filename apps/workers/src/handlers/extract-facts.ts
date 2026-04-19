@@ -1,4 +1,4 @@
-import { prisma, loadRulesForType, snapshotRules, getEffectiveLlmConfig, toConfigSnapshot } from "@clinscriptum/db";
+import { prisma, loadRulesForType, snapshotRules, getEffectiveLlmConfig, toConfigSnapshot, getInputBudgetChars } from "@clinscriptum/db";
 import { RulesEngine, detectContradictions, toFactExtractionRules } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
@@ -97,6 +97,8 @@ export async function handleExtractFacts(data: {
         return !EXCLUDED_SECTION_PREFIXES.some((p) => s.standardSection!.startsWith(p));
       });
 
+      const inputBudget = getInputBudgetChars(llmConfig);
+
       const docText = relevantSections
         .map((s) => {
           const isSynopsis = s.standardSection?.startsWith("synopsis") ?? false;
@@ -105,7 +107,7 @@ export async function handleExtractFacts(data: {
           return `\n${marker}\n${text}\n`;
         })
         .join("")
-        .slice(0, 60_000);
+        .slice(0, inputBudget);
 
       let systemPrompt: string;
       let userPrompt: string;
@@ -198,7 +200,7 @@ export async function handleExtractFacts(data: {
       const response = await gateway.generate({
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
-        maxTokens: 4096,
+        maxTokens: llmConfig.maxTokens,
       });
 
       let verifiedCount = 0;
@@ -330,6 +332,8 @@ export async function handleExtractFacts(data: {
         orderBy: { order: "asc" },
       });
 
+      const qaInputBudget = getInputBudgetChars(llmConfig);
+
       const docSnippet = sections
         .filter((s) => !s.standardSection || !EXCLUDED_SECTION_PREFIXES.some((p) => s.standardSection!.startsWith(p)))
         .map((s) => {
@@ -337,7 +341,7 @@ export async function handleExtractFacts(data: {
           return `[${s.title}]\n${text}`;
         })
         .join("\n")
-        .slice(0, 30_000);
+        .slice(0, qaInputBudget);
 
       const factsSummary = toCheck
         .map((f) => {
@@ -379,7 +383,7 @@ export async function handleExtractFacts(data: {
       const response = await gateway.generate({
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
-        maxTokens: 2048,
+        maxTokens: llmConfig.maxTokens,
       });
 
       let correctedCount = 0;

@@ -13,8 +13,8 @@
  */
 
 import { prisma } from "@clinscriptum/db";
-import { llmAsk } from "./llm-gateway.js";
-import { config } from "../config.js";
+import { llmAsk, llmGetConfig } from "./llm-gateway.js";
+import { config, getInputBudgetChars } from "../config.js";
 import {
   loadFactRegistry,
   type FactRegistryEntry,
@@ -69,16 +69,14 @@ const FACT_EXTRACTION_PROMPT_OVERHEAD_TOKENS = 6_000;
  */
 const FACT_EXTRACTION_QA_PROMPT_OVERHEAD_TOKENS = 1_500;
 
-function getMaxDocumentChars(): number {
-  const maxTokens = config.llm("fact_extraction").maxTokens;
-  const budgetTokens = Math.max(maxTokens - FACT_EXTRACTION_PROMPT_OVERHEAD_TOKENS, 2_000);
-  return budgetTokens * CHARS_PER_TOKEN;
+async function getMaxDocumentChars(): Promise<number> {
+  const cfg = await llmGetConfig("fact_extraction");
+  return getInputBudgetChars(cfg);
 }
 
-function getMaxQaContextChars(): number {
-  const maxTokens = config.llm("fact_extraction_qa").maxTokens;
-  const budgetTokens = Math.max(maxTokens - FACT_EXTRACTION_QA_PROMPT_OVERHEAD_TOKENS, 500);
-  return budgetTokens * CHARS_PER_TOKEN;
+async function getMaxQaContextChars(): Promise<number> {
+  const cfg = await llmGetConfig("fact_extraction_qa");
+  return getInputBudgetChars(cfg);
 }
 
 /* ═══════════════════════ Entry point ═══════════════════════ */
@@ -120,8 +118,8 @@ export async function extractFactsForVersion(versionId: string) {
   }
 
   // 2. Подготовить текст документа с маркерами секций
-  const maxDocumentChars = getMaxDocumentChars();
-  logger.info("[facts] Document text budget", { maxDocumentChars, maxTokens: config.llm("fact_extraction").maxTokens });
+  const maxDocumentChars = await getMaxDocumentChars();
+  logger.info("[facts] Document text budget", { maxDocumentChars });
   const documentText = buildDocumentText(relevantSections, maxDocumentChars);
 
   // 3. Загрузить реестр фактов, отфильтровать по типу исследования
@@ -323,7 +321,7 @@ async function qaCheckFacts(
     return `- ${f.category}.${f.factKey}: значение="${f.value}", уверенность=${f.confidence}, источники: ${srcTexts}`;
   }).join("\n");
 
-  const maxQaContextChars = getMaxQaContextChars();
+  const maxQaContextChars = await getMaxQaContextChars();
   const contextSnippet = documentText.slice(0, maxQaContextChars);
 
   const systemPrompt = `Ты — QA-аудитор извлечения фактов из клинического протокола.

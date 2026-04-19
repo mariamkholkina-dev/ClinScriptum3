@@ -22,7 +22,8 @@
 
 import { prisma, resolveActiveBundle, loadRulesForType, snapshotRules } from "@clinscriptum/db";
 import { storage } from "./storage.js";
-import { llmAsk } from "./llm-gateway.js";
+import { llmAsk, llmGetConfig } from "./llm-gateway.js";
+import { getInputBudgetChars } from "../config.js";
 import { handleExtractFacts } from "./fact-extraction-pipeline.js";
 import { detectSoaForVersion } from "./soa-detection.js";
 import { runIntraDocAudit } from "./intra-audit.js";
@@ -426,10 +427,12 @@ async function classifySectionsLlm(versionId: string, taxonomy: TaxonomyRule[]) 
 
   const taxonomyCatalog = buildTaxonomyCatalog(taxonomy);
   const validPatterns = taxonomy.map((r) => r.pattern);
+  const classifyCfg = await llmGetConfig("section_classify");
+  const inputBudget = getInputBudgetChars(classifyCfg);
 
   for (const section of targets) {
     try {
-      const preview = section.contentBlocks.map((b) => b.content).join(" ").slice(0, 800);
+      const preview = section.contentBlocks.map((b) => b.content).join(" ").slice(0, inputBudget);
       const breadcrumb = formatBreadcrumb(parentChains.get(section.id) ?? []);
       const result = await llmClassifySection(section.title, preview, breadcrumb, taxonomyCatalog, validPatterns);
 
@@ -593,8 +596,12 @@ async function llmQaBatch(
   const validPatterns = Array.from(taxonomyMap.keys());
   const validCodesList = validPatterns.join(", ");
 
+  const qaCfg = await llmGetConfig("section_classify_qa");
+  const qaInputBudget = getInputBudgetChars(qaCfg);
+  const perSectionBudget = Math.max(Math.floor(qaInputBudget / sections.length) - 200, 200);
+
   const items = sections.map((s, idx) => {
-    const preview = s.contentBlocks.map((b) => b.content).join(" ").slice(0, 300);
+    const preview = s.contentBlocks.map((b) => b.content).join(" ").slice(0, perSectionBudget);
     const sectionLabel = s.standardSection
       ? `${s.standardSection} (${taxonomyMap.get(s.standardSection) ?? ""})`
       : "не определена";

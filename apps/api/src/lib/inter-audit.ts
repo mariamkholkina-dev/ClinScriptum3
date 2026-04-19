@@ -11,7 +11,8 @@
  */
 
 import { prisma } from "@clinscriptum/db";
-import { llmAsk } from "./llm-gateway.js";
+import { llmAsk, llmGetConfig } from "./llm-gateway.js";
+import { getInputBudgetChars } from "../config.js";
 import { logger } from "./logger.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
@@ -348,6 +349,10 @@ export async function runInterDocAudit(
 
     const allFindings: RawInterFinding[] = [];
 
+    const interCfg = await llmGetConfig("inter_audit");
+    const interBudget = getInputBudgetChars(interCfg);
+    const halfBudget = Math.floor(interBudget / 2);
+
     for (const group of checkGroups) {
       const protoText = extractZoneText(protocolSections, group.protocolZones);
       const checkedText = extractZoneText(checkedSections, group.checkedDocZones);
@@ -360,8 +365,8 @@ export async function runInterDocAudit(
       try {
         const findings = await runCheckGroup(
           group,
-          protoText.slice(0, 10000),
-          checkedText.slice(0, 10000),
+          protoText.slice(0, halfBudget),
+          checkedText.slice(0, halfBudget),
           checkedDocType
         );
         allFindings.push(...findings);

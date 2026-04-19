@@ -6,6 +6,8 @@
  */
 
 import { config, type LlmTask, type LlmTaskConfig } from "../config.js";
+import { getEffectiveLlmConfig } from "@clinscriptum/db";
+import { getRequestContext } from "@clinscriptum/shared";
 
 /* ═══════════════════════ Public API ═══════════════════════ */
 
@@ -19,12 +21,32 @@ export interface LlmResponse {
   usage?: { promptTokens: number; completionTokens: number };
 }
 
+async function resolveConfig(task: LlmTask, overrides?: Partial<LlmTaskConfig>): Promise<LlmTaskConfig> {
+  const tenantId = getRequestContext()?.tenantId;
+  let base: LlmTaskConfig;
+  try {
+    const dbCfg = await getEffectiveLlmConfig(task, tenantId ?? undefined);
+    base = {
+      provider: dbCfg.provider,
+      baseUrl: dbCfg.baseUrl,
+      apiKey: dbCfg.apiKey,
+      model: dbCfg.model,
+      temperature: dbCfg.temperature,
+      maxTokens: dbCfg.maxTokens,
+      maxInputTokens: dbCfg.maxInputTokens,
+    };
+  } catch {
+    base = config.llm(task);
+  }
+  return { ...base, ...overrides };
+}
+
 export async function llmComplete(
   task: LlmTask,
   messages: LlmMessage[],
   overrides?: Partial<LlmTaskConfig>
 ): Promise<LlmResponse> {
-  const cfg = { ...config.llm(task), ...overrides };
+  const cfg = await resolveConfig(task, overrides);
 
   if (!cfg.apiKey || !cfg.baseUrl) {
     throw new Error(`[llm] Missing API key or base URL for task "${task}"`);
@@ -52,9 +74,10 @@ function extractYandexFolderId(modelUri: string): string | null {
   return match?.[1] ?? null;
 }
 
-/**
- * Shorthand: send a single user prompt with optional system prompt.
- */
+export async function llmGetConfig(task: LlmTask): Promise<LlmTaskConfig> {
+  return resolveConfig(task);
+}
+
 export async function llmAsk(
   task: LlmTask,
   systemPrompt: string,

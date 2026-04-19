@@ -28,6 +28,13 @@ export interface LlmTaskConfig {
   model: string;
   temperature: number;
   maxTokens: number;
+  maxInputTokens: number;
+}
+
+const CHARS_PER_TOKEN = 3.5;
+
+export function getInputBudgetChars(cfg: LlmTaskConfig): number {
+  return Math.floor(cfg.maxInputTokens * CHARS_PER_TOKEN);
 }
 
 const DEFAULT_MAX_TOKENS: Record<string, number> = {
@@ -56,9 +63,36 @@ const DEFAULT_MAX_TOKENS: Record<string, number> = {
 
 const GLOBAL_DEFAULT_MAX_TOKENS = 2048;
 
+const DEFAULT_MAX_INPUT_TOKENS: Record<string, number> = {
+  section_classify: 8000,
+  section_classify_qa: 8000,
+  fact_extraction: 60000,
+  fact_extraction_qa: 30000,
+  soa_detection: 30000,
+  soa_detection_qa: 16000,
+  intra_audit: 60000,
+  intra_audit_qa: 16000,
+  inter_audit: 60000,
+  inter_audit_qa: 16000,
+  fact_audit_intra: 30000,
+  fact_audit_intra_qa: 16000,
+  fact_audit_inter: 30000,
+  fact_audit_inter_qa: 16000,
+  generation: 30000,
+  generation_qa: 16000,
+  impact_analysis: 30000,
+  impact_analysis_qa: 16000,
+  change_classification: 16000,
+  change_classification_qa: 8000,
+  correction_recommend: 30000,
+};
+
+const GLOBAL_DEFAULT_MAX_INPUT_TOKENS = 16000;
+
 function llmTaskConfig(task: string): LlmTaskConfig {
   const prefix = `LLM_${task.toUpperCase()}_`;
   const defaultMax = DEFAULT_MAX_TOKENS[task] ?? GLOBAL_DEFAULT_MAX_TOKENS;
+  const defaultMaxInput = DEFAULT_MAX_INPUT_TOKENS[task] ?? GLOBAL_DEFAULT_MAX_INPUT_TOKENS;
   return {
     provider: process.env[`${prefix}PROVIDER`] || process.env.LLM_PROVIDER || "yandexgpt",
     baseUrl: process.env[`${prefix}BASE_URL`] || process.env.LLM_BASE_URL || "",
@@ -66,6 +100,7 @@ function llmTaskConfig(task: string): LlmTaskConfig {
     model: process.env[`${prefix}MODEL`] || process.env.LLM_MODEL || "",
     temperature: parseFloat(process.env[`${prefix}TEMPERATURE`] || "0.1"),
     maxTokens: parseInt(process.env[`${prefix}MAX_TOKENS`] || String(defaultMax), 10),
+    maxInputTokens: parseInt(process.env[`${prefix}MAX_INPUT_TOKENS`] || String(defaultMaxInput), 10),
   };
 }
 

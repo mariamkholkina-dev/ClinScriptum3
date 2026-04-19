@@ -1,4 +1,4 @@
-import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadRulesForType, snapshotRules } from "@clinscriptum/db";
+import { prisma, getEffectiveLlmConfig, toConfigSnapshot, loadRulesForType, snapshotRules, getInputBudgetChars } from "@clinscriptum/db";
 import { toAuditPrompt } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
@@ -97,15 +97,18 @@ export async function handleIntraDocAudit(data: {
       const auditRules = await loadRulesForType(ctx.bundleId, "intra_audit");
       const auditSystemPrompt = (auditRules ? toAuditPrompt(auditRules.rules) : null) ?? AUDIT_SYSTEM_PROMPT;
 
+      const inputBudget = getInputBudgetChars(llmConfig);
+      const trimmedDocText = fullDocText.slice(0, inputBudget);
+
       const response = await gateway.generate({
         system: auditSystemPrompt,
         messages: [
           {
             role: "user",
-            content: `Analyze the following clinical protocol for internal inconsistencies:\n\n${fullDocText}`,
+            content: `Analyze the following clinical protocol for internal inconsistencies:\n\n${trimmedDocText}`,
           },
         ],
-        maxTokens: 4096,
+        maxTokens: llmConfig.maxTokens,
       });
 
       const llmFindings = parseLLMFindings(response.content);

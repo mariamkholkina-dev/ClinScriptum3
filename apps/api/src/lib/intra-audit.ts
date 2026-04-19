@@ -9,7 +9,8 @@
  */
 
 import { prisma } from "@clinscriptum/db";
-import { llmAsk } from "./llm-gateway.js";
+import { llmAsk, llmGetConfig } from "./llm-gateway.js";
+import { getInputBudgetChars } from "../config.js";
 import { logger } from "./logger.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
@@ -390,7 +391,28 @@ function runRangeChecks(facts: FactData[]): RawFinding[] {
 /* ═══════════════════════ 2. LLM cross-checks ═══════════════════════ */
 
 async function runLlmCrossChecks(sections: SectionData[]): Promise<RawFinding[]> {
+  const auditCfg = await llmGetConfig("intra_audit");
+  const inputBudget = getInputBudgetChars(auditCfg);
+
+  const fullDocText = sections
+    .map((s) => `[${s.standardSection ?? "unknown"}: ${s.title}]\n${s.content}`)
+    .join("\n\n---\n\n");
+
+  if (fullDocText.length <= inputBudget) {
+    logger.info("[intra-audit] Full document fits in context, running single cross-check", {
+      docChars: fullDocText.length,
+      budgetChars: inputBudget,
+    });
+    return llmFullDocCrossCheck(fullDocText);
+  }
+
+  logger.info("[intra-audit] Document exceeds context, running per-strategy cross-checks", {
+    docChars: fullDocText.length,
+    budgetChars: inputBudget,
+  });
+
   const findings: RawFinding[] = [];
+  const halfBudget = Math.floor(inputBudget / 2);
 
   for (const strategy of CROSS_CHECK_STRATEGIES) {
     const anchorSections = sections.filter(
@@ -411,8 +433,8 @@ async function runLlmCrossChecks(sections: SectionData[]): Promise<RawFinding[]>
     try {
       const result = await llmCrossCheck(
         strategy.anchorZone,
-        anchorText.slice(0, 8000),
-        targetText.slice(0, 8000),
+        anchorText.slice(0, halfBudget),
+        targetText.slice(0, halfBudget),
         strategy.targetZones
       );
       for (const r of result) {
@@ -426,6 +448,40 @@ async function runLlmCrossChecks(sections: SectionData[]): Promise<RawFinding[]>
   }
 
   return findings;
+}
+
+async function llmFullDocCrossCheck(fullDocText: string): Promise<RawFinding[]> {
+  const systemPrompt = `Ты — эксперт по проверке качества клинической документации. Проанализируй полный текст документа и найди ВСЕ внутренние противоречия, несоответствия, пробелы и ошибки между разделами.
+
+Особое внимание удели:
+- Синопсис vs основной текст (числа, даты, дозировки, критерии)
+- Конечные точки vs статистический анализ
+- Дизайн vs процедуры
+- Безопасность vs смежные разделы
+- Популяция vs дизайн и статистика
+
+Для каждой находки верни JSON-объект:
+{
+  "issue_type": "строка из стандартного списка типов",
+  "severity": "critical|high|medium|low|info",
+  "category": "consistency|logic|terminology|compliance",
+  "family": "NUMERIC|TIMING_SCHEDULE|IP_DOSING|POPULATION_ELIGIBILITY|ENDPOINTS_ANALYSIS|SAFETY_REPORTING|RANDOMIZATION|BLINDING_UNBLINDING|CROSSREF|MISSINGNESS|DUPLICATION_CONFLICT|TEXT_CONTRADICTION",
+  "description": "Описание проблемы на русском",
+  "anchor_quote": "Точная цитата из одного раздела (≥40 символов)",
+  "target_quote": "Противоречащая цитата из другого раздела (≥40 символов)",
+  "suggestion": "Рекомендация по исправлению на русском"
+}
+
+ПРАВИЛА:
+- Severity: critical — влияет на безопасность пациентов или валидность; high — значительная ошибка; medium — требует внимания; low — незначительное; info — информационное
+- Возвращай ТОЛЬКО JSON-массив. Если проблем нет — верни []
+- Каждая находка должна иметь конкретные цитаты из текста
+- Не придумывай проблемы, основывайся только на предоставленном тексте`;
+
+  const userPrompt = `ПОЛНЫЙ ДОКУМЕНТ:\n${fullDocText}`;
+
+  const raw = await llmAsk("intra_audit", systemPrompt, userPrompt);
+  return parseLlmCrossCheckResponse(raw);
 }
 
 async function llmCrossCheck(
@@ -497,6 +553,8 @@ function parseLlmCrossCheckResponse(raw: string): RawFinding[] {
 
 async function runEditorialChecks(sections: SectionData[]): Promise<RawFinding[]> {
   const findings: RawFinding[] = [];
+  const editCfg = await llmGetConfig("intra_audit");
+  const editBudget = getInputBudgetChars(editCfg);
 
   for (const zone of EDITORIAL_ZONES) {
     const zoneSections = sections.filter((s) => s.standardSection?.startsWith(zone));
@@ -506,7 +564,7 @@ async function runEditorialChecks(sections: SectionData[]): Promise<RawFinding[]
     if (text.length < 100) continue;
 
     try {
-      const result = await llmEditorialCheck(zone, text.slice(0, 6000));
+      const result = await llmEditorialCheck(zone, text.slice(0, editBudget));
       for (const r of result) {
         r.anchorZone = zone;
       }
