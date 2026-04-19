@@ -628,7 +628,7 @@ Return a JSON object:
   {
     id: "00000000-0000-0000-0000-000000000205",
     name: "Fact Extraction LLM Prompts",
-    type: "fact_extraction",
+    type: "fact_extraction_qa",
     rules: [
       {
         name: "fact_extraction:llm_check",

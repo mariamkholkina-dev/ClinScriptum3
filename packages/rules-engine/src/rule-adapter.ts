@@ -30,15 +30,16 @@ export function toSectionMappingRules(dbRules: DbRule[]): SectionMappingRule[] {
 
 export function toFactExtractionRules(dbRules: DbRule[]): FactExtractionRule[] {
   return dbRules
-    .filter((r) => r.pattern !== "system_prompt")
+    .filter((r) => {
+      if (r.pattern === "system_prompt") return false;
+      const cfg = (r.config ?? {}) as Record<string, unknown>;
+      return Array.isArray(cfg.patterns) && cfg.patterns.length > 0;
+    })
     .map((r) => {
       const cfg = (r.config ?? {}) as Record<string, unknown>;
-      const patterns = Array.isArray(cfg.patterns)
-        ? (cfg.patterns as string[])
-        : [r.pattern];
       return {
         factKey: r.pattern,
-        patterns,
+        patterns: cfg.patterns as string[],
         factClass: (cfg.factClass as "general" | "phase_specific") ?? "general",
         sourcePriority: Array.isArray(cfg.sourcePriority)
           ? (cfg.sourcePriority as ("synopsis" | "body" | "soa")[])

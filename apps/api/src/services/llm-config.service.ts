@@ -218,11 +218,25 @@ class LlmConfigService {
       throw new DomainError("NOT_FOUND", "LLM config not found");
     }
 
+    const prefix = `LLM_${config.taskId.toUpperCase()}_`;
+    const effectiveApiKey = config.apiKey
+      || process.env[`${prefix}API_KEY`]
+      || process.env.LLM_API_KEY
+      || "";
+    const effectiveBaseUrl = config.baseUrl
+      || process.env[`${prefix}BASE_URL`]
+      || process.env.LLM_BASE_URL
+      || undefined;
+
+    if (!effectiveApiKey) {
+      return { success: false, latencyMs: 0, error: "API key not configured (neither in DB nor in environment)" };
+    }
+
     const gateway = new LLMGateway({
       provider: config.provider as LLMProvider,
       model: config.model,
-      apiKey: config.apiKey,
-      baseUrl: config.baseUrl || undefined,
+      apiKey: effectiveApiKey,
+      baseUrl: effectiveBaseUrl,
       maxTokens: 50,
       temperature: 0,
     });

@@ -82,28 +82,40 @@ function deduplicateFacts(facts: ExtractedFact[]): ExtractedFact[] {
 export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "study_title",
-    patterns: ["(?:study|protocol)\\s+title[:\\s]+([^\\n]+)"],
+    patterns: [
+      "(?:study|protocol)\\s+title[:\\s]+([^\\n]+)",
+      "(?:название\\s+исследовани|название\\s+протокол)\\w*[:\\s]+([^\\n]+)",
+    ],
     factClass: "general",
     sourcePriority: ["synopsis", "body"],
     multipleValues: false,
   },
   {
     factKey: "protocol_number",
-    patterns: ["protocol\\s+(?:number|no\\.?|#)[:\\s]+([A-Z0-9\\-]+)"],
+    patterns: [
+      "protocol\\s+(?:number|no\\.?|#)[:\\s]+([A-ZА-Яa-zа-я0-9][A-ZА-Яa-zа-я0-9\\-_./]+)",
+      "(?:номер\\s+(?:протокол|исследовани)|код\\s+исследовани)\\w*[:\\s]+([A-ZА-Яa-zа-я0-9][A-ZА-Яa-zа-я0-9\\-_./]+)",
+    ],
     factClass: "general",
     sourcePriority: ["synopsis", "body"],
     multipleValues: false,
   },
   {
     factKey: "sponsor",
-    patterns: ["sponsor[:\\s]+([^\\n]+)", "sponsored\\s+by[:\\s]+([^\\n]+)"],
+    patterns: [
+      "sponsor[:\\s]+([^\\n]+)",
+      "sponsored\\s+by[:\\s]+([^\\n]+)",
+      "(?:спонсор)\\s*[:\\s]+([^\\n]+)",
+    ],
     factClass: "general",
     sourcePriority: ["synopsis", "body"],
     multipleValues: false,
   },
   {
     factKey: "study_phase",
-    patterns: ["phase\\s+(I{1,3}V?(?:\\/I{1,3})?|[1-4])"],
+    patterns: [
+      "(?:фаз[аыеу]|phase)\\s*(I{1,3}V?(?:\\/I{1,3})?|[1-4](?:\\/[1-4])?)",
+    ],
     factClass: "general",
     sourcePriority: ["synopsis", "body"],
     multipleValues: false,
@@ -113,7 +125,7 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
     patterns: [
       "indication[:\\s]+([^\\n]+)",
       "therapeutic\\s+area[:\\s]+([^\\n]+)",
-      "disease[:\\s]+([^\\n]+)",
+      "(?:терапевтическ\\w+\\s+област|показани[ея]|для\\s+лечения)\\s*[:\\s]+([^\\n]+)",
     ],
     factClass: "general",
     sourcePriority: ["synopsis", "body"],
@@ -124,6 +136,7 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
     patterns: [
       "investigational\\s+(?:product|drug|medicinal\\s+product)[:\\s]+([^\\n]+)",
       "study\\s+drug[:\\s]+([^\\n]+)",
+      "(?:исследуемый\\s+препарат|исследуемое\\s+лекарственное\\s+средство|ИП|IMP)\\s*[:\\s—–-]+([^\\n]+)",
     ],
     factClass: "general",
     sourcePriority: ["synopsis", "body"],
@@ -135,6 +148,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
       "(?:approximately|total\\s+of|enroll)\\s+(\\d+)\\s+(?:subjects?|patients?|participants?)",
       "sample\\s+size[:\\s]+(\\d+)",
       "N\\s*=\\s*(\\d+)",
+      "(?:всего|общее\\s+число|величина\\s+выборки|объ[её]м\\s+выборки|размер\\s+выборки)\\s*[:\\s]?\\s*(\\d+)",
+      "(?:с\\s+участием|включает|включено)\\s+(\\d+)\\s*(?:доброволь|участни|субъект|пациент)",
     ],
     factClass: "general",
     sourcePriority: ["synopsis", "body"],
@@ -145,6 +160,7 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
     patterns: [
       "(?:study|treatment)\\s+duration[:\\s]+([^\\n]+)",
       "duration\\s+of\\s+(?:study|treatment)[:\\s]+([^\\n]+)",
+      "(?:продолжительность\\s+исследовани|длительность\\s+исследовани|сроки\\s+проведения)\\s*[:\\s—–-]+([^\\n]+)",
     ],
     factClass: "general",
     sourcePriority: ["synopsis", "body"],
@@ -154,6 +170,7 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
     factKey: "primary_endpoint",
     patterns: [
       "primary\\s+(?:endpoint|outcome|efficacy\\s+endpoint)[:\\s]+([^\\n]+)",
+      "(?:первичн\\w+\\s+конечн\\w+\\s+точк|основн\\w+\\s+(?:конечн\\w+\\s+точк|критери\\w+\\s+эффективност))\\w*[:\\s—–-]+([^\\n]+)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["synopsis", "body"],
@@ -163,6 +180,7 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
     factKey: "secondary_endpoint",
     patterns: [
       "secondary\\s+(?:endpoint|outcome)[:\\s]+([^\\n]+)",
+      "(?:вторичн\\w+\\s+конечн\\w+\\s+точк|вторичн\\w+\\s+цел)\\w*[:\\s—–-]+([^\\n]+)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["body"],
@@ -170,14 +188,20 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   },
   {
     factKey: "inclusion_criteria",
-    patterns: ["inclusion\\s+criteria[:\\s]*([^\\n]+)"],
+    patterns: [
+      "inclusion\\s+criteria[:\\s]*([^\\n]+)",
+      "(?:критери\\w+\\s+включени)\\s*[:\\s]*([^\\n]+)",
+    ],
     factClass: "phase_specific",
     sourcePriority: ["body"],
     multipleValues: true,
   },
   {
     factKey: "exclusion_criteria",
-    patterns: ["exclusion\\s+criteria[:\\s]*([^\\n]+)"],
+    patterns: [
+      "exclusion\\s+criteria[:\\s]*([^\\n]+)",
+      "(?:критери\\w+\\s+(?:не)?включени)\\s*[:\\s]*([^\\n]+)",
+    ],
     factClass: "phase_specific",
     sourcePriority: ["body"],
     multipleValues: true,

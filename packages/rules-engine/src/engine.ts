@@ -11,8 +11,9 @@ export class RulesEngine {
     this.sectionClassifier = new SectionClassifier(
       config?.sectionMappings ?? DEFAULT_PROTOCOL_SECTIONS
     );
+    const factRules = config?.factExtractions;
     this.factExtractor = new FactExtractor(
-      config?.factExtractions ?? DEFAULT_FACT_RULES
+      factRules && factRules.length > 0 ? factRules : DEFAULT_FACT_RULES
     );
   }
 
