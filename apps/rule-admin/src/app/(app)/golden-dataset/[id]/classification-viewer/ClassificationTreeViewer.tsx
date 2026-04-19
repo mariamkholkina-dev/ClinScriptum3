@@ -14,7 +14,6 @@ import {
   ChevronRight,
   ChevronDown,
   AlertTriangle,
-  Copy,
   Check,
   ChevronsUpDown,
   Filter,
@@ -22,9 +21,12 @@ import {
   GitCompareArrows,
   CheckSquare,
   Square,
-  MinusSquare,
   Keyboard,
   X,
+  HelpCircle,
+  Edit3,
+  Save,
+  Search,
 } from "lucide-react";
 
 import type {
@@ -33,6 +35,7 @@ import type {
   DiffEntry,
   SortKey,
   FilterState,
+  TaxonomyEntry,
 } from "./types";
 import { EMPTY_FILTERS } from "./types";
 import {
@@ -40,7 +43,7 @@ import {
   detectAnomalies,
   sortSections,
   filterSections,
-  diffWithExpected,
+  diffClassificationWithExpected,
   getVisibleSectionIds,
   hasChildren,
   ANOMALY_LABELS,
@@ -70,8 +73,10 @@ const SORT_LABELS: Record<SortKey, string> = {
   order: "По порядку",
   title: "По заголовку",
   level: "По уровню",
-  structureStatus: "По статусу структуры",
-  blockCount: "По кол-ву блоков",
+  classificationStatus: "По статусу",
+  confidence: "По уверенности",
+  algoSection: "По алгоритму",
+  llmSection: "По LLM",
 };
 
 const ANOMALY_ICON_CLS: Record<AnomalyType, string> = {
@@ -79,6 +84,12 @@ const ANOMALY_ICON_CLS: Record<AnomalyType, string> = {
   orphaned: "text-red-500",
   duplicate_title: "text-orange-500",
   short: "text-yellow-600",
+};
+
+const CLASSIFIED_BY_LABEL: Record<string, string> = {
+  deterministic: "Правило",
+  llm_check: "LLM",
+  llm_qa: "LLM QA",
 };
 
 /* ═══════════════ ContentBlockPanel ═══════════════ */
@@ -150,18 +161,18 @@ function ContentBlockPanel({ blocks }: { blocks: Section["contentBlocks"] }) {
 
 /* ═══════════════ DiffOverlay ═══════════════ */
 
-function DiffOverlay({ entries }: { entries: DiffEntry[] }) {
+function ClassificationDiffOverlay({ entries }: { entries: DiffEntry[] }) {
   if (entries.length === 0) {
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
-        Структура полностью совпадает с эталоном.
+        Классификация полностью совпадает с эталоном.
       </div>
     );
   }
 
   const missing = entries.filter((e) => e.type === "missing");
   const extra = entries.filter((e) => e.type === "extra");
-  const wrongLevel = entries.filter((e) => e.type === "wrong_level");
+  const wrongSection = entries.filter((e) => e.type === "wrong_section");
 
   return (
     <div className="space-y-3">
@@ -172,8 +183,8 @@ function DiffOverlay({ entries }: { entries: DiffEntry[] }) {
         <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">
           Лишних: {extra.length}
         </span>
-        <span className="rounded bg-blue-100 px-2 py-1 text-blue-700">
-          Неверный уровень: {wrongLevel.length}
+        <span className="rounded bg-purple-100 px-2 py-1 text-purple-700">
+          Неверная секция: {wrongSection.length}
         </span>
       </div>
       <div className="max-h-60 overflow-y-auto space-y-1.5">
@@ -185,17 +196,17 @@ function DiffOverlay({ entries }: { entries: DiffEntry[] }) {
                 ? "border-red-200 bg-red-50 text-red-700"
                 : e.type === "extra"
                   ? "border-amber-200 bg-amber-50 text-amber-700"
-                  : "border-blue-200 bg-blue-50 text-blue-700"
+                  : "border-purple-200 bg-purple-50 text-purple-700"
             }`}
           >
             <span className="font-medium">
-              {e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверный уровень"}
+              {e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверная секция"}
             </span>
             {": "}
             {e.sectionTitle}
-            {e.type === "wrong_level" && e.expected && e.actual && (
+            {e.type === "wrong_section" && e.expected && e.actual && (
               <span className="ml-1 text-gray-500">
-                (ожидался L{e.expected.level}, получен L{e.actual.level})
+                (ожидалось «{e.expected.standardSection ?? "—"}», получено «{e.actual.standardSection ?? "—"}»)
               </span>
             )}
           </div>
@@ -265,9 +276,117 @@ function SourcePreviewPanel({
   );
 }
 
-/* ═══════════════ ParsingToolbar ═══════════════ */
+/* ═══════════════ TaxonomyHelpDialog ═══════════════ */
 
-function ParsingToolbar({
+function TaxonomyHelpDialog({
+  taxonomy,
+  onClose,
+}: {
+  taxonomy: TaxonomyEntry[];
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const searchLower = search.toLowerCase();
+
+  const zones = useMemo(() => {
+    const zoneMap = new Map<string, { zone: TaxonomyEntry; subzones: TaxonomyEntry[] }>();
+    for (const t of taxonomy) {
+      const cfg = t.config as TaxonomyEntry["config"];
+      if (cfg.type === "zone") {
+        if (!zoneMap.has(cfg.key)) {
+          zoneMap.set(cfg.key, { zone: t, subzones: [] });
+        } else {
+          zoneMap.get(cfg.key)!.zone = t;
+        }
+      }
+    }
+    for (const t of taxonomy) {
+      const cfg = t.config as TaxonomyEntry["config"];
+      if (cfg.type === "subzone" && cfg.parentZone) {
+        const parent = zoneMap.get(cfg.parentZone);
+        if (parent) parent.subzones.push(t);
+      }
+    }
+    return Array.from(zoneMap.values());
+  }, [taxonomy]);
+
+  const filtered = useMemo(() => {
+    if (!search) return zones;
+    return zones.filter((z) => {
+      const zCfg = z.zone.config as TaxonomyEntry["config"];
+      if (zCfg.titleRu.toLowerCase().includes(searchLower) || z.zone.pattern.toLowerCase().includes(searchLower)) return true;
+      return z.subzones.some((s) => {
+        const sCfg = s.config as TaxonomyEntry["config"];
+        return sCfg.titleRu.toLowerCase().includes(searchLower) || s.pattern.toLowerCase().includes(searchLower);
+      });
+    });
+  }, [zones, search, searchLower]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-lg bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <h3 className="text-lg font-semibold text-gray-900">Справочник секций</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="px-6 pt-4 pb-2">
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск секций..."
+              className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-2">
+          {filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-gray-400">Ничего не найдено</p>
+          ) : (
+            <div className="space-y-4">
+              {filtered.map((z) => {
+                const zCfg = z.zone.config as TaxonomyEntry["config"];
+                return (
+                  <div key={z.zone.pattern} className="rounded-md border border-gray-200 p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="rounded bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
+                        {z.zone.pattern}
+                      </span>
+                      <span className="text-sm font-medium text-gray-900">{zCfg.titleRu}</span>
+                    </div>
+                    {z.subzones.length > 0 && (
+                      <div className="ml-4 space-y-1">
+                        {z.subzones.map((s) => {
+                          const sCfg = s.config as TaxonomyEntry["config"];
+                          return (
+                            <div key={s.pattern} className="flex items-center gap-2 text-xs">
+                              <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">
+                                {s.pattern}
+                              </span>
+                              <span className="text-gray-700">{sCfg.titleRu}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ ClassificationToolbar ═══════════════ */
+
+function ClassificationToolbar({
   sortKey,
   onSortChange,
   filters,
@@ -287,6 +406,7 @@ function ParsingToolbar({
   hasDiffData,
   showSource,
   onToggleSource,
+  onShowHelp,
   bulkPending,
 }: {
   sortKey: SortKey;
@@ -308,6 +428,7 @@ function ParsingToolbar({
   hasDiffData: boolean;
   showSource: boolean;
   onToggleSource: () => void;
+  onShowHelp: () => void;
   bulkPending: boolean;
 }) {
   return (
@@ -361,6 +482,14 @@ function ParsingToolbar({
           Свернуть все
         </button>
 
+        {/* Help */}
+        <button
+          onClick={onShowHelp}
+          className="flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+        >
+          <HelpCircle size={12} /> Справочник
+        </button>
+
         {/* Summary */}
         <span className="ml-auto text-xs text-gray-500">
           {visibleCount === totalCount
@@ -377,14 +506,14 @@ function ParsingToolbar({
         <Filter size={12} className="text-gray-400" />
 
         <select
-          value={filters.structureStatus}
-          onChange={(e) => onFiltersChange({ ...filters, structureStatus: e.target.value as FilterState["structureStatus"] })}
+          value={filters.classificationStatus}
+          onChange={(e) => onFiltersChange({ ...filters, classificationStatus: e.target.value as FilterState["classificationStatus"] })}
           className="rounded border border-gray-300 px-2 py-1 text-xs"
         >
-          <option value="">Структура: все</option>
-          <option value="validated">Структура: подтверждён</option>
-          <option value="not_validated">Структура: не подтверждён</option>
-          <option value="requires_rework">Структура: на доработку</option>
+          <option value="">Статус: все</option>
+          <option value="validated">Подтверждён</option>
+          <option value="not_validated">Не подтверждён</option>
+          <option value="requires_rework">На доработку</option>
         </select>
 
         <select
@@ -418,7 +547,27 @@ function ParsingToolbar({
           Только аномалии
         </label>
 
-        {(filters.structureStatus || filters.level || filters.hasContent || filters.anomaliesOnly) && (
+        <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={filters.disagreement}
+            onChange={(e) => onFiltersChange({ ...filters, disagreement: e.target.checked })}
+            className="rounded border-gray-300"
+          />
+          Расхождение алго/LLM
+        </label>
+
+        <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={filters.agreement}
+            onChange={(e) => onFiltersChange({ ...filters, agreement: e.target.checked })}
+            className="rounded border-gray-300"
+          />
+          Совпадение алго/LLM/итог
+        </label>
+
+        {(filters.classificationStatus || filters.level || filters.hasContent || filters.anomaliesOnly || filters.disagreement || filters.agreement) && (
           <button
             onClick={() => onFiltersChange(EMPTY_FILTERS)}
             className="text-xs text-brand-600 hover:text-brand-700"
@@ -428,7 +577,7 @@ function ParsingToolbar({
         )}
       </div>
 
-      {/* Row 3: Bulk actions (shown when items selected) */}
+      {/* Row 3: Bulk actions */}
       {selectedCount > 0 && (
         <BulkActionsBar
           selectedCount={selectedCount}
@@ -554,6 +703,66 @@ function BulkActionsBar({
   );
 }
 
+/* ═══════════════ SectionClassificationEditor ═══════════════ */
+
+function SectionClassificationEditor({
+  section,
+  taxonomyOptions,
+  onSave,
+  onCancel,
+  isPending,
+}: {
+  section: Section;
+  taxonomyOptions: { value: string; label: string; type: string }[];
+  onSave: (standardSection: string | null) => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [selected, setSelected] = useState(section.standardSection ?? "");
+
+  return (
+    <div className="flex items-center gap-2 bg-white border border-brand-200 rounded-md px-3 py-2 ml-8 mr-4 mb-1"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <select
+        value={selected}
+        onChange={(e) => setSelected(e.target.value)}
+        className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:border-brand-500 focus:outline-none"
+      >
+        <option value="">— Не определена —</option>
+        {taxonomyOptions
+          .filter((o) => o.type === "zone")
+          .map((zone) => (
+            <optgroup key={zone.value} label={zone.label}>
+              <option value={zone.value}>{zone.label}</option>
+              {taxonomyOptions
+                .filter((s) => s.type === "subzone" && s.value.startsWith(zone.value + "."))
+                .map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+            </optgroup>
+          ))}
+      </select>
+      <button
+        onClick={() => onSave(selected || null)}
+        disabled={isPending}
+        className="flex items-center gap-1 rounded bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+      >
+        {isPending ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+        Сохранить
+      </button>
+      <button
+        onClick={onCancel}
+        className="text-xs text-gray-500 hover:text-gray-700"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
 /* ═══════════════ SectionTreeRow ═══════════════ */
 
 function SectionTreeRow({
@@ -566,9 +775,15 @@ function SectionTreeRow({
   isExpanded,
   isSelected,
   isFocused,
+  isEditing,
+  taxonomyOptions,
   onToggleCollapse,
   onToggleExpand,
   onToggleSelect,
+  onStartEdit,
+  onSaveClassification,
+  onCancelEdit,
+  classificationPending,
   rowRef,
 }: {
   section: Section;
@@ -580,12 +795,19 @@ function SectionTreeRow({
   isExpanded: boolean;
   isSelected: boolean;
   isFocused: boolean;
+  isEditing: boolean;
+  taxonomyOptions: { value: string; label: string; type: string }[];
   onToggleCollapse: () => void;
   onToggleExpand: () => void;
   onToggleSelect: () => void;
+  onStartEdit: () => void;
+  onSaveClassification: (standardSection: string | null) => void;
+  onCancelEdit: () => void;
+  classificationPending: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
 }) {
-  const diffBg = diffType === "extra" ? "bg-amber-50/60" : diffType === "wrong_level" ? "bg-blue-50/60" : "";
+  const diffBg = diffType === "extra" ? "bg-amber-50/60" : diffType === "wrong_section" ? "bg-purple-50/60" : "";
+  const disagreement = section.algoSection !== section.llmSection && section.algoSection != null && section.llmSection != null;
 
   return (
     <div ref={rowRef}>
@@ -605,7 +827,7 @@ function SectionTreeRow({
           {isSelected ? <CheckSquare size={15} className="text-brand-600" /> : <Square size={15} />}
         </button>
 
-        {/* Collapse arrow for parents */}
+        {/* Collapse arrow */}
         {isParent ? (
           <button
             onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
@@ -634,22 +856,77 @@ function SectionTreeRow({
           </span>
         ))}
 
-        {/* Structure status badge */}
-        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[section.structureStatus] ?? ""}`}>
-          {STATUS_LABEL[section.structureStatus] ?? section.structureStatus}
+        {/* Algo classification */}
+        <span className="shrink-0 flex items-center gap-1" title="Алгоритм">
+          {section.algoSection ? (
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium bg-indigo-50 text-indigo-700 ${disagreement ? "ring-1 ring-amber-400" : ""}`}>
+              А: {section.algoSection}
+            </span>
+          ) : (
+            <span className="rounded px-1.5 py-0.5 text-[10px] text-gray-400 bg-gray-50">А: —</span>
+          )}
+          {section.algoConfidence != null && section.algoConfidence > 0 && (
+            <span className={`rounded px-1 py-0.5 text-[10px] font-medium ${CONFIDENCE_COLOR(section.algoConfidence)}`}>
+              {Math.round(section.algoConfidence * 100)}%
+            </span>
+          )}
         </span>
 
-        {/* Confidence */}
-        {section.confidence != null && (
-          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${CONFIDENCE_COLOR(section.confidence)}`}>
-            {Math.round(section.confidence * 100)}%
-          </span>
-        )}
+        {/* LLM classification */}
+        <span className="shrink-0 flex items-center gap-1" title="LLM">
+          {section.llmSection ? (
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium bg-violet-50 text-violet-700 ${disagreement ? "ring-1 ring-amber-400" : ""}`}>
+              L: {section.llmSection}
+            </span>
+          ) : (
+            <span className="rounded px-1.5 py-0.5 text-[10px] text-gray-400 bg-gray-50">L: —</span>
+          )}
+          {section.llmConfidence != null && section.llmConfidence > 0 && (
+            <span className={`rounded px-1 py-0.5 text-[10px] font-medium ${CONFIDENCE_COLOR(section.llmConfidence)}`}>
+              {Math.round(section.llmConfidence * 100)}%
+            </span>
+          )}
+        </span>
+
+        {/* Final result */}
+        <span className="shrink-0 flex items-center gap-1" title="Итог">
+          {section.standardSection ? (
+            <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-brand-100 text-brand-700">
+              {section.standardSection}
+            </span>
+          ) : (
+            <span className="rounded px-1.5 py-0.5 text-[10px] text-gray-400 bg-gray-50">—</span>
+          )}
+          {section.confidence != null && (
+            <span className={`rounded px-1 py-0.5 text-[10px] font-medium ${CONFIDENCE_COLOR(section.confidence)}`}>
+              {Math.round(section.confidence * 100)}%
+            </span>
+          )}
+          {section.classifiedBy && (
+            <span className="text-[9px] text-gray-400">
+              {CLASSIFIED_BY_LABEL[section.classifiedBy] ?? section.classifiedBy}
+            </span>
+          )}
+        </span>
+
+        {/* Classification status */}
+        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[section.classificationStatus] ?? ""}`}>
+          {STATUS_LABEL[section.classificationStatus] ?? section.classificationStatus}
+        </span>
 
         {/* Block count */}
         <span className="shrink-0 text-[10px] text-gray-400 w-8 text-right">
           {section.contentBlocks.length} бл.
         </span>
+
+        {/* Edit button */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
+          className="shrink-0 text-gray-400 hover:text-brand-600"
+          title="Назначить секцию"
+        >
+          <Edit3 size={13} />
+        </button>
 
         {/* Expand indicator */}
         <ChevronDown
@@ -657,6 +934,17 @@ function SectionTreeRow({
           className={`shrink-0 text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}
         />
       </div>
+
+      {/* Classification editor */}
+      {isEditing && (
+        <SectionClassificationEditor
+          section={section}
+          taxonomyOptions={taxonomyOptions}
+          onSave={onSaveClassification}
+          onCancel={onCancelEdit}
+          isPending={classificationPending}
+        />
+      )}
 
       {/* Expanded content */}
       {isExpanded && <ContentBlockPanel blocks={section.contentBlocks} />}
@@ -666,7 +954,7 @@ function SectionTreeRow({
 
 /* ═══════════════ Main Component ═══════════════ */
 
-export default function ParsingTreeViewer({
+export default function ClassificationTreeViewer({
   versionId,
   expectedResults,
 }: {
@@ -678,6 +966,11 @@ export default function ParsingTreeViewer({
     { staleTime: 60_000, refetchOnWindowFocus: false },
   );
 
+  const taxonomyQuery = trpc.document.getTaxonomy.useQuery(undefined, {
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+
   const [sortKey, setSortKey] = useState<SortKey>("order");
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -687,6 +980,8 @@ export default function ParsingTreeViewer({
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
   const [showSource, setShowSource] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const focusedRowRef = useRef<HTMLDivElement>(null);
@@ -694,31 +989,26 @@ export default function ParsingTreeViewer({
   const rawSections = (q.data?.sections ?? []) as Section[];
 
   const anomalies = useMemo(() => detectAnomalies(rawSections), [rawSections]);
-
   const sorted = useMemo(() => sortSections(rawSections, sortKey), [rawSections, sortKey]);
-
   const filtered = useMemo(
     () => filterSections(sorted, filters, anomalies),
     [sorted, filters, anomalies],
   );
-
   const numbering = useMemo(() => buildNumbering(rawSections), [rawSections]);
 
   const visibleIds = useMemo(
     () => (sortKey === "order" ? getVisibleSectionIds(filtered, collapsedIds) : new Set(filtered.map((s) => s.id))),
     [filtered, collapsedIds, sortKey],
   );
-
   const visibleSections = useMemo(
     () => filtered.filter((s) => visibleIds.has(s.id)),
     [filtered, visibleIds],
   );
 
   const diffEntries = useMemo(
-    () => (showDiff ? diffWithExpected(rawSections, expectedResults) : []),
+    () => (showDiff ? diffClassificationWithExpected(rawSections, expectedResults) : []),
     [showDiff, rawSections, expectedResults],
   );
-
   const diffMap = useMemo(() => {
     const m = new Map<string, DiffEntry["type"]>();
     for (const e of diffEntries) {
@@ -733,9 +1023,18 @@ export default function ParsingTreeViewer({
 
   const anomalyCount = anomalies.size;
 
-  // Bulk status update
+  const taxonomyOptions = useMemo(() => {
+    if (!taxonomyQuery.data) return [];
+    return taxonomyQuery.data.map((r: Record<string, unknown>) => ({
+      value: r.pattern as string,
+      label: `${(r.config as Record<string, unknown>).titleRu} (${r.pattern})`,
+      type: (r.config as Record<string, unknown>).type as string,
+    }));
+  }, [taxonomyQuery.data]);
+
+  // Bulk classification status update
   const utils = trpc.useUtils();
-  const bulkStructureMutation = trpc.processing.bulkUpdateSectionStructureStatus.useMutation({
+  const bulkClassificationMutation = trpc.processing.bulkUpdateSectionClassificationStatus.useMutation({
     onSuccess: () => {
       utils.document.getVersion.invalidate({ versionId });
       setSelectedIds(new Set());
@@ -743,14 +1042,33 @@ export default function ParsingTreeViewer({
   });
 
   const bulkUpdate = useCallback(
-    (status: "validated" | "requires_rework", structureComment?: string) => {
-      bulkStructureMutation.mutate({
+    (status: "validated" | "requires_rework", classificationComment?: string) => {
+      bulkClassificationMutation.mutate({
         sectionIds: Array.from(selectedIds),
         status,
-        ...(structureComment ? { structureComment } : {}),
+        ...(classificationComment ? { classificationComment } : {}),
       });
     },
-    [selectedIds, bulkStructureMutation],
+    [selectedIds, bulkClassificationMutation],
+  );
+
+  // Individual classification update
+  const updateClassification = trpc.document.updateSectionClassification.useMutation({
+    onSuccess: () => {
+      utils.document.getVersion.invalidate({ versionId });
+      setEditingSectionId(null);
+    },
+  });
+
+  const handleSaveClassification = useCallback(
+    (sectionId: string, standardSection: string | null) => {
+      updateClassification.mutate({
+        sectionId,
+        standardSection,
+        classificationStatus: "validated",
+      });
+    },
+    [updateClassification],
   );
 
   // Toggle helpers
@@ -875,18 +1193,16 @@ export default function ParsingTreeViewer({
     return () => el.removeEventListener("keydown", handler);
   }, [visibleSections, focusedIdx, expandedIds, collapsedIds, filtered, toggleCollapse, toggleExpand, toggleSelect]);
 
-  // Scroll focused row into view
   useEffect(() => {
     focusedRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [focusedIdx]);
-
 
   /* ── Loading ── */
   if (q.isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 size={20} className="animate-spin text-gray-400" />
-        <span className="ml-2 text-sm text-gray-500">Загрузка структуры документа...</span>
+        <span className="ml-2 text-sm text-gray-500">Загрузка классификации...</span>
       </div>
     );
   }
@@ -911,7 +1227,7 @@ export default function ParsingTreeViewer({
 
   return (
     <div className="space-y-4">
-      <ParsingToolbar
+      <ClassificationToolbar
         sortKey={sortKey}
         onSortChange={setSortKey}
         filters={filters}
@@ -931,11 +1247,12 @@ export default function ParsingTreeViewer({
         hasDiffData={hasDiffData}
         showSource={showSource}
         onToggleSource={() => setShowSource((p) => !p)}
-        bulkPending={bulkStructureMutation.isPending}
+        onShowHelp={() => setShowHelp(true)}
+        bulkPending={bulkClassificationMutation.isPending}
       />
 
       {/* Diff results */}
-      {showDiff && <DiffOverlay entries={diffEntries} />}
+      {showDiff && <ClassificationDiffOverlay entries={diffEntries} />}
 
       {/* Keyboard hint */}
       <div className="flex items-center gap-1 text-[10px] text-gray-400">
@@ -969,9 +1286,15 @@ export default function ParsingTreeViewer({
                   isExpanded={expandedIds.has(s.id)}
                   isSelected={selectedIds.has(s.id)}
                   isFocused={i === focusedIdx}
+                  isEditing={editingSectionId === s.id}
+                  taxonomyOptions={taxonomyOptions}
                   onToggleCollapse={() => toggleCollapse(s.id)}
                   onToggleExpand={() => toggleExpand(s.id)}
                   onToggleSelect={() => toggleSelect(s.id)}
+                  onStartEdit={() => setEditingSectionId(s.id)}
+                  onSaveClassification={(standardSection) => handleSaveClassification(s.id, standardSection)}
+                  onCancelEdit={() => setEditingSectionId(null)}
+                  classificationPending={updateClassification.isPending}
                   rowRef={i === focusedIdx ? focusedRowRef : undefined}
                 />
               ))}
@@ -987,6 +1310,14 @@ export default function ParsingTreeViewer({
           />
         )}
       </div>
+
+      {/* Taxonomy help dialog */}
+      {showHelp && taxonomyQuery.data && (
+        <TaxonomyHelpDialog
+          taxonomy={taxonomyQuery.data as TaxonomyEntry[]}
+          onClose={() => setShowHelp(false)}
+        />
+      )}
     </div>
   );
 }

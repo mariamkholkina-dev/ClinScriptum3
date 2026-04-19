@@ -39,6 +39,10 @@ interface ExtractedFact {
   sources: FactSource[];
   hasContradiction: boolean;
   description: string;
+  llmValue: string;
+  llmConfidence: number;
+  qaValue: string | null;
+  qaConfidence: number;
 }
 
 const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "appendix"];
@@ -283,16 +287,23 @@ function parseLlmExtractionResponse(
           };
         });
 
+        const conf = typeof f.confidence === "number"
+          ? Math.min(Math.max(f.confidence, 0), 1)
+          : 0.5;
+        const val = String(f.value);
+
         return {
           factKey,
           category,
-          value: String(f.value),
-          confidence: typeof f.confidence === "number"
-            ? Math.min(Math.max(f.confidence, 0), 1)
-            : 0.5,
+          value: val,
+          confidence: conf,
           sources,
           hasContradiction: f.has_contradiction === true,
           description: registry?.description ?? "",
+          llmValue: val,
+          llmConfidence: conf,
+          qaValue: null,
+          qaConfidence: 0,
         };
       });
   } catch (err) {
@@ -346,13 +357,21 @@ async function qaCheckFacts(
       const fact = facts.find((f) => `${f.category}.${f.factKey}` === key);
       if (!fact) continue;
 
+      const qaConf = typeof correction.new_confidence === "number"
+        ? Math.min(Math.max(correction.new_confidence, 0), 1)
+        : fact.confidence;
+
       if (correction.correct === false && correction.corrected_value) {
-        fact.value = String(correction.corrected_value);
+        const correctedVal = String(correction.corrected_value);
+        fact.qaValue = correctedVal;
+        fact.qaConfidence = qaConf;
+        fact.value = correctedVal;
+      } else {
+        fact.qaValue = fact.value;
+        fact.qaConfidence = qaConf;
       }
 
-      if (typeof correction.new_confidence === "number") {
-        fact.confidence = Math.min(Math.max(correction.new_confidence, 0), 1);
-      }
+      fact.confidence = qaConf;
     }
   } catch (err) {
     logger.warn("[facts] QA check error", { error: String(err) });
@@ -383,6 +402,10 @@ async function persistFacts(
           sources: fact.sources as any,
           hasContradiction: fact.hasContradiction,
           status: "extracted",
+          llmValue: fact.llmValue,
+          llmConfidence: fact.llmConfidence,
+          qaValue: fact.qaValue,
+          qaConfidence: fact.qaConfidence,
         },
       });
     }

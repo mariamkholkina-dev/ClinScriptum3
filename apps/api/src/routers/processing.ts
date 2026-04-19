@@ -90,6 +90,17 @@ export const processingRouter = router({
       processingService.updateFactValue(ctx.user.tenantId, input.factId, input.manualValue),
     ),
 
+  bulkUpdateFactStatus: p
+    .input(
+      z.object({
+        factIds: z.array(z.string().uuid()).min(1).max(500),
+        status: z.enum(["extracted", "verified", "validated", "deferred", "not_found", "rejected"]),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      processingService.bulkUpdateFactStatus(ctx.user.tenantId, input.factIds, input.status),
+    ),
+
   validateAllFacts: p
     .input(z.object({ docVersionId: z.string().uuid() }))
     .mutation(({ ctx, input }) =>

@@ -68,16 +68,10 @@ class RuleManagementService {
   }
 
   async getActiveVersion(ruleSetId: string) {
-    const version = await prisma.ruleSetVersion.findFirst({
+    return prisma.ruleSetVersion.findFirst({
       where: { ruleSetId, isActive: true },
       include: { rules: { orderBy: { order: "asc" } } },
     });
-
-    if (!version) {
-      throw new DomainError("NOT_FOUND", "No active version found for this rule set");
-    }
-
-    return version;
   }
 
   async createRuleSet(data: { tenantId?: string; name: string; type: RuleSetType }) {
@@ -93,7 +87,7 @@ class RuleManagementService {
     return ruleSet;
   }
 
-  async createVersion(ruleSetId: string, rules: RuleInput[]) {
+  async createVersion(ruleSetId: string, rules: RuleInput[], description?: string) {
     const ruleSet = await prisma.ruleSet.findUnique({ where: { id: ruleSetId } });
     if (!ruleSet) {
       throw new DomainError("NOT_FOUND", "Rule set not found");
@@ -106,12 +100,15 @@ class RuleManagementService {
 
     const nextVersion = (latestVersion?.version ?? 0) + 1;
 
+    const isFirst = !latestVersion;
+
     const version = await prisma.$transaction(async (tx) => {
       const v = await tx.ruleSetVersion.create({
         data: {
           ruleSetId,
           version: nextVersion,
-          isActive: false,
+          description: description ?? null,
+          isActive: isFirst,
         },
       });
 
@@ -142,6 +139,17 @@ class RuleManagementService {
 
     logger.info("Rule set version created", { ruleSetId, version: nextVersion });
     return version!;
+  }
+
+  async updateVersionDescription(versionId: string, description: string) {
+    const version = await prisma.ruleSetVersion.findUnique({ where: { id: versionId } });
+    if (!version) {
+      throw new DomainError("NOT_FOUND", "Version not found");
+    }
+    return prisma.ruleSetVersion.update({
+      where: { id: versionId },
+      data: { description },
+    });
   }
 
   async activateVersion(versionId: string) {
@@ -237,6 +245,35 @@ class RuleManagementService {
     });
   }
 
+  async addRule(versionId: string, data: Partial<RuleInput> & { name: string; pattern: string }) {
+    const version = await prisma.ruleSetVersion.findUnique({
+      where: { id: versionId },
+      include: { _count: { select: { rules: true } } },
+    });
+    if (!version) {
+      throw new DomainError("NOT_FOUND", "Version not found");
+    }
+
+    const rule = await prisma.rule.create({
+      data: {
+        ruleSetVersionId: versionId,
+        name: data.name,
+        pattern: data.pattern,
+        config: data.config ?? {},
+        documentType: data.documentType ?? null,
+        stage: data.stage ?? null,
+        subStage: data.subStage ?? null,
+        promptTemplate: data.promptTemplate ?? null,
+        isEnabled: data.isEnabled ?? true,
+        requiresFacts: data.requiresFacts ?? false,
+        requiresSoa: data.requiresSoa ?? false,
+        order: data.order ?? version._count.rules,
+      },
+    });
+    logger.info("Rule added", { ruleId: rule.id, versionId });
+    return rule;
+  }
+
   async deleteRule(ruleId: string) {
     const rule = await prisma.rule.findUnique({ where: { id: ruleId } });
     if (!rule) {
@@ -245,6 +282,17 @@ class RuleManagementService {
 
     await prisma.rule.delete({ where: { id: ruleId } });
     logger.info("Rule deleted", { ruleId });
+  }
+
+  async getVersion(versionId: string) {
+    const version = await prisma.ruleSetVersion.findUnique({
+      where: { id: versionId },
+      include: { rules: { orderBy: { order: "asc" } } },
+    });
+    if (!version) {
+      throw new DomainError("NOT_FOUND", "Version not found");
+    }
+    return version;
   }
 
   async getVersionHistory(ruleSetId: string) {

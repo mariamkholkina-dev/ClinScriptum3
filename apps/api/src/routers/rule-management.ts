@@ -94,10 +94,22 @@ export const ruleManagementRouter = router({
       z.object({
         ruleSetId: z.string().uuid(),
         rules: z.array(ruleInputSchema),
+        description: z.string().optional(),
       }),
     )
     .mutation(({ input }) =>
-      ruleManagementService.createVersion(input.ruleSetId, input.rules),
+      ruleManagementService.createVersion(input.ruleSetId, input.rules, input.description),
+    ),
+
+  updateVersionDescription: p
+    .input(
+      z.object({
+        versionId: z.string().uuid(),
+        description: z.string(),
+      }),
+    )
+    .mutation(({ input }) =>
+      ruleManagementService.updateVersionDescription(input.versionId, input.description),
     ),
 
   activateVersion: p
@@ -110,6 +122,12 @@ export const ruleManagementRouter = router({
     .input(z.object({ ruleSetId: z.string().uuid() }))
     .mutation(({ input }) =>
       ruleManagementService.rollbackVersion(input.ruleSetId),
+    ),
+
+  getVersion: p
+    .input(z.object({ versionId: z.string().uuid() }))
+    .query(({ input }) =>
+      ruleManagementService.getVersion(input.versionId),
     ),
 
   getVersionHistory: p
@@ -147,6 +165,17 @@ export const ruleManagementRouter = router({
     ),
 
   /* ═══════════════ Individual Rules ═══════════════ */
+
+  addRule: p
+    .input(
+      z.object({
+        versionId: z.string().uuid(),
+        data: ruleInputSchema,
+      }),
+    )
+    .mutation(({ input }) =>
+      ruleManagementService.addRule(input.versionId, input.data),
+    ),
 
   updateRule: p
     .input(

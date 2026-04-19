@@ -21,6 +21,8 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { ParsingTreeViewer } from "./parsing-viewer";
+import { ClassificationTreeViewer } from "./classification-viewer";
+import { ExtractionViewer } from "./extraction-viewer";
 
 /* ═══════════════ Constants ═══════════════ */
 
@@ -745,9 +747,9 @@ function StageDataViewer({ stageKey, versionIds, expectedResults }: { stageKey: 
     case "parsing":
       return <ParsingTreeViewer versionId={vid} expectedResults={expectedResults} />;
     case "classification":
-      return <SectionsViewer versionId={vid} />;
+      return <ClassificationTreeViewer versionId={vid} expectedResults={expectedResults} />;
     case "extraction":
-      return <FactsViewer versionId={vid} />;
+      return <ExtractionViewer versionId={vid} expectedResults={expectedResults} />;
     case "soa":
       return <SoaViewer versionId={vid} />;
     case "intra_audit":
@@ -841,6 +843,8 @@ function StagePanel({
     return "{}";
   });
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const [showExpected, setShowExpected] = useState(true);
+  const [showStageStatus, setShowStageStatus] = useState(false);
 
   const updateMutation = trpc.goldenDataset.updateStageStatus.useMutation({
     onSuccess: () => {
@@ -1005,50 +1009,65 @@ function StagePanel({
   return (
     <div className="space-y-6">
       {/* Stage Status & Actions */}
-      <div className="rounded-lg border border-brand-200 bg-brand-50/50 p-4">
-        <div className="mb-2 flex items-center gap-2">
+      <div className="rounded-lg border border-brand-200 bg-brand-50/50">
+        <button
+          onClick={() => setShowStageStatus((v) => !v)}
+          className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-brand-50/80"
+        >
+          {showStageStatus ? <ChevronDown size={14} className="text-brand-600" /> : <ChevronRight size={14} className="text-brand-600" />}
           <CheckCircle2 size={14} className="text-brand-600" />
           <span className="text-xs font-semibold uppercase tracking-wider text-brand-700">Статус этапа</span>
-        </div>
-        <p className="mb-3 text-xs text-gray-500">
-          Управление статусом готовности этого этапа эталонного образца. Не влияет на статус отдельных секций.
-        </p>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-medium text-gray-600">Текущий:</span>
+          <span className="ml-2">
             {currentStatus === "not_set" ? (
-              <span className="text-sm text-gray-400 italic">Не настроен</span>
+              <span className="text-xs text-gray-400 italic">Не настроен</span>
             ) : (
               <StatusBadge status={currentStatus} />
             )}
+          </span>
+        </button>
+        {showStageStatus && (
+          <div className="border-t border-brand-200 px-4 pb-4 pt-3">
+            <p className="mb-3 text-xs text-gray-500">
+              Управление статусом готовности этого этапа эталонного образца. Не влияет на статус отдельных секций.
+            </p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-gray-600">Текущий:</span>
+                {currentStatus === "not_set" ? (
+                  <span className="text-sm text-gray-400 italic">Не настроен</span>
+                ) : (
+                  <StatusBadge status={currentStatus} />
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {updateMutation.isPending && (
+                  <Loader2 size={16} className="animate-spin text-gray-400" />
+                )}
+                <button
+                  onClick={() => handleStatusChange("draft")}
+                  disabled={updateMutation.isPending || currentStatus === "draft"}
+                  className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  Черновик
+                </button>
+                <button
+                  onClick={() => setShowReviewModal(true)}
+                  disabled={updateMutation.isPending || currentStatus === "in_review"}
+                  className="rounded-md border border-yellow-300 bg-yellow-50 px-3 py-1.5 text-xs font-medium text-yellow-700 hover:bg-yellow-100 disabled:opacity-40"
+                >
+                  На проверку
+                </button>
+                <button
+                  onClick={() => handleStatusChange("approved")}
+                  disabled={updateMutation.isPending || currentStatus === "approved"}
+                  className="rounded-md border border-green-300 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-40"
+                >
+                  Утвердить
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {updateMutation.isPending && (
-              <Loader2 size={16} className="animate-spin text-gray-400" />
-            )}
-            <button
-              onClick={() => handleStatusChange("draft")}
-              disabled={updateMutation.isPending || currentStatus === "draft"}
-              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-            >
-              Черновик
-            </button>
-            <button
-              onClick={() => setShowReviewModal(true)}
-              disabled={updateMutation.isPending || currentStatus === "in_review"}
-              className="rounded-md border border-yellow-300 bg-yellow-50 px-3 py-1.5 text-xs font-medium text-yellow-700 hover:bg-yellow-100 disabled:opacity-40"
-            >
-              На проверку
-            </button>
-            <button
-              onClick={() => handleStatusChange("approved")}
-              disabled={updateMutation.isPending || currentStatus === "approved"}
-              className="rounded-md border border-green-300 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-40"
-            >
-              Утвердить
-            </button>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Review comment display */}
@@ -1086,62 +1105,76 @@ function StagePanel({
       {/* Expected Results */}
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <h4 className="text-sm font-semibold text-gray-700">Ожидаемые результаты</h4>
-          {!isEditing ? (
-            <div className="flex items-center gap-2">
-              {canGenerate && (
-                <button
-                  onClick={generateExpectedJson}
-                  className="flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700"
-                >
-                  <Wand2 size={12} /> Сгенерировать из результатов
-                </button>
+          <button
+            onClick={() => setShowExpected((v) => !v)}
+            className="flex items-center gap-1.5 text-sm font-semibold text-gray-700 hover:text-gray-900"
+          >
+            {showExpected ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            Ожидаемые результаты
+          </button>
+          {showExpected && (
+            <>
+              {!isEditing ? (
+                <div className="flex items-center gap-2">
+                  {canGenerate && (
+                    <button
+                      onClick={generateExpectedJson}
+                      className="flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700"
+                    >
+                      <Wand2 size={12} /> Сгенерировать из результатов
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
+                  >
+                    <Edit3 size={12} /> Редактировать
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setIsEditing(false);
+                      setJsonError(null);
+                      if (stageStatus?.expectedResults) {
+                        setExpectedJson(JSON.stringify(stageStatus.expectedResults, null, 2));
+                      }
+                    }}
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    <X size={12} /> Отмена
+                  </button>
+                  <button
+                    onClick={handleSaveExpected}
+                    disabled={updateMutation.isPending}
+                    className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
+                  >
+                    <Save size={12} /> Сохранить
+                  </button>
+                </div>
               )}
-              <button
-                onClick={() => setIsEditing(true)}
-                className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
-              >
-                <Edit3 size={12} /> Редактировать
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  setIsEditing(false);
-                  setJsonError(null);
-                  if (stageStatus?.expectedResults) {
-                    setExpectedJson(JSON.stringify(stageStatus.expectedResults, null, 2));
-                  }
-                }}
-                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-              >
-                <X size={12} /> Отмена
-              </button>
-              <button
-                onClick={handleSaveExpected}
-                disabled={updateMutation.isPending}
-                className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
-              >
-                <Save size={12} /> Сохранить
-              </button>
-            </div>
+            </>
           )}
         </div>
-        {jsonError && <p className="mb-2 text-xs text-red-600">{jsonError}</p>}
-        {isEditing ? (
-          <textarea
-            value={expectedJson}
-            onChange={(e) => setExpectedJson(e.target.value)}
-            rows={12}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          />
-        ) : (
-          <pre className="max-h-64 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-700">
-            {stageStatus?.expectedResults
-              ? JSON.stringify(stageStatus.expectedResults, null, 2)
-              : "Ожидаемые результаты не определены."}
-          </pre>
+        {showExpected && (
+          <>
+            {jsonError && <p className="mb-2 text-xs text-red-600">{jsonError}</p>}
+            {isEditing ? (
+              <textarea
+                value={expectedJson}
+                onChange={(e) => setExpectedJson(e.target.value)}
+                rows={12}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            ) : (
+              <pre className="max-h-64 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-700">
+                {stageStatus?.expectedResults
+                  ? JSON.stringify(stageStatus.expectedResults, null, 2)
+                  : "Ожидаемые результаты не определены."}
+              </pre>
+            )}
+          </>
         )}
       </div>
     </div>

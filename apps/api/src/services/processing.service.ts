@@ -172,6 +172,21 @@ export const processingService = {
     });
   },
 
+  async bulkUpdateFactStatus(tenantId: string, factIds: string[], status: string) {
+    if (factIds.length === 0) return { count: 0 };
+    const first = await prisma.fact.findUnique({
+      where: { id: factIds[0] },
+      include: { docVersion: { include: { document: { include: { study: true } } } } },
+    });
+    requireTenantResource(first, tenantId, (f) => f.docVersion.document.study.tenantId);
+
+    const result = await prisma.fact.updateMany({
+      where: { id: { in: factIds }, docVersionId: first.docVersionId },
+      data: { status: status as any },
+    });
+    return { count: result.count };
+  },
+
   async validateAllFacts(tenantId: string, docVersionId: string) {
     const version = await prisma.documentVersion.findUnique({
       where: { id: docVersionId },

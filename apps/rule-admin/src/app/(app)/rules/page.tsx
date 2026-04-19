@@ -66,10 +66,17 @@ export default function RulesPage() {
   const [showCreateRuleSet, setShowCreateRuleSet] = useState(false);
   const [newRuleSetName, setNewRuleSetName] = useState("");
   const [newRuleSetType, setNewRuleSetType] = useState("section_classification");
+  const [showAddRule, setShowAddRule] = useState(false);
+  const [newRule, setNewRule] = useState({ name: "", pattern: "", promptTemplate: "", config: "{}" });
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [diffVersionId1, setDiffVersionId1] = useState<string | null>(null);
   const [diffVersionId2, setDiffVersionId2] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
+  const [showNewVersionModal, setShowNewVersionModal] = useState(false);
+  const [newVersionDesc, setNewVersionDesc] = useState("");
+  const [editingDescVersionId, setEditingDescVersionId] = useState<string | null>(null);
+  const [editingDescText, setEditingDescText] = useState("");
+  const [viewingVersionId, setViewingVersionId] = useState<string | null>(null);
 
   const [didAutoSelect, setDidAutoSelect] = useState(false);
   const utils = trpc.useUtils();
@@ -83,7 +90,12 @@ export default function RulesPage() {
 
   const versionHistoryQuery = trpc.ruleManagement.getVersionHistory.useQuery(
     { ruleSetId: selectedRuleSetId! },
-    { enabled: !!selectedRuleSetId && showVersionHistory },
+    { enabled: !!selectedRuleSetId },
+  );
+
+  const viewingVersionQuery = trpc.ruleManagement.getVersion.useQuery(
+    { versionId: viewingVersionId! },
+    { enabled: !!viewingVersionId },
   );
 
   const diffQuery = trpc.ruleManagement.diffVersions.useQuery(
@@ -131,6 +143,23 @@ export default function RulesPage() {
   const deleteRuleMut = trpc.ruleManagement.deleteRule.useMutation({
     onSuccess: () => {
       utils.ruleManagement.getActiveVersion.invalidate();
+    },
+  });
+
+  const addRuleMut = trpc.ruleManagement.addRule.useMutation({
+    onSuccess: () => {
+      utils.ruleManagement.getActiveVersion.invalidate();
+      utils.ruleManagement.getVersion.invalidate();
+      setShowAddRule(false);
+      setNewRule({ name: "", pattern: "", promptTemplate: "", config: "{}" });
+    },
+  });
+
+  const updateDescMut = trpc.ruleManagement.updateVersionDescription.useMutation({
+    onSuccess: () => {
+      utils.ruleManagement.getActiveVersion.invalidate();
+      utils.ruleManagement.getVersionHistory.invalidate();
+      setEditingDescVersionId(null);
     },
   });
 
@@ -197,8 +226,8 @@ export default function RulesPage() {
   }, [expandedRuleId, editState, updateRuleMut]);
 
   const handleCreateNewVersion = useCallback(() => {
-    if (!selectedRuleSetId || !activeVersionQuery.data) return;
-    const rules = activeVersionQuery.data.rules.map((r: any) => ({
+    if (!selectedRuleSetId) return;
+    const rules = (activeVersionQuery.data?.rules ?? []).map((r: any) => ({
       name: r.name,
       pattern: r.pattern,
       config: r.config ?? {},
@@ -211,8 +240,11 @@ export default function RulesPage() {
       requiresSoa: r.requiresSoa,
       order: r.order,
     }));
-    createVersionMut.mutate({ ruleSetId: selectedRuleSetId, rules });
-  }, [selectedRuleSetId, activeVersionQuery.data, createVersionMut]);
+    createVersionMut.mutate(
+      { ruleSetId: selectedRuleSetId, rules, description: newVersionDesc.trim() || undefined },
+      { onSuccess: () => { setShowNewVersionModal(false); setNewVersionDesc(""); } },
+    );
+  }, [selectedRuleSetId, activeVersionQuery.data, createVersionMut, newVersionDesc]);
 
   /* ═══════════════ Grouping ═══════════════ */
 
@@ -328,6 +360,7 @@ export default function RulesPage() {
                     key={rs.id}
                     onClick={() => {
                       setSelectedRuleSetId(rs.id);
+                      setViewingVersionId(null);
                       setExpandedRuleId(null);
                       setEditState(null);
                       setShowVersionHistory(false);
@@ -369,28 +402,85 @@ export default function RulesPage() {
 
           {selectedRuleSetId && activeVersionQuery.isError && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              Не удалось загрузить активную версию. Возможно, у этого набора правил ещё нет активной версии.
+              Не удалось загрузить данные набора правил.
             </div>
           )}
 
-          {selectedRuleSetId && activeVersionQuery.data && (
+          {selectedRuleSetId && !activeVersionQuery.isLoading && !activeVersionQuery.isError && !activeVersionQuery.data && (
+            <div className="rounded-lg border-2 border-dashed border-gray-300 bg-white p-12 text-center">
+              <BookOpen className="mx-auto h-10 w-10 text-gray-300" />
+              <p className="mt-3 text-sm font-medium text-gray-700">У этого набора правил ещё нет версий</p>
+              <p className="mt-1 text-xs text-gray-400">Создайте первую версию, чтобы начать добавлять правила.</p>
+              <button
+                onClick={() => {
+                  if (!selectedRuleSetId) return;
+                  createVersionMut.mutate({ ruleSetId: selectedRuleSetId, rules: [] });
+                }}
+                disabled={createVersionMut.isPending}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {createVersionMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                Создать первую версию
+              </button>
+            </div>
+          )}
+
+          {selectedRuleSetId && (activeVersionQuery.data || viewingVersionQuery.data) && (() => {
+            const displayVersion = viewingVersionId && viewingVersionQuery.data
+              ? viewingVersionQuery.data
+              : activeVersionQuery.data;
+            if (!displayVersion) return null;
+            const isActive = activeVersionQuery.data?.id === displayVersion.id;
+            const versions = versionHistoryQuery.data ?? [];
+            return (
             <div className="space-y-4">
               {/* Version Controls */}
               <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-                <span className="text-sm font-medium text-gray-700">
-                  Версия {activeVersionQuery.data.version}
-                </span>
-                <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Активная</span>
+                <select
+                  value={displayVersion.id}
+                  onChange={(e) => {
+                    const vid = e.target.value;
+                    if (vid === activeVersionQuery.data?.id) {
+                      setViewingVersionId(null);
+                    } else {
+                      setViewingVersionId(vid);
+                    }
+                    setExpandedRuleId(null);
+                    setEditState(null);
+                  }}
+                  className="rounded-lg border border-gray-300 px-2 py-1 text-sm font-bold text-gray-900 focus:border-brand-500 focus:outline-none"
+                >
+                  {versions.map((v: any) => (
+                    <option key={v.id} value={v.id}>
+                      v{v.version}{v.isActive ? " (активная)" : ""}{v.description ? ` — ${v.description}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {isActive ? (
+                  <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Активная</span>
+                ) : (
+                  <button
+                    onClick={() => activateVersionMut.mutate({ versionId: displayVersion.id })}
+                    disabled={activateVersionMut.isPending}
+                    className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-200"
+                  >
+                    {activateVersionMut.isPending ? "..." : "Активировать эту версию"}
+                  </button>
+                )}
                 <span className="text-xs text-gray-400">
-                  {activeVersionQuery.data.rules.length} правил
+                  {displayVersion.rules.length} правил
                 </span>
+                {displayVersion.description && (
+                  <span className="text-xs text-gray-500 italic truncate max-w-xs">
+                    {displayVersion.description}
+                  </span>
+                )}
                 <div className="ml-auto flex items-center gap-2">
                   <button
-                    onClick={handleCreateNewVersion}
-                    disabled={createVersionMut.isPending}
-                    className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    onClick={() => { setNewVersionDesc(""); setShowNewVersionModal(true); }}
+                    className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
                   >
-                    {createVersionMut.isPending ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                    <Plus size={12} />
                     Новая версия
                   </button>
                   <button
@@ -418,42 +508,80 @@ export default function RulesPage() {
                   <h3 className="mb-3 text-sm font-semibold text-gray-900">История версий</h3>
                   <div className="max-h-48 space-y-1 overflow-y-auto">
                     {versionHistoryQuery.data.map((v: any) => (
-                      <div key={v.id} className="flex items-center gap-3 rounded px-3 py-2 text-sm hover:bg-gray-50">
-                        <span className="font-medium text-gray-700">v{v.version}</span>
-                        {v.isActive && <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">Активная</span>}
-                        <span className="text-xs text-gray-400">{v._count.rules} правил</span>
-                        <span className="text-xs text-gray-400">{new Date(v.createdAt).toLocaleDateString()}</span>
-                        <div className="ml-auto flex gap-1">
-                          {!v.isActive && (
+                      <div key={v.id} className="rounded px-3 py-2 text-sm hover:bg-gray-50">
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-gray-700">v{v.version}</span>
+                          {v.isActive && <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">Активная</span>}
+                          <span className="text-xs text-gray-400">{v._count.rules} правил</span>
+                          <span className="text-xs text-gray-400">{new Date(v.createdAt).toLocaleDateString()}</span>
+                          <div className="ml-auto flex gap-1">
+                            {!v.isActive && (
+                              <button
+                                onClick={() => activateVersionMut.mutate({ versionId: v.id })}
+                                className="rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
+                              >
+                                Активировать
+                              </button>
+                            )}
                             <button
-                              onClick={() => activateVersionMut.mutate({ versionId: v.id })}
-                              className="rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
+                              onClick={() => {
+                                if (!diffVersionId1) {
+                                  setDiffVersionId1(v.id);
+                                } else if (!diffVersionId2) {
+                                  setDiffVersionId2(v.id);
+                                  setShowDiff(true);
+                                } else {
+                                  setDiffVersionId1(v.id);
+                                  setDiffVersionId2(null);
+                                  setShowDiff(false);
+                                }
+                              }}
+                              className={`rounded px-2 py-1 text-xs ${
+                                diffVersionId1 === v.id || diffVersionId2 === v.id
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "text-gray-500 hover:bg-gray-100"
+                              }`}
                             >
-                              Активировать
+                              <GitCompare size={12} />
                             </button>
-                          )}
-                          <button
-                            onClick={() => {
-                              if (!diffVersionId1) {
-                                setDiffVersionId1(v.id);
-                              } else if (!diffVersionId2) {
-                                setDiffVersionId2(v.id);
-                                setShowDiff(true);
-                              } else {
-                                setDiffVersionId1(v.id);
-                                setDiffVersionId2(null);
-                                setShowDiff(false);
-                              }
-                            }}
-                            className={`rounded px-2 py-1 text-xs ${
-                              diffVersionId1 === v.id || diffVersionId2 === v.id
-                                ? "bg-amber-50 text-amber-700"
-                                : "text-gray-500 hover:bg-gray-100"
-                            }`}
-                          >
-                            <GitCompare size={12} />
-                          </button>
+                          </div>
                         </div>
+                        {editingDescVersionId === v.id ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editingDescText}
+                              onChange={(e) => setEditingDescText(e.target.value)}
+                              className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:border-brand-500 focus:outline-none"
+                              placeholder="Комментарий к версии..."
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") updateDescMut.mutate({ versionId: v.id, description: editingDescText });
+                                if (e.key === "Escape") setEditingDescVersionId(null);
+                              }}
+                            />
+                            <button
+                              onClick={() => updateDescMut.mutate({ versionId: v.id, description: editingDescText })}
+                              disabled={updateDescMut.isPending}
+                              className="rounded bg-brand-600 px-2 py-1 text-xs text-white hover:bg-brand-700"
+                            >
+                              {updateDescMut.isPending ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
+                            </button>
+                            <button
+                              onClick={() => setEditingDescVersionId(null)}
+                              className="text-gray-400 hover:text-gray-600"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div
+                            className="mt-0.5 cursor-pointer text-xs text-gray-400 italic hover:text-gray-600"
+                            onClick={() => { setEditingDescVersionId(v.id); setEditingDescText(v.description ?? ""); }}
+                          >
+                            {v.description || "Добавить комментарий..."}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -510,9 +638,52 @@ export default function RulesPage() {
                 </div>
               )}
 
+              {/* New Version Modal */}
+              {showNewVersionModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                  <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+                    <div className="mb-4 flex items-center justify-between">
+                      <h2 className="text-lg font-semibold text-gray-900">Создать новую версию</h2>
+                      <button onClick={() => setShowNewVersionModal(false)} className="text-gray-400 hover:text-gray-600">
+                        <X size={20} />
+                      </button>
+                    </div>
+                    <p className="mb-3 text-sm text-gray-500">
+                      Будет создана копия текущей версии (v{displayVersion.version}) с {displayVersion.rules.length} правилами.
+                    </p>
+                    <div className="mb-4">
+                      <label className="mb-1 block text-sm font-medium text-gray-700">Комментарий к версии</label>
+                      <textarea
+                        value={newVersionDesc}
+                        onChange={(e) => setNewVersionDesc(e.target.value)}
+                        rows={3}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        placeholder="Что изменилось в этой версии..."
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => setShowNewVersionModal(false)}
+                        className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Отмена
+                      </button>
+                      <button
+                        onClick={handleCreateNewVersion}
+                        disabled={createVersionMut.isPending}
+                        className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                      >
+                        {createVersionMut.isPending && <Loader2 size={14} className="animate-spin" />}
+                        Создать v{(displayVersion.version) + 1}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Rules List */}
               <div className="space-y-2">
-                {activeVersionQuery.data.rules.map((rule: any) => (
+                {displayVersion.rules.map((rule: any) => (
                   <div
                     key={rule.id}
                     className="rounded-lg border border-gray-200 bg-white shadow-sm"
@@ -684,14 +855,100 @@ export default function RulesPage() {
                   </div>
                 ))}
 
-                {activeVersionQuery.data.rules.length === 0 && (
+                {displayVersion.rules.length === 0 && !showAddRule && (
                   <div className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-400">
                     В этой версии нет правил.
                   </div>
                 )}
+
+                {/* Add Rule */}
+                {showAddRule ? (
+                  <div className="rounded-lg border border-brand-200 bg-brand-50 p-4">
+                    <h4 className="mb-3 text-sm font-semibold text-gray-900">Новое правило</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-gray-600">Название *</label>
+                        <input
+                          type="text"
+                          value={newRule.name}
+                          onChange={(e) => setNewRule({ ...newRule, name: e.target.value })}
+                          className="w-full rounded border border-gray-300 px-2.5 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
+                          placeholder="Название правила"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-gray-600">Шаблон/ключ *</label>
+                        <input
+                          type="text"
+                          value={newRule.pattern}
+                          onChange={(e) => setNewRule({ ...newRule, pattern: e.target.value })}
+                          className="w-full rounded border border-gray-300 px-2.5 py-1.5 font-mono text-sm focus:border-brand-500 focus:outline-none"
+                          placeholder="regex или ключ"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="mb-1 block text-xs font-medium text-gray-600">Шаблон промпта</label>
+                        <textarea
+                          value={newRule.promptTemplate}
+                          onChange={(e) => setNewRule({ ...newRule, promptTemplate: e.target.value })}
+                          rows={3}
+                          className="w-full rounded border border-gray-300 px-2.5 py-1.5 font-mono text-xs focus:border-brand-500 focus:outline-none"
+                          placeholder="Шаблон промпта (необязательно)"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="mb-1 block text-xs font-medium text-gray-600">Конфигурация (JSON)</label>
+                        <textarea
+                          value={newRule.config}
+                          onChange={(e) => setNewRule({ ...newRule, config: e.target.value })}
+                          rows={2}
+                          className="w-full rounded border border-gray-300 px-2.5 py-1.5 font-mono text-xs focus:border-brand-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <button
+                        onClick={() => setShowAddRule(false)}
+                        className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Отмена
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (!newRule.name.trim() || !newRule.pattern.trim()) return;
+                          let parsedConfig = {};
+                          try { parsedConfig = JSON.parse(newRule.config); } catch { /* keep empty */ }
+                          addRuleMut.mutate({
+                            versionId: displayVersion.id,
+                            data: {
+                              name: newRule.name.trim(),
+                              pattern: newRule.pattern.trim(),
+                              config: parsedConfig,
+                              promptTemplate: newRule.promptTemplate.trim() || undefined,
+                            },
+                          });
+                        }}
+                        disabled={addRuleMut.isPending || !newRule.name.trim() || !newRule.pattern.trim()}
+                        className="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                      >
+                        {addRuleMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                        Добавить
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowAddRule(true)}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-200 py-3 text-sm text-gray-400 hover:border-brand-300 hover:text-brand-600"
+                  >
+                    <Plus size={14} />
+                    Добавить правило
+                  </button>
+                )}
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     </div>

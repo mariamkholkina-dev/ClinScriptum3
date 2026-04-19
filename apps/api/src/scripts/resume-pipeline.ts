@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { extractFactsForVersion } from "../lib/fact-extraction.js";
+import { handleExtractFacts } from "../lib/fact-extraction-pipeline.js";
 import { detectSoaForVersion } from "../lib/soa-detection.js";
 
 const versionId = process.argv[2];
@@ -33,12 +33,10 @@ async function main() {
   });
 
   try {
-    await extractFactsForVersion(versionId);
-    await prisma.processingRun.update({ where: { id: factRun.id }, data: { status: "completed" } });
+    await handleExtractFacts({ processingRunId: factRun.id });
     console.log("[resume] Stage 3 complete");
   } catch (err) {
     console.error("[resume] Stage 3 failed:", err);
-    await prisma.processingRun.update({ where: { id: factRun.id }, data: { status: "failed" } }).catch(() => {});
   }
 
   // Stage 4: SOA detection

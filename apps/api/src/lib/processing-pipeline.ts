@@ -23,7 +23,7 @@
 import { prisma, resolveActiveBundle, loadRulesForType, snapshotRules } from "@clinscriptum/db";
 import { storage } from "./storage.js";
 import { llmAsk } from "./llm-gateway.js";
-import { extractFactsForVersion } from "./fact-extraction.js";
+import { handleExtractFacts } from "./fact-extraction-pipeline.js";
 import { detectSoaForVersion } from "./soa-detection.js";
 import { runIntraDocAudit } from "./intra-audit.js";
 import { logger } from "./logger.js";
@@ -97,25 +97,16 @@ export async function runProcessingPipeline(versionId: string) {
           studyId: studyId!,
           docVersionId: versionId,
           type: "fact_extraction",
-          status: "running",
+          status: "queued",
           ruleSetBundleId: bundleId,
         },
       });
 
       try {
-        await extractFactsForVersion(versionId);
-
-        await prisma.processingRun.update({
-          where: { id: factRun.id },
-          data: { status: "completed" },
-        });
+        await handleExtractFacts({ processingRunId: factRun.id });
         logger.info("[pipeline] Stage 3 (fact extraction) complete");
       } catch (factErr) {
         logger.error("[pipeline] Stage 3 (fact extraction) failed", { error: String(factErr) });
-        await prisma.processingRun.update({
-          where: { id: factRun.id },
-          data: { status: "failed" },
-        }).catch(() => {});
       }
     }
 

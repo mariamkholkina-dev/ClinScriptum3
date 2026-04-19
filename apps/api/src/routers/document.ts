@@ -70,6 +70,12 @@ export const documentRouter = router({
       documentService.validateAllClassification(ctx.user.tenantId, input.versionId),
     ),
 
+  validateAllSections: p
+    .input(z.object({ versionId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      documentService.validateAllSections(ctx.user.tenantId, input.versionId),
+    ),
+
   updateSectionClassification: p
     .input(
       z.object({

@@ -185,6 +185,11 @@ export const documentService = {
           order: true,
           structureStatus: true,
           classificationStatus: true,
+          algoSection: true,
+          algoConfidence: true,
+          llmSection: true,
+          llmConfidence: true,
+          classificationComment: true,
           contentBlocks: {
             orderBy: { order: "asc" },
             select: { id: true, type: true, content: true, rawHtml: true, order: true },
@@ -211,6 +216,11 @@ export const documentService = {
       order: number | null;
       structureStatus: string | null;
       classificationStatus: string | null;
+      algoSection: string | null;
+      algoConfidence: number | null;
+      llmSection: string | null;
+      llmConfidence: number | null;
+      classificationComment: string | null;
     };
     type RawBlockRow = {
       id: string;
@@ -226,7 +236,12 @@ export const documentService = {
              s.confidence, s.classified_by AS "classifiedBy",
              s.level, s."order",
              s.structure_status::text AS "structureStatus",
-             s.classification_status::text AS "classificationStatus"
+             s.classification_status::text AS "classificationStatus",
+             s.algo_section AS "algoSection",
+             s.algo_confidence AS "algoConfidence",
+             s.llm_section AS "llmSection",
+             s.llm_confidence AS "llmConfidence",
+             s.classification_comment AS "classificationComment"
       FROM sections s WHERE s.doc_version_id = ${versionId}::uuid
       ORDER BY s."order" ASC
     `;
@@ -260,6 +275,11 @@ export const documentService = {
       order: Number(s.order ?? 0),
       structureStatus: validStatuses.has(s.structureStatus ?? "") ? s.structureStatus : "not_validated",
       classificationStatus: validStatuses.has(s.classificationStatus ?? "") ? s.classificationStatus : "not_validated",
+      algoSection: s.algoSection,
+      algoConfidence: Number(s.algoConfidence ?? 0),
+      llmSection: s.llmSection,
+      llmConfidence: Number(s.llmConfidence ?? 0),
+      classificationComment: s.classificationComment,
       contentBlocks: (blocksBySection.get(s.id) ?? []).map((b) => ({
         id: b.id,
         type: validTypes.has(b.type ?? "") ? b.type : "paragraph",
@@ -294,6 +314,20 @@ export const documentService = {
     await prisma.section.updateMany({
       where: { docVersionId: versionId },
       data: { classificationStatus: "validated" },
+    });
+    return { success: true };
+  },
+
+  async validateAllSections(tenantId: string, versionId: string) {
+    const version = await prisma.documentVersion.findUnique({
+      where: { id: versionId },
+      include: { document: { include: { study: true } } },
+    });
+    requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
+
+    await prisma.section.updateMany({
+      where: { docVersionId: versionId },
+      data: { structureStatus: "validated", classificationStatus: "validated" },
     });
     return { success: true };
   },

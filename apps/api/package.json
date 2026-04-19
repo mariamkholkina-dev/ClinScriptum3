@@ -15,6 +15,7 @@
     "@clinscriptum/db": "*",
     "@clinscriptum/diff-engine": "*",
     "@clinscriptum/llm-gateway": "*",
+    "@clinscriptum/rules-engine": "*",
     "@clinscriptum/shared": "*",
     "@trpc/server": "^11",
     "bcryptjs": "^2",

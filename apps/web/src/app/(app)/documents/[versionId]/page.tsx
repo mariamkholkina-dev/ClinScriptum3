@@ -48,17 +48,7 @@ const VERSION_STATUS_LABELS: Record<string, string> = {
   error: "Ошибка",
 };
 
-const STRUCTURE_STATUS_LABELS: Record<string, string> = {
-  validated: "Структура подтверждена",
-  not_validated: "Структура не проверена",
-  requires_rework: "Структура: доработка",
-};
 
-const CLASSIFICATION_STATUS_LABELS: Record<string, string> = {
-  validated: "Классификация подтверждена",
-  not_validated: "Классификация не проверена",
-  requires_rework: "Классификация: доработка",
-};
 
 const CLASSIFIED_BY_LABELS: Record<string, string> = {
   deterministic: "Детерминированный",
@@ -674,10 +664,7 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const contentPanelRef = useRef<HTMLDivElement | null>(null);
 
-  const validateAllStructure = trpc.document.validateAllStructure.useMutation({
-    onSuccess: onRefetch,
-  });
-  const validateAllClassification = trpc.document.validateAllClassification.useMutation({
+  const validateAllSections = trpc.document.validateAllSections.useMutation({
     onSuccess: onRefetch,
   });
   const updateClassification = trpc.document.updateSectionClassification.useMutation({
@@ -694,13 +681,11 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
     [version.sections]
   );
 
-  const allStructureValidated = version.sections.every((s: any) => s.structureStatus === "validated");
-  const allClassificationValidated = version.sections.every((s: any) => s.classificationStatus === "validated");
-  const unvalidatedStructureCount = version.sections.filter(
-    (s: any) => s.structureStatus !== "validated"
-  ).length;
-  const unvalidatedClassificationCount = version.sections.filter(
-    (s: any) => s.classificationStatus !== "validated"
+  const allValidated = version.sections.every(
+    (s: any) => s.structureStatus === "validated" && s.classificationStatus === "validated"
+  );
+  const unvalidatedCount = version.sections.filter(
+    (s: any) => s.structureStatus !== "validated" || s.classificationStatus !== "validated"
   ).length;
 
   const scrollToSection = (sectionId: string) => {
@@ -736,29 +721,16 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
         {/* Actions */}
         <div className="space-y-2 flex-shrink-0">
           <button
-            onClick={() => validateAllStructure.mutate({ versionId: version.id })}
-            disabled={allStructureValidated || validateAllStructure.isPending}
+            onClick={() => validateAllSections.mutate({ versionId: version.id })}
+            disabled={allValidated || validateAllSections.isPending}
             className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
           >
-            {validateAllStructure.isPending ? (
+            {validateAllSections.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Check className="h-4 w-4" />
             )}
-            Подтвердить структуру
-          </button>
-
-          <button
-            onClick={() => validateAllClassification.mutate({ versionId: version.id })}
-            disabled={allClassificationValidated || validateAllClassification.isPending}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {validateAllClassification.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Check className="h-4 w-4" />
-            )}
-            Подтвердить классификацию
+            Подтвердить все секции
           </button>
 
           {lowConfidenceSections.length > 0 && (
@@ -771,12 +743,12 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
             </button>
           )}
 
-          {(!allStructureValidated || !allClassificationValidated) && (
+          {!allValidated && (
             <p className="text-xs text-gray-500 text-center">
-              Структура: {unvalidatedStructureCount} не подтв. · Классификация: {unvalidatedClassificationCount} не подтв.
+              Не подтверждено: {unvalidatedCount}
             </p>
           )}
-          {allStructureValidated && allClassificationValidated && (
+          {allValidated && (
             <p className="text-xs text-green-600 text-center font-medium">
               Все секции подтверждены
             </p>
@@ -1017,28 +989,22 @@ function SectionHeader({
             </span>
           )}
 
-          {/* Structure status */}
+          {/* Combined validation status */}
           <span
             className={cn(
               "rounded-full px-2 py-0.5 text-xs font-medium",
-              section.structureStatus === "validated" && "bg-green-100 text-green-700",
-              section.structureStatus === "not_validated" && "bg-gray-100 text-gray-600",
-              section.structureStatus === "requires_rework" && "bg-red-100 text-red-700"
+              section.structureStatus === "validated" && section.classificationStatus === "validated"
+                ? "bg-green-100 text-green-700"
+                : section.structureStatus === "requires_rework" || section.classificationStatus === "requires_rework"
+                  ? "bg-red-100 text-red-700"
+                  : "bg-gray-100 text-gray-600"
             )}
           >
-            {STRUCTURE_STATUS_LABELS[section.structureStatus] ?? section.structureStatus}
-          </span>
-
-          {/* Classification status */}
-          <span
-            className={cn(
-              "rounded-full px-2 py-0.5 text-xs font-medium",
-              section.classificationStatus === "validated" && "bg-blue-100 text-blue-700",
-              section.classificationStatus === "not_validated" && "bg-gray-100 text-gray-600",
-              section.classificationStatus === "requires_rework" && "bg-red-100 text-red-700"
-            )}
-          >
-            {CLASSIFICATION_STATUS_LABELS[section.classificationStatus] ?? section.classificationStatus}
+            {section.structureStatus === "requires_rework" || section.classificationStatus === "requires_rework"
+              ? "Требует доработки"
+              : section.structureStatus === "validated" && section.classificationStatus === "validated"
+                ? "Подтверждена"
+                : "Не проверена"}
           </span>
 
           {isLowConf && (

@@ -239,6 +239,12 @@ model Fact {
   sources          Json       @db.JsonB
   hasContradiction Boolean    @default(false) @map("has_contradiction")
   status           FactStatus @default(extracted)
+  deterministicValue      String?  @map("deterministic_value")
+  deterministicConfidence Float    @default(0) @map("deterministic_confidence")
+  llmValue                String?  @map("llm_value")
+  llmConfidence           Float    @default(0) @map("llm_confidence")
+  qaValue                 String?  @map("qa_value")
+  qaConfidence            Float    @default(0) @map("qa_confidence")
 
   docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
 
@@ -511,11 +517,12 @@ enum RuleSetType {
 }
 
 model RuleSetVersion {
-  id        String   @id @default(uuid()) @db.Uuid
-  ruleSetId String   @map("rule_set_id") @db.Uuid
-  version   Int
-  isActive  Boolean  @default(false) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String   @id @default(uuid()) @db.Uuid
+  ruleSetId   String   @map("rule_set_id") @db.Uuid
+  version     Int
+  description String?
+  isActive    Boolean  @default(false) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   ruleSet        RuleSet              @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
   rules          Rule[]
