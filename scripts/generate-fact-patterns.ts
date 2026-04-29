@@ -120,7 +120,8 @@ const CUSTOM_PATTERNS: Record<string, string[]> = {
     "(?:исследуемый\\s+препарат|ИП|investigational\\s+product|study\\s+drug|IP)\\s*[:：\\s—–-]\\s*([^\\n]{3,80})",
   ],
   comparator_name: [
-    "(?:препарат\\s+сравнени|активный\\s+контрол|плацебо|comparator|reference\\s+drug|active\\s+control)\\s*[:：\\s—–-]\\s*([^\\n]{3,80})",
+    "(?:препарат\\s+сравнени\\w*|активн\\w+\\s+контрол\\w*|comparator(?:\\s+drug)?|reference\\s+drug|active\\s+control)\\s*[:：—–-]\\s*([^\\n]{3,80})",
+    "(?:препарат\\s+сравнени\\w*|comparator)\\s*[:：\\s—–-]+\\s*(плацебо|placebo)(?![а-яёА-ЯЁa-zA-Z-])",
   ],
   mechanism_of_action: [
     "(?:механизм\\s+действи|mechanism\\s+of\\s+action)\\s*[:：\\s—–-]\\s*([^\\n]{5,150})",
@@ -228,6 +229,8 @@ const CUSTOM_PATTERNS: Record<string, string[]> = {
 };
 
 async function main() {
+  const forceUpdate = process.argv.includes("--force");
+
   const rules = await prisma.$queryRaw<Array<{ id: string; pattern: string; config: any }>>`
     SELECT r.id, r.pattern, r.config
     FROM rules r
@@ -238,23 +241,26 @@ async function main() {
     ORDER BY (r.config->>'category'), r."order"
   `;
 
-  console.log(`Found ${rules.length} fact rules`);
+  console.log(`Found ${rules.length} fact rules${forceUpdate ? " (force mode)" : ""}`);
   let updated = 0;
   let skipped = 0;
 
   for (const rule of rules) {
     const cfg = rule.config as FactConfig;
 
-    if (cfg.patterns && cfg.patterns.length > 0) {
+    const patterns = CUSTOM_PATTERNS[rule.pattern];
+    if (!patterns || patterns.length === 0) {
+      if (!cfg.patterns || cfg.patterns.length === 0) {
+        console.warn(`No custom patterns for: ${rule.pattern} (${cfg.category})`);
+      }
       skipped++;
       continue;
     }
 
-    const patterns = CUSTOM_PATTERNS[rule.pattern];
-    if (!patterns || patterns.length === 0) {
-      console.warn(`No custom patterns for: ${rule.pattern} (${cfg.category})`);
-      skipped++;
-      continue;
+    if (!forceUpdate && cfg.patterns && cfg.patterns.length > 0) {
+      const same = cfg.patterns.length === patterns.length &&
+        cfg.patterns.every((p: string, i: number) => p === patterns[i]);
+      if (same) { skipped++; continue; }
     }
 
     const newConfig = { ...cfg, patterns };

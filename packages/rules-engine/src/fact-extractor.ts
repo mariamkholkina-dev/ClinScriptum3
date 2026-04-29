@@ -1,5 +1,21 @@
 import type { FactExtractionRule } from "./types.js";
 
+const MAX_VALUE_LENGTH = 120;
+
+function cleanExtractedValue(raw: string): string {
+  let v = raw.replace(/\s+/g, " ").trim();
+  const cutoff = v.search(/[.;]\s/);
+  if (cutoff > 0 && cutoff < v.length - 1) {
+    v = v.slice(0, cutoff).trim();
+  }
+  if (v.length > MAX_VALUE_LENGTH) {
+    const lastSpace = v.lastIndexOf(" ", MAX_VALUE_LENGTH);
+    v = lastSpace > 20 ? v.slice(0, lastSpace).trim() : v.slice(0, MAX_VALUE_LENGTH).trim();
+  }
+  v = v.replace(/[,;:\s]+$/, "");
+  return v;
+}
+
 export interface ExtractedFact {
   factKey: string;
   value: string;
@@ -23,19 +39,22 @@ export class FactExtractor {
 
     for (const rule of this.rules) {
       for (const pattern of rule.patterns) {
-        const re = new RegExp(pattern, "gi");
+        const re = new RegExp(pattern.replace(/\(\?[imsu]+\)/g, ""), "gi");
         let match: RegExpExecArray | null;
         while ((match = re.exec(text)) !== null) {
-          const value = match[1] ?? match[0];
+          const raw = (match[1] ?? match[0]).trim();
+          const value = cleanExtractedValue(raw);
+          if (!value || value.length < 2) continue;
+
           results.push({
             factKey: rule.factKey,
-            value: value.trim(),
+            value,
             factClass: rule.factClass,
             source: {
               sectionTitle,
               textSnippet: text.slice(
-                Math.max(0, (match.index ?? 0) - 30),
-                Math.min(text.length, (match.index ?? 0) + match[0].length + 30)
+                Math.max(0, (match.index ?? 0) - 200),
+                Math.min(text.length, (match.index ?? 0) + match[0].length + 200)
               ),
               method: "regex",
             },
