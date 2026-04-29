@@ -41,22 +41,38 @@ class LocalStorageProvider implements StorageProvider {
 class S3StorageProvider implements StorageProvider {
   private bucket: string;
   private endpoint?: string;
+  private _client: any = null;
 
   constructor() {
     this.bucket = config.storage.s3.bucket;
     this.endpoint = config.storage.s3.endpoint;
   }
 
+  private async getClient() {
+    if (this._client) return this._client;
+    const { S3Client } = await import("@aws-sdk/client-s3");
+    this._client = new S3Client({
+      region: config.storage.s3.region,
+      endpoint: this.endpoint,
+      forcePathStyle: !!this.endpoint,
+      credentials: {
+        accessKeyId: config.storage.s3.accessKeyId,
+        secretAccessKey: config.storage.s3.secretAccessKey,
+      },
+    });
+    return this._client;
+  }
+
   async upload(key: string, data: Buffer): Promise<string> {
-    const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
-    const client = this.getClient(S3Client);
+    const { PutObjectCommand } = await import("@aws-sdk/client-s3");
+    const client = await this.getClient();
     await client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: data }));
     return key;
   }
 
   async download(key: string): Promise<Buffer> {
-    const { S3Client, GetObjectCommand } = await import("@aws-sdk/client-s3");
-    const client = this.getClient(S3Client);
+    const { GetObjectCommand } = await import("@aws-sdk/client-s3");
+    const client = await this.getClient();
     const res = await client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
     const chunks: Uint8Array[] = [];
     for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
@@ -66,26 +82,14 @@ class S3StorageProvider implements StorageProvider {
   }
 
   async delete(key: string): Promise<void> {
-    const { S3Client, DeleteObjectCommand } = await import("@aws-sdk/client-s3");
-    const client = this.getClient(S3Client);
+    const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
+    const client = await this.getClient();
     await client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
   getUrl(key: string): string {
     const base = this.endpoint ?? `https://s3.${config.storage.s3.region}.amazonaws.com`;
     return `${base}/${this.bucket}/${key}`;
-  }
-
-  private getClient(S3Client: any) {
-    return new S3Client({
-      region: config.storage.s3.region,
-      endpoint: this.endpoint,
-      forcePathStyle: !!this.endpoint,
-      credentials: {
-        accessKeyId: config.storage.s3.accessKeyId,
-        secretAccessKey: config.storage.s3.secretAccessKey,
-      },
-    });
   }
 }
 

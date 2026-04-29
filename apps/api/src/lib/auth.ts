@@ -38,27 +38,38 @@ export async function createRefreshToken(userId: string): Promise<string> {
 }
 
 export async function rotateRefreshToken(oldToken: string) {
-  const existing = await prisma.refreshToken.findUnique({
-    where: { token: oldToken },
-    include: { user: true },
-  });
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.refreshToken.findUnique({
+      where: { token: oldToken },
+      include: { user: true },
+    });
 
-  if (!existing || existing.expiresAt < new Date()) {
-    if (existing) {
-      await prisma.refreshToken.deleteMany({ where: { userId: existing.userId } });
+    if (!existing || existing.expiresAt < new Date()) {
+      if (existing) {
+        await tx.refreshToken.deleteMany({ where: { userId: existing.userId } });
+      }
+      return null;
     }
-    return null;
-  }
 
-  await prisma.refreshToken.delete({ where: { id: existing.id } });
+    const deleted = await tx.refreshToken.deleteMany({
+      where: { id: existing.id },
+    });
+    if (deleted.count === 0) return null;
 
-  const newToken = await createRefreshToken(existing.userId);
+    const newTokenValue = randomUUID();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + config.refreshTokenExpiresInDays);
 
-  const accessToken = signAccessToken({
-    userId: existing.userId,
-    tenantId: existing.user.tenantId,
-    role: existing.user.role,
+    await tx.refreshToken.create({
+      data: { userId: existing.userId, token: newTokenValue, expiresAt },
+    });
+
+    const accessToken = signAccessToken({
+      userId: existing.userId,
+      tenantId: existing.user.tenantId,
+      role: existing.user.role,
+    });
+
+    return { accessToken, refreshToken: newTokenValue };
   });
-
-  return { accessToken, refreshToken: newToken };
 }

@@ -1,36 +1,65 @@
 import type { Request, Response, NextFunction } from "express";
+import { Redis } from "ioredis";
 
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
+const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
+});
 
-const store = new Map<string, RateLimitEntry>();
+let redisReady = false;
+redis.connect().then(() => { redisReady = true; }).catch(() => {});
 
 const WINDOW_MS = 60_000;
 const MAX_REQUESTS = 100;
 const LLM_MAX_REQUESTS = 20;
 
-export function rateLimiter(maxRequests = MAX_REQUESTS) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const key = req.ip ?? "unknown";
-    const now = Date.now();
+function getRateLimitKey(req: Request): string {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(authHeader.slice(7).split(".")[1], "base64url").toString(),
+      );
+      if (payload.userId) return `rl:user:${payload.userId}`;
+    } catch {
+      // fall through to IP-based key
+    }
+  }
+  return `rl:ip:${req.ip ?? "unknown"}`;
+}
 
-    let entry = store.get(key);
-    if (!entry || entry.resetAt < now) {
-      entry = { count: 0, resetAt: now + WINDOW_MS };
-      store.set(key, entry);
+export function rateLimiter(maxRequests = MAX_REQUESTS) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!redisReady) {
+      next();
+      return;
     }
 
-    entry.count++;
+    const key = getRateLimitKey(req);
+    const now = Date.now();
+    const windowStart = now - WINDOW_MS;
 
-    res.setHeader("X-RateLimit-Limit", maxRequests);
-    res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - entry.count));
-    res.setHeader("X-RateLimit-Reset", entry.resetAt);
+    try {
+      const results = await redis
+        .multi()
+        .zremrangebyscore(key, 0, windowStart)
+        .zadd(key, now, `${now}:${Math.random().toString(36).slice(2, 8)}`)
+        .zcard(key)
+        .pexpire(key, WINDOW_MS)
+        .exec();
 
-    if (entry.count > maxRequests) {
-      res.status(429).json({ error: "Too many requests" });
-      return;
+      const count = (results?.[2]?.[1] as number) ?? 0;
+
+      res.setHeader("X-RateLimit-Limit", maxRequests);
+      res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - count));
+      res.setHeader("X-RateLimit-Reset", now + WINDOW_MS);
+
+      if (count > maxRequests) {
+        res.status(429).json({ error: "Too many requests" });
+        return;
+      }
+    } catch {
+      // Redis error — fail open
     }
 
     next();
