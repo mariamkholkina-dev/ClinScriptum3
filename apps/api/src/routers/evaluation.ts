@@ -34,8 +34,8 @@ export const evaluationRouter = router({
 
   getRun: p
     .input(z.object({ id: z.string().uuid() }))
-    .query(({ input }) =>
-      evaluationService.getRun(input.id),
+    .query(({ ctx, input }) =>
+      evaluationService.getRun(input.id, ctx.user.tenantId),
     ),
 
   listRuns: p
@@ -51,8 +51,8 @@ export const evaluationRouter = router({
 
   deleteRun: p
     .input(z.object({ id: z.string().uuid() }))
-    .mutation(({ input }) =>
-      evaluationService.deleteRun(input.id),
+    .mutation(({ ctx, input }) =>
+      evaluationService.deleteRun(input.id, ctx.user.tenantId),
     ),
 
   /* ═══════════════ Results & Comparison ═══════════════ */
@@ -65,8 +65,8 @@ export const evaluationRouter = router({
         status: resultStatusEnum.optional(),
       }),
     )
-    .query(({ input }) =>
-      evaluationService.getRunResults(input.evaluationRunId, {
+    .query(({ ctx, input }) =>
+      evaluationService.getRunResults(input.evaluationRunId, ctx.user.tenantId, {
         stage: input.stage,
         status: input.status,
       }),
@@ -74,8 +74,8 @@ export const evaluationRouter = router({
 
   getRunMetrics: p
     .input(z.object({ evaluationRunId: z.string().uuid() }))
-    .query(({ input }) =>
-      evaluationService.getRunMetrics(input.evaluationRunId),
+    .query(({ ctx, input }) =>
+      evaluationService.getRunMetrics(input.evaluationRunId, ctx.user.tenantId),
     ),
 
   compareRuns: p
@@ -85,7 +85,7 @@ export const evaluationRouter = router({
         runId2: z.string().uuid(),
       }),
     )
-    .query(({ input }) =>
-      evaluationService.compareRuns(input.runId1, input.runId2),
+    .query(({ ctx, input }) =>
+      evaluationService.compareRuns(input.runId1, input.runId2, ctx.user.tenantId),
     ),
 });

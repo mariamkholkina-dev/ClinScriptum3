@@ -52,7 +52,7 @@ export const processingService = {
   },
 
   async listAllRuns(tenantId: string, opts: { limit: number; cursor?: string; type?: string; status?: string }) {
-    const where: any = { study: { tenantId } };
+    const where: Record<string, unknown> = { study: { tenantId } };
     if (opts.type) where.type = opts.type;
     if (opts.status) where.status = opts.status;
     if (opts.cursor) where.createdAt = { lt: (await prisma.processingRun.findUnique({ where: { id: opts.cursor }, select: { createdAt: true } }))?.createdAt };
@@ -91,10 +91,165 @@ export const processingService = {
     });
     requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
 
-    return prisma.fact.findMany({
+    const facts = await prisma.fact.findMany({
       where: { docVersionId },
       orderBy: { factKey: "asc" },
     });
+
+    return facts.map((f) => ({
+      ...f,
+      sources: Array.isArray(f.sources)
+        ? (f.sources as Record<string, unknown>[]).map((s) => ({
+            sectionTitle: s.sectionTitle ?? "",
+            text: s.text ?? s.textSnippet ?? "",
+            isSynopsis: s.isSynopsis ?? false,
+          }))
+        : [],
+      variants: Array.isArray(f.variants) ? f.variants : [],
+    }));
+  },
+
+  async listFactsGrouped(tenantId: string, docVersionId: string) {
+    const version = await prisma.documentVersion.findUnique({
+      where: { id: docVersionId },
+      include: { document: { include: { study: true } } },
+    });
+    requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
+
+    const facts = await prisma.fact.findMany({
+      where: { docVersionId },
+      orderBy: { factKey: "asc" },
+    });
+
+    const registry = loadFactRegistry();
+    const registryMap = new Map(registry.map((r) => [r.factKey, r]));
+
+    const grouped = new Map<string, typeof facts>();
+    for (const f of facts) {
+      const arr = grouped.get(f.factKey) ?? [];
+      arr.push(f);
+      grouped.set(f.factKey, arr);
+    }
+
+    const result: Array<{
+      factKey: string;
+      factCategory: string;
+      description: string;
+      valueType: string;
+      deterministicValue: string | null;
+      deterministicConfidence: number;
+      llmValue: string | null;
+      llmConfidence: number;
+      qaValue: string | null;
+      qaConfidence: number;
+      finalValue: string | null;
+      finalConfidence: number;
+      manualValue: string | null;
+      status: string;
+      hasContradiction: boolean;
+      isFromRegistry: boolean;
+      factIds: string[];
+      factClass: string;
+      variants: unknown[];
+      sources: Array<{ sectionTitle: string; text: string; isSynopsis: boolean }>;
+    }> = [];
+
+    const seenKeys = new Set<string>();
+
+    for (const [factKey, rows] of grouped) {
+      seenKeys.add(factKey);
+      const primary = rows[0];
+      const regEntry = registryMap.get(factKey);
+
+      const allVariants: unknown[] = [];
+      const allSources: Array<{ sectionTitle: string; text: string; isSynopsis: boolean }> = [];
+      for (const r of rows) {
+        if (Array.isArray(r.variants)) allVariants.push(...(r.variants as unknown[]));
+        if (Array.isArray(r.sources)) {
+          for (const s of r.sources as Record<string, unknown>[]) {
+            allSources.push({
+              sectionTitle: (s.sectionTitle ?? "") as string,
+              text: (s.text ?? s.textSnippet ?? "") as string,
+              isSynopsis: (s.isSynopsis ?? false) as boolean,
+            });
+          }
+        }
+      }
+
+      const bestDeterministic = rows.reduce<{ val: string | null; conf: number }>((best, r) => {
+        if (r.deterministicValue && r.deterministicConfidence > best.conf) return { val: r.deterministicValue, conf: r.deterministicConfidence };
+        return best;
+      }, { val: primary.deterministicValue, conf: primary.deterministicConfidence });
+
+      const bestLlm = rows.reduce<{ val: string | null; conf: number }>((best, r) => {
+        if (r.llmValue && r.llmConfidence > best.conf) return { val: r.llmValue, conf: r.llmConfidence };
+        return best;
+      }, { val: primary.llmValue, conf: primary.llmConfidence });
+
+      const bestQa = rows.reduce<{ val: string | null; conf: number }>((best, r) => {
+        if (r.qaValue && r.qaConfidence > best.conf) return { val: r.qaValue, conf: r.qaConfidence };
+        return best;
+      }, { val: primary.qaValue, conf: primary.qaConfidence });
+
+      const manualVal = rows.find((r) => r.manualValue)?.manualValue ?? null;
+      const finalValue = manualVal ?? bestQa.val ?? bestLlm.val ?? bestDeterministic.val ?? primary.value;
+      const finalConf = manualVal ? 1.0
+        : bestQa.val ? bestQa.conf
+        : bestLlm.val ? bestLlm.conf
+        : bestDeterministic.val ? bestDeterministic.conf
+        : primary.confidence;
+
+      result.push({
+        factKey,
+        factCategory: primary.factCategory,
+        description: regEntry?.description ?? primary.description ?? "",
+        valueType: regEntry?.valueType ?? "string",
+        deterministicValue: bestDeterministic.val,
+        deterministicConfidence: bestDeterministic.conf,
+        llmValue: bestLlm.val,
+        llmConfidence: bestLlm.conf,
+        qaValue: bestQa.val,
+        qaConfidence: bestQa.conf,
+        finalValue,
+        finalConfidence: finalConf,
+        manualValue: manualVal,
+        status: primary.status,
+        hasContradiction: rows.some((r) => r.hasContradiction),
+        isFromRegistry: !!regEntry,
+        factIds: rows.map((r) => r.id),
+        factClass: primary.factClass,
+        variants: allVariants,
+        sources: allSources,
+      });
+    }
+
+    for (const reg of registry) {
+      if (seenKeys.has(reg.factKey)) continue;
+      result.push({
+        factKey: reg.factKey,
+        factCategory: reg.category,
+        description: reg.description,
+        valueType: reg.valueType,
+        deterministicValue: null,
+        deterministicConfidence: 0,
+        llmValue: null,
+        llmConfidence: 0,
+        qaValue: null,
+        qaConfidence: 0,
+        finalValue: null,
+        finalConfidence: 0,
+        manualValue: null,
+        status: "not_found",
+        hasContradiction: false,
+        isFromRegistry: true,
+        factIds: [],
+        factClass: "general",
+        variants: [],
+        sources: [],
+      });
+    }
+
+    return result;
   },
 
   async listFindings(tenantId: string, docVersionId: string) {
@@ -207,14 +362,12 @@ export const processingService = {
 
   async bulkUpdateFactStatus(tenantId: string, factIds: string[], status: string) {
     if (factIds.length === 0) return { count: 0 };
-    const first = await prisma.fact.findUnique({
-      where: { id: factIds[0] },
-      include: { docVersion: { include: { document: { include: { study: true } } } } },
-    });
-    requireTenantResource(first, tenantId, (f) => f.docVersion.document.study.tenantId);
 
     const result = await prisma.fact.updateMany({
-      where: { id: { in: factIds }, docVersionId: first.docVersionId },
+      where: {
+        id: { in: factIds },
+        docVersion: { document: { study: { tenantId } } },
+      },
       data: { status: status as any },
     });
     return { count: result.count };
@@ -283,19 +436,23 @@ export const processingService = {
       orderBy: { createdAt: "asc" },
     });
 
-    return Promise.all(
-      tables.map(async (table) => {
-        let sourceHtml: string | null = null;
-        if (table.sourceBlockId) {
-          const block = await prisma.contentBlock.findUnique({
-            where: { id: table.sourceBlockId },
-            select: { rawHtml: true },
-          });
-          sourceHtml = block?.rawHtml ?? null;
-        }
-        return { ...table, sourceHtml };
-      }),
-    );
+    const sourceBlockIds = tables
+      .map((t) => t.sourceBlockId)
+      .filter((id): id is string => id != null);
+
+    const sourceBlocks = sourceBlockIds.length > 0
+      ? await prisma.contentBlock.findMany({
+          where: { id: { in: sourceBlockIds } },
+          select: { id: true, rawHtml: true },
+        })
+      : [];
+
+    const blockMap = new Map(sourceBlocks.map((b) => [b.id, b.rawHtml]));
+
+    return tables.map((table) => ({
+      ...table,
+      sourceHtml: table.sourceBlockId ? blockMap.get(table.sourceBlockId) ?? null : null,
+    }));
   },
 
   async updateSoaCell(tenantId: string, cellId: string, manualValue: string) {
@@ -325,6 +482,61 @@ export const processingService = {
     return prisma.soaTable.update({
       where: { id: soaTableId },
       data: { status: "validated" },
+    });
+  },
+
+  async setSoaTableStatus(
+    tenantId: string,
+    soaTableId: string,
+    status: "detected" | "validated" | "not_soa",
+  ) {
+    const table = await prisma.soaTable.findUnique({
+      where: { id: soaTableId },
+      include: { docVersion: { include: { document: { include: { study: true } } } } },
+    });
+    requireTenantResource(table, tenantId, (t) => t.docVersion.document.study.tenantId);
+
+    return prisma.soaTable.update({
+      where: { id: soaTableId },
+      data: { status },
+    });
+  },
+
+  async updateSoaCellFootnoteRefs(
+    tenantId: string,
+    cellId: string,
+    footnoteRefs: number[],
+  ) {
+    const cell = await prisma.soaCell.findUnique({
+      where: { id: cellId },
+      include: {
+        soaTable: {
+          include: { docVersion: { include: { document: { include: { study: true } } } } },
+        },
+      },
+    });
+    requireTenantResource(cell, tenantId, (c) => c.soaTable.docVersion.document.study.tenantId);
+
+    return prisma.soaCell.update({
+      where: { id: cellId },
+      data: { footnoteRefs },
+    });
+  },
+
+  async updateSoaTableFootnotes(
+    tenantId: string,
+    soaTableId: string,
+    footnotes: string[],
+  ) {
+    const table = await prisma.soaTable.findUnique({
+      where: { id: soaTableId },
+      include: { docVersion: { include: { document: { include: { study: true } } } } },
+    });
+    requireTenantResource(table, tenantId, (t) => t.docVersion.document.study.tenantId);
+
+    return prisma.soaTable.update({
+      where: { id: soaTableId },
+      data: { footnotes },
     });
   },
 

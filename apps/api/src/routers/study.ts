@@ -45,4 +45,31 @@ export const studyRouter = router({
   delete: p
     .input(z.object({ id: z.string().uuid() }))
     .mutation(({ ctx, input }) => studyService.delete(ctx.user.tenantId, input.id)),
+
+  getSettings: p
+    .input(z.object({ studyId: z.string().uuid() }))
+    .query(({ ctx, input }) => studyService.getSettings(ctx.user.tenantId, input.studyId)),
+
+  updateSettings: p
+    .input(
+      z.object({
+        studyId: z.string().uuid(),
+        operatorReviewEnabled: z.boolean().optional(),
+        llmThinkingEnabled: z.boolean().optional(),
+        excludedSectionPrefixes: z.array(z.string()).optional(),
+        auditMode: z.enum(["auto", "single_call", "zone_based"]).optional(),
+        crossCheckPairs: z.array(z.tuple([z.string(), z.string()])).nullable().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      const { studyId, ...data } = input;
+      return studyService.updateSettings(ctx.user.tenantId, studyId, data);
+    }),
+
+  getGlobalConfig: p
+    .query(({ ctx }) => studyService.getGlobalConfig(ctx.user.tenantId)),
+
+  updateGlobalConfig: p
+    .input(z.object({ excludedSectionPrefixes: z.array(z.string()) }))
+    .mutation(({ ctx, input }) => studyService.updateGlobalConfig(ctx.user.tenantId, input)),
 });

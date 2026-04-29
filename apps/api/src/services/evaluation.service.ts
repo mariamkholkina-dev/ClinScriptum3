@@ -33,7 +33,7 @@ export const evaluationService = {
     });
   },
 
-  async getRun(id: string) {
+  async getRun(id: string, tenantId: string) {
     const run = await prisma.evaluationRun.findUnique({
       where: { id },
       include: {
@@ -49,7 +49,7 @@ export const evaluationService = {
         comparedToRun: { select: { id: true, name: true, status: true } },
       },
     });
-    if (!run) {
+    if (!run || run.tenantId !== tenantId) {
       throw new DomainError("NOT_FOUND", "Evaluation run not found");
     }
     return run;
@@ -155,12 +155,13 @@ export const evaluationService = {
 
   async getRunResults(
     evaluationRunId: string,
+    tenantId: string,
     filters?: { stage?: string; status?: string },
   ) {
     const run = await prisma.evaluationRun.findUnique({
       where: { id: evaluationRunId },
     });
-    if (!run) {
+    if (!run || run.tenantId !== tenantId) {
       throw new DomainError("NOT_FOUND", "Evaluation run not found");
     }
 
@@ -177,13 +178,13 @@ export const evaluationService = {
     });
   },
 
-  async compareRuns(runId1: string, runId2: string) {
+  async compareRuns(runId1: string, runId2: string, tenantId: string) {
     const [run1, run2] = await Promise.all([
       prisma.evaluationRun.findUnique({ where: { id: runId1 } }),
       prisma.evaluationRun.findUnique({ where: { id: runId2 } }),
     ]);
-    if (!run1) throw new DomainError("NOT_FOUND", "First evaluation run not found");
-    if (!run2) throw new DomainError("NOT_FOUND", "Second evaluation run not found");
+    if (!run1 || run1.tenantId !== tenantId) throw new DomainError("NOT_FOUND", "First evaluation run not found");
+    if (!run2 || run2.tenantId !== tenantId) throw new DomainError("NOT_FOUND", "Second evaluation run not found");
 
     const [results1, results2] = await Promise.all([
       prisma.evaluationResult.findMany({ where: { evaluationRunId: runId1 } }),
@@ -230,11 +231,11 @@ export const evaluationService = {
     };
   },
 
-  async getRunMetrics(evaluationRunId: string) {
+  async getRunMetrics(evaluationRunId: string, tenantId: string) {
     const run = await prisma.evaluationRun.findUnique({
       where: { id: evaluationRunId },
     });
-    if (!run) {
+    if (!run || run.tenantId !== tenantId) {
       throw new DomainError("NOT_FOUND", "Evaluation run not found");
     }
 
@@ -260,9 +261,9 @@ export const evaluationService = {
     };
   },
 
-  async deleteRun(id: string) {
+  async deleteRun(id: string, tenantId: string) {
     const run = await prisma.evaluationRun.findUnique({ where: { id } });
-    if (!run) {
+    if (!run || run.tenantId !== tenantId) {
       throw new DomainError("NOT_FOUND", "Evaluation run not found");
     }
 
