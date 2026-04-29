@@ -1,0 +1,631 @@
+/**
+ * Shared fact extraction core logic.
+ * Used by both the API in-process pipeline and the BullMQ worker pipeline.
+ *
+ * Three levels:
+ *   1. Deterministic — regex rules from rules-engine
+ *   2. LLM Check    — per-section discovery extraction
+ *   3. LLM QA       — arbitration for low-confidence and disagreements
+ */
+
+import { prisma, loadRulesForType, snapshotRules, getEffectiveLlmConfig, toConfigSnapshot, getInputBudgetChars } from "@clinscriptum/db";
+import { RulesEngine, detectContradictions, toFactExtractionRules } from "@clinscriptum/rules-engine";
+import { LLMGateway } from "@clinscriptum/llm-gateway";
+import type { LLMProvider } from "@clinscriptum/llm-gateway";
+
+export const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "appendix", "ip.preclinical_data"];
+export const LOW_CONFIDENCE_THRESHOLD = 0.6;
+const LLM_CONCURRENCY = 3;
+const MAX_RETRIES = 2;
+
+export interface FactExtractionContext {
+  docVersionId: string;
+  tenantId: string;
+  bundleId: string | null;
+  llmThinkingEnabled?: boolean;
+  excludedSectionPrefixes?: string[];
+}
+
+export interface FactExtractionResult {
+  data: Record<string, unknown>;
+  llmConfigSnapshot?: Record<string, unknown>;
+  ruleSnapshot?: Record<string, unknown>;
+}
+
+export interface Logger {
+  info(msg: string, meta?: Record<string, unknown>): void;
+  warn(msg: string, meta?: Record<string, unknown>): void;
+  error(msg: string, meta?: Record<string, unknown>): void;
+}
+
+export interface FactVariant {
+  value: string;
+  confidence: number;
+  level: "deterministic" | "llm_check" | "llm_qa";
+  sourceText: string;
+  sectionTitle: string;
+  sectionId?: string;
+}
+
+interface SectionForExtraction {
+  id: string;
+  title: string;
+  standardSection: string | null;
+  level: number;
+  text: string;
+}
+
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const i = nextIndex++;
+      results[i] = await tasks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
+  return results;
+}
+
+function buildExtractableSections(
+  sections: Array<{ id: string; title: string; standardSection: string | null; level: number; contentBlocks: Array<{ content: string }> }>,
+  prefixes: string[] = EXCLUDED_SECTION_PREFIXES,
+): SectionForExtraction[] {
+  return sections
+    .filter((s) => !s.standardSection || !prefixes.some((p) => s.standardSection!.startsWith(p)))
+    .map((s) => ({
+      id: s.id,
+      title: s.title,
+      standardSection: s.standardSection,
+      level: s.level,
+      text: s.contentBlocks.map((b) => b.content).join("\n"),
+    }))
+    .filter((s) => s.text.length > 30);
+}
+
+function groupRelatedSections(
+  sections: SectionForExtraction[],
+  budget: number,
+): SectionForExtraction[][] {
+  const groups: SectionForExtraction[][] = [];
+  let i = 0;
+  while (i < sections.length) {
+    const parent = sections[i];
+    const group = [parent];
+    let groupLen = parent.text.length;
+    let j = i + 1;
+    while (j < sections.length && sections[j].level > parent.level) {
+      const child = sections[j];
+      if (groupLen + child.text.length > budget) break;
+      group.push(child);
+      groupLen += child.text.length;
+      j++;
+    }
+    groups.push(group);
+    i = j;
+  }
+  return groups;
+}
+
+function parseLlmJsonArray(raw: string): unknown[] | null {
+  const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  if (/не могу обсуждать|давайте поговорим|не могу помочь с этим/i.test(cleaned)) return null;
+  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (arrayMatch) {
+    try { return JSON.parse(arrayMatch[0]); } catch { /* fall through */ }
+  }
+  const objMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (!objMatch) return null;
+  try {
+    const obj = JSON.parse(objMatch[0]);
+    if (Array.isArray(obj.facts)) return obj.facts;
+    if (Array.isArray(obj.new_facts)) return obj.new_facts;
+    if (Array.isArray(obj.results)) return obj.results;
+    if (obj.fact_key) return [obj];
+    return null;
+  } catch { return null; }
+}
+
+/* ═══════════════ Level 1: Deterministic ═══════════════ */
+
+export async function runDeterministic(
+  ctx: FactExtractionContext,
+): Promise<FactExtractionResult> {
+  const sections = await prisma.section.findMany({
+    where: { docVersionId: ctx.docVersionId },
+    include: { contentBlocks: { orderBy: { order: "asc" } } },
+    orderBy: { order: "asc" },
+  });
+
+  const resolved = await loadRulesForType(ctx.bundleId, "fact_extraction");
+  const engine = resolved
+    ? new RulesEngine({ factExtractions: toFactExtractionRules(resolved.rules) })
+    : new RulesEngine();
+  const extractor = engine.getFactExtractor();
+
+  const prefixes = ctx.excludedSectionPrefixes ?? EXCLUDED_SECTION_PREFIXES;
+  const sectionData = sections
+    .filter((s) => !s.standardSection || !prefixes.some((p) => s.standardSection!.startsWith(p)))
+    .map((s) => ({
+      title: s.title,
+      content: s.contentBlocks.map((b) => b.content).join("\n"),
+      isSynopsis: s.standardSection === "synopsis",
+    }));
+
+  const extracted = extractor.extractFromSections(sectionData);
+  const contradictions = detectContradictions(extracted);
+
+  const groupedByKey = new Map<string, typeof extracted>();
+  for (const fact of extracted) {
+    const arr = groupedByKey.get(fact.factKey) ?? [];
+    arr.push(fact);
+    groupedByKey.set(fact.factKey, arr);
+  }
+
+  for (const [factKey, facts] of groupedByKey) {
+    const hasContradiction = contradictions.some((c) => c.factKey === factKey);
+    const best = facts[0];
+    const variants: FactVariant[] = facts.map((f) => ({
+      value: f.value,
+      confidence: 1.0,
+      level: "deterministic" as const,
+      sourceText: f.source.textSnippet ?? "",
+      sectionTitle: f.source.sectionTitle ?? "",
+    }));
+    const sources = facts.map((f) => f.source);
+    await prisma.fact.create({
+      data: {
+        docVersionId: ctx.docVersionId,
+        factKey,
+        factCategory: "general",
+        value: best.value,
+        confidence: 1.0,
+        factClass: best.factClass,
+        sources: sources as any,
+        hasContradiction,
+        status: "extracted",
+        deterministicValue: best.value,
+        deterministicConfidence: 1.0,
+        variants: variants as any,
+      },
+    });
+  }
+
+  return {
+    data: {
+      totalExtracted: extracted.length,
+      uniqueFactKeys: groupedByKey.size,
+      contradictions: contradictions.length,
+      factKeys: [...groupedByKey.keys()],
+    },
+    ruleSnapshot: snapshotRules(resolved?.rules, {
+      ruleSetVersionId: resolved?.ruleSetVersionId,
+      ruleSetType: "fact_extraction",
+    }),
+  };
+}
+
+/* ═══════════════ Level 2: LLM Check (per-section discovery) ═══════════════ */
+
+export async function runLlmCheck(
+  ctx: FactExtractionContext,
+  log: Logger,
+): Promise<FactExtractionResult> {
+  const llmConfig = await getEffectiveLlmConfig("fact_extraction", ctx.tenantId);
+  if (!llmConfig.apiKey) {
+    return { data: { message: "LLM API key not configured" } };
+  }
+
+  const sections = await prisma.section.findMany({
+    where: { docVersionId: ctx.docVersionId },
+    include: { contentBlocks: { orderBy: { order: "asc" } } },
+    orderBy: { order: "asc" },
+  });
+
+  const extractable = buildExtractableSections(sections, ctx.excludedSectionPrefixes ?? EXCLUDED_SECTION_PREFIXES);
+  if (extractable.length === 0) {
+    return { data: { message: "No extractable sections", extracted: 0 } };
+  }
+
+  const resolved = await loadRulesForType(ctx.bundleId, "fact_extraction");
+  const registryRules = resolved?.rules ?? [];
+  const registryList = registryRules
+    .filter((r) => r.pattern !== "system_prompt")
+    .map((r) => {
+      const cfg = (r.config ?? {}) as Record<string, unknown>;
+      const desc = (cfg.description as string) ?? r.name;
+      const valueType = (cfg.valueType as string) ?? "string";
+      const labels = Array.isArray(cfg.labelsRu) ? (cfg.labelsRu as string[]).join(", ") : "";
+      const category = (cfg.category as string) ?? "general";
+      return `- ${category}.${r.pattern}: ${desc} (тип: ${valueType}${labels ? `, метки: ${labels}` : ""})`;
+    })
+    .join("\n");
+
+  const systemPrompt = `Ты — эксперт по клиническим протоколам. Извлеки факты из раздела документа.
+
+Тебе дан реестр известных фактов и текст одного раздела документа.
+Найди значения фактов из реестра, присутствующие в этом разделе.
+Также найди другие важные факты, которых нет в реестре.
+
+РЕЕСТР ФАКТОВ:
+${registryList}
+
+ПРАВИЛА:
+1. Извлекай только факты, ЯВНО присутствующие в тексте раздела
+2. Значение факта — конкретное значение (имя, число, дата, описание), НЕ пересказ контекста
+3. source_text — точная цитата из текста (до 200 символов), откуда извлечено значение
+4. Если в разделе нет фактов из реестра — верни пустой массив []
+5. confidence: 0.0–1.0
+
+ФОРМАТ ОТВЕТА — только JSON-массив (без markdown):
+[{"fact_key":"category.key","value":"значение","confidence":0.9,"source_text":"цитата"}]`;
+
+  const inputBudget = getInputBudgetChars(llmConfig);
+  const contentBudget = inputBudget - systemPrompt.length - 200;
+  const sectionGroups = groupRelatedSections(extractable, contentBudget);
+
+  const gateway = new LLMGateway({
+    provider: llmConfig.provider as LLMProvider,
+    model: llmConfig.model,
+    apiKey: llmConfig.apiKey,
+    baseUrl: llmConfig.baseUrl || undefined,
+    temperature: llmConfig.temperature,
+    thinkingEnabled: ctx.llmThinkingEnabled,
+    reasoningMode: llmConfig.reasoningMode,
+    timeoutMs: llmConfig.timeoutMs,
+  });
+
+  const existingFacts = await prisma.fact.findMany({ where: { docVersionId: ctx.docVersionId } });
+  const factByKey = new Map<string, typeof existingFacts[0]>();
+  for (const f of existingFacts) factByKey.set(f.factKey, f);
+
+  interface RawExtracted {
+    factKey: string;
+    category: string;
+    value: string;
+    confidence: number;
+    sourceText: string;
+    sectionTitle: string;
+    sectionId: string;
+  }
+
+  let totalTokens = 0;
+  let parseErrors = 0;
+  let skippedSections = 0;
+  let retries = 0;
+  const allExtracted: RawExtracted[] = [];
+
+  const extractFromGroup = async (group: SectionForExtraction[]): Promise<void> => {
+    const sectionText = group
+      .map((s) => `[РАЗДЕЛ: ${s.title}]\n${s.text}`)
+      .join("\n\n");
+
+    const userMessage = `РАЗДЕЛ ДОКУМЕНТА: ${group.map((s) => s.title).join(" → ")}
+
+${sectionText}`;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          retries++;
+          await new Promise((r) => setTimeout(r, 2000 * attempt));
+        }
+
+        const response = await gateway.generate({
+          system: systemPrompt,
+          messages: [{ role: "user", content: userMessage }],
+          maxTokens: llmConfig.maxTokens,
+          responseFormat: "json",
+        });
+
+        totalTokens += response.usage.totalTokens;
+
+        const parsed = parseLlmJsonArray(response.content);
+        if (!parsed) {
+          if (attempt === MAX_RETRIES) {
+            parseErrors++;
+            log.warn("[facts:llm_check] Parse error", {
+              section: group[0].title,
+              preview: response.content.slice(0, 200),
+            });
+          }
+          continue;
+        }
+
+        if (parsed.length === 0) {
+          skippedSections++;
+          return;
+        }
+
+        for (const raw of parsed) {
+          const item = raw as Record<string, unknown>;
+          const fullKey = String(item.fact_key ?? item.factKey ?? "");
+          if (!fullKey) continue;
+          const dotIdx = fullKey.indexOf(".");
+          const factKey = dotIdx > -1 ? fullKey.slice(dotIdx + 1) : fullKey;
+          const category = dotIdx > -1 ? fullKey.slice(0, dotIdx) : "general";
+          const value = String(item.value ?? "").trim();
+          if (!value || value.length < 2) continue;
+
+          const conf = typeof item.confidence === "number"
+            ? Math.min(Math.max(item.confidence, 0), 1)
+            : 0.5;
+
+          allExtracted.push({
+            factKey,
+            category,
+            value,
+            confidence: conf,
+            sourceText: String(item.source_text ?? item.sourceText ?? "").slice(0, 500),
+            sectionTitle: group[0].title,
+            sectionId: group[0].id,
+          });
+        }
+        return;
+      } catch (err) {
+        if (attempt === MAX_RETRIES) {
+          parseErrors++;
+          log.warn("[facts:llm_check] Section error", {
+            section: group[0].title, error: String(err),
+          });
+        }
+      }
+    }
+  };
+
+  await runWithConcurrency(
+    sectionGroups.map((g) => () => extractFromGroup(g)),
+    LLM_CONCURRENCY,
+  );
+
+  const grouped = new Map<string, RawExtracted[]>();
+  for (const ex of allExtracted) {
+    const arr = grouped.get(ex.factKey) ?? [];
+    arr.push(ex);
+    grouped.set(ex.factKey, arr);
+  }
+
+  let updatedCount = 0;
+  let newCount = 0;
+  let contradictionCount = 0;
+
+  for (const [factKey, extractions] of grouped) {
+    const best = extractions.reduce((a, b) => a.confidence >= b.confidence ? a : b);
+    const uniqueValues = [...new Set(extractions.map((e) => e.value))];
+    const hasContradiction = uniqueValues.length > 1;
+    if (hasContradiction) contradictionCount++;
+
+    const variants: FactVariant[] = extractions.map((e) => ({
+      value: e.value,
+      confidence: e.confidence,
+      level: "llm_check" as const,
+      sourceText: e.sourceText,
+      sectionTitle: e.sectionTitle,
+      sectionId: e.sectionId,
+    }));
+
+    const existing = factByKey.get(factKey);
+    if (existing) {
+      const existingVariants = Array.isArray(existing.variants) ? (existing.variants as unknown as FactVariant[]) : [];
+      await prisma.fact.update({
+        where: { id: existing.id },
+        data: {
+          llmValue: best.value,
+          llmConfidence: best.confidence,
+          value: best.value,
+          confidence: best.confidence,
+          hasContradiction: existing.hasContradiction || hasContradiction,
+          variants: [...existingVariants, ...variants] as any,
+        },
+      });
+      updatedCount++;
+    } else {
+      await prisma.fact.create({
+        data: {
+          docVersionId: ctx.docVersionId,
+          factKey,
+          factCategory: best.category,
+          value: best.value,
+          confidence: best.confidence,
+          factClass: "general",
+          sources: extractions.map((e) => ({
+            sectionTitle: e.sectionTitle,
+            text: e.sourceText,
+            isSynopsis: false,
+          })) as any,
+          hasContradiction,
+          status: "extracted",
+          llmValue: best.value,
+          llmConfidence: best.confidence,
+          variants: variants as any,
+        },
+      });
+      newCount++;
+    }
+  }
+
+  log.info("[facts:llm_check] Complete", {
+    sections: sectionGroups.length, totalExtracted: allExtracted.length,
+    updated: updatedCount, new: newCount, tokens: totalTokens,
+  });
+
+  return {
+    data: {
+      sections: sectionGroups.length,
+      totalExtracted: allExtracted.length,
+      updated: updatedCount,
+      newFacts: newCount,
+      contradictions: contradictionCount,
+      skippedSections,
+      parseErrors,
+      retries,
+      totalTokens,
+    },
+    llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
+  };
+}
+
+/* ═══════════════ Level 3: LLM QA ═══════════════ */
+
+export async function runLlmQa(
+  ctx: FactExtractionContext,
+  log: Logger,
+): Promise<FactExtractionResult> {
+  const facts = await prisma.fact.findMany({ where: { docVersionId: ctx.docVersionId } });
+
+  const lowConfidence = facts.filter((f) => f.confidence < LOW_CONFIDENCE_THRESHOLD && f.confidence > 0);
+  const disagreements = facts.filter(
+    (f) => f.deterministicValue && f.llmValue && f.deterministicValue !== f.llmValue,
+  );
+  const toCheck = [
+    ...lowConfidence,
+    ...disagreements.filter((d) => !lowConfidence.some((l) => l.id === d.id)),
+  ];
+
+  if (toCheck.length === 0) {
+    return { data: { message: "No facts require QA", checked: 0 } };
+  }
+
+  const llmConfig = await getEffectiveLlmConfig("fact_extraction_qa", ctx.tenantId);
+  if (!llmConfig.apiKey) {
+    return { data: { message: "QA LLM API key not configured" } };
+  }
+
+  const sections = await prisma.section.findMany({
+    where: { docVersionId: ctx.docVersionId },
+    include: { contentBlocks: { orderBy: { order: "asc" } } },
+    orderBy: { order: "asc" },
+  });
+
+  const qaInputBudget = getInputBudgetChars(llmConfig);
+
+  const qaPrefixes = ctx.excludedSectionPrefixes ?? EXCLUDED_SECTION_PREFIXES;
+  const docSnippet = sections
+    .filter((s) => !s.standardSection || !qaPrefixes.some((p) => s.standardSection!.startsWith(p)))
+    .map((s) => `[${s.title}]\n${s.contentBlocks.map((b) => b.content).join("\n")}`)
+    .join("\n")
+    .slice(0, qaInputBudget);
+
+  const factsSummary = toCheck
+    .map((f) => {
+      const src = (f.sources as any[])?.map((s: any) => `"${s.text ?? s.textSnippet ?? ""}"`).join("; ") ?? "";
+      const algoVal = f.deterministicValue ? `алго="${f.deterministicValue}"` : "";
+      const llmVal = f.llmValue ? `LLM="${f.llmValue}"` : "";
+      return `- ${f.factCategory}.${f.factKey}: значение="${f.value}", уверенность=${f.confidence}, ${algoVal} ${llmVal}, источники: ${src}`;
+    })
+    .join("\n");
+
+  const systemPrompt = `Ты — QA-аудитор извлечения фактов из клинического протокола.
+Тебе даны факты с низкой уверенностью или расхождением между алгоритмом и LLM.
+Для каждого факта:
+1. Проверь правильность значения по тексту документа.
+2. Если алгоритм и LLM дали разные значения — выбери правильное или предложи своё.
+3. Укажи итоговую уверенность.
+
+Верни СТРОГО JSON массив (без markdown):
+[
+  { "fact_key": "category.key", "correct": true, "corrected_value": "значение если correct=false", "new_confidence": 0.9, "reason": "обоснование" }
+]`;
+
+  const gateway = new LLMGateway({
+    provider: llmConfig.provider as LLMProvider,
+    model: llmConfig.model,
+    apiKey: llmConfig.apiKey,
+    baseUrl: llmConfig.baseUrl || undefined,
+    temperature: llmConfig.temperature,
+    thinkingEnabled: ctx.llmThinkingEnabled,
+    reasoningMode: llmConfig.reasoningMode,
+    timeoutMs: llmConfig.timeoutMs,
+  });
+
+  let correctedCount = 0;
+  let confirmedCount = 0;
+
+  try {
+    const response = await gateway.generate({
+      system: systemPrompt,
+      messages: [{ role: "user", content: `ФАКТЫ ДЛЯ ПРОВЕРКИ:\n${factsSummary}\n\nКОНТЕКСТ ДОКУМЕНТА:\n${docSnippet}` }],
+      maxTokens: llmConfig.maxTokens,
+      responseFormat: "json",
+    });
+
+    try {
+      const cleaned = response.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+      const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const corrections = JSON.parse(jsonMatch[0]) as any[];
+
+        for (const correction of corrections) {
+          const fullKey = correction.fact_key as string;
+          const dotIdx = fullKey.indexOf(".");
+          const factKey = dotIdx > -1 ? fullKey.slice(dotIdx + 1) : fullKey;
+          const category = dotIdx > -1 ? fullKey.slice(0, dotIdx) : "";
+
+          const fact = toCheck.find(
+            (f) => f.factKey === factKey && (!category || f.factCategory === category),
+          );
+          if (!fact) continue;
+
+          const qaConf = typeof correction.new_confidence === "number"
+            ? Math.min(Math.max(correction.new_confidence, 0), 1)
+            : fact.confidence;
+
+          const existingVariants = Array.isArray(fact.variants) ? (fact.variants as unknown as FactVariant[]) : [];
+
+          if (correction.correct === false && correction.corrected_value) {
+            const correctedVal = String(correction.corrected_value);
+            const qaVariant: FactVariant = {
+              value: correctedVal,
+              confidence: qaConf,
+              level: "llm_qa",
+              sourceText: String(correction.reason ?? ""),
+              sectionTitle: "",
+            };
+            await prisma.fact.update({
+              where: { id: fact.id },
+              data: {
+                qaValue: correctedVal, qaConfidence: qaConf,
+                value: correctedVal, confidence: qaConf,
+                variants: [...existingVariants, qaVariant] as any,
+              },
+            });
+            correctedCount++;
+          } else {
+            const qaVariant: FactVariant = {
+              value: fact.value,
+              confidence: qaConf,
+              level: "llm_qa",
+              sourceText: String(correction.reason ?? ""),
+              sectionTitle: "",
+            };
+            await prisma.fact.update({
+              where: { id: fact.id },
+              data: {
+                qaValue: fact.value, qaConfidence: qaConf, confidence: qaConf,
+                variants: [...existingVariants, qaVariant] as any,
+              },
+            });
+            confirmedCount++;
+          }
+        }
+      }
+    } catch (err) {
+      log.warn("[facts:llm_qa] Failed to parse QA response", { error: String(err) });
+    }
+
+    return {
+      data: { checked: toCheck.length, corrected: correctedCount, confirmed: confirmedCount, tokensUsed: response.usage.totalTokens },
+      llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
+    };
+  } catch (llmErr) {
+    log.warn("[facts:llm_qa] LLM QA unavailable, continuing without QA", { error: String(llmErr) });
+    return {
+      data: { message: "LLM QA unavailable, skipped", checked: toCheck.length, corrected: 0, confirmed: 0 },
+      llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
+    };
+  }
+}

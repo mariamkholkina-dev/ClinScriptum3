@@ -7,4 +7,5 @@ export * from "./types/finding.js";
 export * from "./types/fact.js";
 export * from "./types/section.js";
 export * from "./types/auth.js";
+export * from "./types/processing-events.js";
 export { asyncContext, getRequestContext, getCorrelationId, type RequestContext } from "./context.js";
