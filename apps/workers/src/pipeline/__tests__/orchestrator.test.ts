@@ -219,4 +219,121 @@ describe("runPipeline", () => {
     expect(mockStep.delete).toHaveBeenCalledWith({ where: { id: "step-failed" } });
     expect(handler.execute).toHaveBeenCalledTimes(1);
   });
+
+  describe("step-level retry + idempotency", () => {
+    it("sets idempotencyKey on first attempt of every step", async () => {
+      const handler = makeHandler("deterministic", { needsNextStep: false });
+      mockRun.findUnique.mockResolvedValue(makeRun());
+
+      const handlers = new Map<PipelineLevel, PipelineStepHandler>([
+        ["deterministic" as PipelineLevel, handler],
+      ]);
+      await runPipeline(RUN_ID, { operatorReviewEnabled: false, steps: [] }, handlers);
+
+      const setKeyCall = mockStep.update.mock.calls.find(
+        (c) =>
+          c[0].where.id === "step-1" &&
+          c[0].data.idempotencyKey != null,
+      );
+      expect(setKeyCall).toBeDefined();
+      expect(setKeyCall![0].data.idempotencyKey).toBe(`${RUN_ID}:deterministic:1`);
+      expect(setKeyCall![0].data.attemptNumber).toBe(1);
+    });
+
+    it("retries an llm_check handler on transient failure (idempotencyKey advances per attempt)", async () => {
+      const handler: PipelineStepHandler = {
+        level: "llm_check" as PipelineLevel,
+        execute: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("transient 1"))
+          .mockResolvedValueOnce({ data: { ok: true }, needsNextStep: false }),
+      };
+      mockRun.findUnique.mockResolvedValue(makeRun());
+
+      const handlers = new Map<PipelineLevel, PipelineStepHandler>([
+        ["llm_check" as PipelineLevel, handler],
+      ]);
+
+      // Suppress real exponential delay (mocked elsewhere; here we just rely on
+      // step-retry.ts to await setTimeout — tests run fast enough with default 5s
+      // baseDelay because we mock vi.useFakeTimers? No, leave default — only 1 retry,
+      // so 5s delay. Use fake timers.
+      vi.useFakeTimers();
+      const promise = runPipeline(RUN_ID, { operatorReviewEnabled: false, steps: [] }, handlers);
+      await vi.advanceTimersByTimeAsync(0); // attempt 1 fails synchronously
+      await vi.advanceTimersByTimeAsync(5_000); // skip retry delay
+      await promise;
+      vi.useRealTimers();
+
+      expect(handler.execute).toHaveBeenCalledTimes(2);
+
+      // Check that idempotencyKey was set for both attempts
+      const idempotencyUpdates = mockStep.update.mock.calls.filter(
+        (c) => c[0].data.idempotencyKey != null,
+      );
+      const keys = idempotencyUpdates.map((c) => c[0].data.idempotencyKey);
+      expect(keys).toContain(`${RUN_ID}:llm_check:1`);
+      expect(keys).toContain(`${RUN_ID}:llm_check:2`);
+
+      // attemptNumber should be 2 on the second update
+      const attemptUpdates = mockStep.update.mock.calls.filter(
+        (c) => typeof c[0].data.attemptNumber === "number",
+      );
+      const attempts = attemptUpdates.map((c) => c[0].data.attemptNumber);
+      expect(attempts).toContain(2);
+
+      // Final step status should be 'completed'
+      const completedCall = mockStep.update.mock.calls.find(
+        (c) => c[0].data.status === "completed",
+      );
+      expect(completedCall).toBeDefined();
+    });
+
+    it("after maxAttempts exhausted, marks step 'failed' and propagates error", async () => {
+      const handler: PipelineStepHandler = {
+        level: "llm_check" as PipelineLevel,
+        execute: vi.fn().mockRejectedValue(new Error("rate limit")),
+      };
+      mockRun.findUnique.mockResolvedValue(makeRun());
+
+      const handlers = new Map<PipelineLevel, PipelineStepHandler>([
+        ["llm_check" as PipelineLevel, handler],
+      ]);
+
+      vi.useFakeTimers();
+      const promise = runPipeline(RUN_ID, { operatorReviewEnabled: false, steps: [] }, handlers).catch((e) => e);
+      // Drain all pending timers (no further sleeps after final attempt)
+      await vi.runAllTimersAsync();
+      const result = await promise;
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toBe("rate limit");
+      vi.useRealTimers();
+
+      // 3 attempts (default for llm_check)
+      expect(handler.execute).toHaveBeenCalledTimes(3);
+      const failedCall = mockStep.update.mock.calls.find(
+        (c) => c[0].data.status === "failed",
+      );
+      expect(failedCall).toBeDefined();
+    });
+
+    it("deterministic level does NOT retry (maxAttempts=1)", async () => {
+      const handler: PipelineStepHandler = {
+        level: "deterministic" as PipelineLevel,
+        execute: vi.fn().mockRejectedValue(new Error("logic bug")),
+      };
+      mockRun.findUnique.mockResolvedValue(makeRun());
+
+      const handlers = new Map<PipelineLevel, PipelineStepHandler>([
+        ["deterministic" as PipelineLevel, handler],
+      ]);
+
+      await expect(
+        runPipeline(RUN_ID, { operatorReviewEnabled: false, steps: [] }, handlers),
+      ).rejects.toThrow("logic bug");
+
+      // No retries for deterministic
+      expect(handler.execute).toHaveBeenCalledTimes(1);
+    });
+  });
 });

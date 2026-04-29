@@ -5,6 +5,7 @@ import type { PipelineLevel } from "@clinscriptum/shared";
 import { logger } from "../lib/logger.js";
 import { recordPipelineMetric, recordPipelineComplete } from "../lib/metrics.js";
 import { publishProcessingEvent } from "../lib/event-publisher.js";
+import { executeStepWithRetry, makeIdempotencyKey } from "../lib/step-retry.js";
 
 export interface PipelineStepHandler {
   level: PipelineLevel;
@@ -150,7 +151,17 @@ export async function runPipeline(
       });
 
       try {
-        const result = await handler.execute(context);
+        const { value: result, finalAttempt } = await executeStepWithRetry(level, async (attempt) => {
+          await prisma.processingStep.update({
+            where: { id: step.id },
+            data: {
+              attemptNumber: attempt,
+              idempotencyKey: makeIdempotencyKey(processingRunId, level, attempt),
+              ...(attempt > 1 ? { startedAt: new Date() } : {}),
+            },
+          });
+          return handler.execute(context);
+        });
         context.previousResults.set(level, result);
 
         const durationMs = Date.now() - stepStart;
@@ -167,7 +178,7 @@ export async function runPipeline(
         });
 
         stepsCompleted++;
-        recordPipelineMetric({ processingRunId, pipelineLevel: level, status: "completed", durationMs });
+        recordPipelineMetric({ processingRunId, pipelineLevel: level, status: "completed", durationMs, attempts: finalAttempt });
 
         await publishProcessingEvent({
           type: "step_completed",

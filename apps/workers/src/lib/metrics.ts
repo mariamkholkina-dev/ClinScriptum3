@@ -5,6 +5,7 @@ export function recordPipelineMetric(event: {
   pipelineLevel: string;
   status: string;
   durationMs: number;
+  attempts?: number;
 }) {
   logger.info("pipeline_step_metric", event);
 }
