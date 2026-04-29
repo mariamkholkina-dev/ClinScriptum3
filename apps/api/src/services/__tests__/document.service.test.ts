@@ -15,6 +15,9 @@ vi.mock("@clinscriptum/db", () => ({
     study: {
       findFirst: vi.fn(),
     },
+    ruleSet: {
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -44,6 +47,9 @@ const mockDocument = prisma.document as unknown as {
   findMany: ReturnType<typeof vi.fn>;
   findFirst: ReturnType<typeof vi.fn>;
   create: ReturnType<typeof vi.fn>;
+};
+const mockRuleSet = prisma.ruleSet as unknown as {
+  findFirst: ReturnType<typeof vi.fn>;
 };
 
 const TENANT_A = "tenant-aaa";
@@ -129,6 +135,76 @@ describe("documentService", () => {
           title: "Hack",
         }),
       ).rejects.toThrow(DomainError);
+    });
+  });
+
+  describe("getTaxonomy", () => {
+    const tenantRuleSet = {
+      id: "rs-tenant",
+      tenantId: TENANT_A,
+      versions: [
+        {
+          isActive: true,
+          rules: [{ name: "synopsis", pattern: "^syn", config: { key: "synopsis" } }],
+        },
+      ],
+    };
+    const globalRuleSet = {
+      id: "rs-global",
+      tenantId: null,
+      versions: [
+        {
+          isActive: true,
+          rules: [{ name: "objectives", pattern: "^obj", config: { key: "objectives" } }],
+        },
+      ],
+    };
+
+    it("filters by tenant + nullable global, prefers tenant-specific", async () => {
+      mockRuleSet.findFirst.mockResolvedValue(tenantRuleSet);
+
+      const result = await documentService.getTaxonomy(TENANT_A);
+
+      expect(mockRuleSet.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            type: "section_classification",
+            OR: [{ tenantId: TENANT_A }, { tenantId: null }],
+          },
+          orderBy: { tenantId: { sort: "desc", nulls: "last" } },
+        }),
+      );
+      expect(result).toEqual([
+        { name: "synopsis", pattern: "^syn", config: { key: "synopsis" } },
+      ]);
+    });
+
+    it("falls back to global ruleset when tenant has none", async () => {
+      mockRuleSet.findFirst.mockResolvedValue(globalRuleSet);
+
+      const result = await documentService.getTaxonomy(TENANT_B);
+
+      expect(result[0]?.name).toBe("objectives");
+    });
+
+    it("returns empty array when no matching ruleset exists", async () => {
+      mockRuleSet.findFirst.mockResolvedValue(null);
+
+      const result = await documentService.getTaxonomy(TENANT_A);
+      expect(result).toEqual([]);
+    });
+
+    it("never queries without tenant filter (regression: leak across tenants)", async () => {
+      mockRuleSet.findFirst.mockResolvedValue(null);
+      await documentService.getTaxonomy(TENANT_A);
+
+      const call = mockRuleSet.findFirst.mock.calls[0]?.[0];
+      const where = call?.where;
+      expect(where?.OR).toBeDefined();
+      const tenantIds = (where.OR as Array<{ tenantId: string | null }>).map((e) => e.tenantId);
+      expect(tenantIds).toContain(TENANT_A);
+      expect(tenantIds).toContain(null);
+      expect(tenantIds).not.toContain(TENANT_B);
     });
   });
 });

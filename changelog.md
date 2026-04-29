@@ -2,6 +2,15 @@
 
 ## 2026-04-30
 
+### Безопасность: tenant isolation в getTaxonomy
+
+- **`document.service.getTaxonomy(tenantId)` и `tuning.service.getTaxonomy(tenantId)`**: добавлен обязательный параметр `tenantId`, фильтр `WHERE type=… AND (tenantId=$1 OR tenantId IS NULL)` с предпочтением tenant-specific RuleSet через `ORDER BY tenantId DESC NULLS LAST`. Раньше `findFirst` без фильтра возвращал любой подходящий RuleSet — потенциальная утечка чужой taxonomy между тенантами.
+- **Routers `document.getTaxonomy` и `tuning.getTaxonomy`**: теперь прокидывают `ctx.user.tenantId`
+- **Тесты `document.service.test.ts`**: 4 новых кейса — tenant-specific приоритет, fallback на global (tenantId=null), пустой результат, regression-проверка что чужой tenantId никогда не попадает в WHERE
+- **Pre-existing lint-fix `processing-pipeline.ts:322`**: `order: order++` → `order: order` (no-useless-assignment, не использовался incremented value)
+
+## 2026-04-30
+
 ### AI-Native практики: инфраструктура разработки
 
 - **CLAUDE.md расширен**: добавлены секции Security constraints, Common gotchas, Git Workflow (Conventional Commits), Before committing checklist, Development Process (Plan & Act), Task decomposition template
