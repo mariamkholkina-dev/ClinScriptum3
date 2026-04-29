@@ -32,7 +32,8 @@
       "Read(//c/c/Users/0/ClinScriptum3/**)",
       "Read(//c/c/Users/0/ClinScriptum3/.claude/**)",
       "Read(//c/c/Users/0/ClinScriptum3/apps/api/**)",
-      "Bash(chmod -x .husky/commit-msg)"
+      "Bash(chmod -x .husky/commit-msg)",
+      "Bash(HUSKY=0 git -C /c/Users/0/ClinScriptum3 add packages/db/prisma/schema.prisma)"
     ]
   }
 }

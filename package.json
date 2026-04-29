@@ -14,16 +14,26 @@
     "db:generate": "npm run generate --workspace=@clinscriptum/db",
     "db:seed": "npm run seed --workspace=@clinscriptum/db",
     "test": "turbo test",
-    "typecheck": "turbo typecheck"
+    "typecheck": "turbo typecheck",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "@commitlint/cli": "^20.5.2",
+    "@commitlint/config-conventional": "^20.5.0",
     "@eslint/js": "^10.0.1",
     "@vitest/coverage-v8": "^4.1.4",
     "docx": "^9.6.1",
     "eslint": "^10.2.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "turbo": "^2",
     "typescript-eslint": "^8.58.2",
     "vitest": "^4.1.4"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix --no-warn-ignored"
+    ]
   },
   "packageManager": "npm@10.0.0"
 }
