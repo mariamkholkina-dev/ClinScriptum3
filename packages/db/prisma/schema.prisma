@@ -18,8 +18,21 @@ model Tenant {
 
   users   User[]
   studies Study[]
+  config  TenantConfig?
 
   @@map("tenants")
+}
+
+model TenantConfig {
+  id                      String   @id @default(uuid()) @db.Uuid
+  tenantId                String   @unique @map("tenant_id") @db.Uuid
+  excludedSectionPrefixes String[] @default(["overview", "admin", "appendix", "ip.preclinical_data"]) @map("excluded_section_prefixes")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_configs")
 }
 
 enum Plan {
@@ -81,16 +94,21 @@ model RefreshToken {
 // ─── Studies & Documents ─────────────────────────────────────
 
 model Study {
-  id              String     @id @default(uuid()) @db.Uuid
-  tenantId        String     @map("tenant_id") @db.Uuid
-  title           String
-  sponsor         String?
-  drug            String?
-  therapeuticArea String?    @map("therapeutic_area")
-  protocolTitle   String?    @map("protocol_title")
-  phase           String     @default("")
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
+  id                     String     @id @default(uuid()) @db.Uuid
+  tenantId               String     @map("tenant_id") @db.Uuid
+  title                  String
+  sponsor                String?
+  drug                   String?
+  therapeuticArea        String?    @map("therapeutic_area")
+  protocolTitle          String?    @map("protocol_title")
+  phase                  String     @default("")
+  operatorReviewEnabled    Boolean    @default(false) @map("operator_review_enabled")
+  llmThinkingEnabled       Boolean    @default(false) @map("llm_thinking_enabled")
+  excludedSectionPrefixes  String[]   @default([]) @map("excluded_section_prefixes")
+  auditMode                String     @default("auto") @map("audit_mode")
+  crossCheckPairs          Json?      @map("cross_check_pairs") @db.JsonB
+  createdAt                DateTime   @default(now()) @map("created_at")
+  updatedAt              DateTime   @updatedAt @map("updated_at")
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   documents      Document[]
@@ -245,6 +263,7 @@ model Fact {
   llmConfidence           Float    @default(0) @map("llm_confidence")
   qaValue                 String?  @map("qa_value")
   qaConfidence            Float    @default(0) @map("qa_confidence")
+  variants                Json     @default("[]") @db.JsonB
 
   docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
 
@@ -433,6 +452,7 @@ model SoaCell {
   normalizedValue String  @default("") @map("normalized_value")
   manualValue     String? @map("manual_value")
   confidence      Float   @default(1.0)
+  footnoteRefs    Json    @default("[]") @db.JsonB @map("footnote_refs")
 
   soaTable SoaTable @relation(fields: [soaTableId], references: [id], onDelete: Cascade)
 
@@ -444,6 +464,7 @@ model SoaCell {
 enum SoaStatus {
   detected
   validated
+  not_soa
 }
 
 // ─── Rule Set Bundles ────────────────────────────────────────
@@ -558,6 +579,9 @@ model Rule {
 enum RuleSubStage {
   analysis
   qa
+  self_check
+  cross_check
+  editorial
 }
 
 // ─── Document Templates ───────────────────────────────────────
@@ -811,7 +835,7 @@ model LlmConfig {
   model             String
   temperature       Float           @default(0.1)
   maxOutputTokens   Int             @default(2048) @map("max_output_tokens")
-  maxInputTokens    Int?            @map("max_input_tokens")
+  maxInputTokens    Int             @default(16000) @map("max_input_tokens")
   contextStrategy   ContextStrategy @default(chunk) @map("context_strategy")
   chunkSizeChars    Int?            @map("chunk_size_chars")
   chunkOverlapChars Int?            @map("chunk_overlap_chars")
@@ -819,6 +843,7 @@ model LlmConfig {
   rateLimit         Int?            @map("rate_limit")
   timeoutMs         Int?            @map("timeout_ms")
   coldStartMs       Int?            @map("cold_start_ms")
+  reasoningMode     ReasoningMode   @default(DISABLED) @map("reasoning_mode")
   costPerInputKTokens  Float?      @map("cost_per_input_k_tokens")
   costPerOutputKTokens Float?      @map("cost_per_output_k_tokens")
   isActive          Boolean         @default(true) @map("is_active")
@@ -837,6 +862,11 @@ enum ContextStrategy {
   multi_chunk
   full_document
   multi_document
+}
+
+enum ReasoningMode {
+  DISABLED
+  ENABLED_HIDDEN
 }
 
 // ─── Golden Dataset ─────────────────────────────────────────
