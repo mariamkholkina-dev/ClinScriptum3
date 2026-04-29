@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   build:
@@ -44,9 +44,40 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm audit --audit-level=high --omit=dev || true
       - run: npx prisma generate --schema=packages/db/prisma/schema.prisma
       - run: npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
       - run: npx turbo build
       - run: npx turbo typecheck
       - run: npx turbo lint
       - run: npx turbo test
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: Check for hardcoded secrets
+        run: |
+          FOUND=0
+          if grep -rn "password\s*=\s*['\"][^'\"]*['\"]" --include="*.ts" apps/ packages/ | grep -v node_modules | grep -v test | grep -v example | grep -v ".d.ts"; then
+            echo "::warning::Potential hardcoded passwords found"
+            FOUND=1
+          fi
+          if grep -rn "api[_-]*key\s*=\s*['\"][^'\"]*['\"]" --include="*.ts" apps/ packages/ | grep -v node_modules | grep -v test | grep -v example | grep -v ".d.ts" | grep -v "process.env"; then
+            echo "::warning::Potential hardcoded API keys found"
+            FOUND=1
+          fi
+          if [ $FOUND -eq 1 ]; then
+            echo "::warning::Review the above matches for actual secrets"
+          fi
