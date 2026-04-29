@@ -16,7 +16,14 @@
 
 - **4 новых service-layer теста**: `study.service.test.ts`, `document.service.test.ts`, `audit.service.test.ts`, `processing.service.test.ts` — покрытие CRUD, tenant isolation, бизнес-правил
 - **Orchestrator тест**: `apps/workers/src/pipeline/__tests__/orchestrator.test.ts` — 7 тестов: порядок выполнения, остановка pipeline, skip completed steps, retry failed steps, error handling
-- **E2E тесты**: добавлены `auth.spec.ts` (логин/логаут/redirect), `studies.spec.ts` (навигация по исследованиям) к Playwright
+- **4 новых handler теста**: `parse-document.test.ts` (парсинг, ошибки, статусы), `classify-sections.test.ts` (RulesEngine, LLM skip, cache invalidation), `extract-facts.test.ts` (делегация к shared, pipeline wiring), `intra-doc-audit.test.ts` (editorial checks: double spaces, placeholders, mixed tense, status restore)
+- **E2E тесты**: добавлены `auth.spec.ts` (логин/логаут/redirect), `studies.spec.ts` (навигация по исследованиям), `document-upload.spec.ts` (загрузка документов), `audit.spec.ts` (аудит flow) к Playwright
+
+### CI
+
+- **Test coverage**: добавлен `--coverage --reporter=text` к `turbo test` в CI
+- **E2E job**: отдельный Playwright job с Chromium после основной сборки
+- **test:coverage script**: добавлен в корневой `package.json`
 
 ### Observability
 

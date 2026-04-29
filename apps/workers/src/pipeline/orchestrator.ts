@@ -1,5 +1,7 @@
 import { prisma } from "@clinscriptum/db";
-import type { PipelineLevel, ProcessingStepStatus } from "@clinscriptum/shared";
+import type { ProcessingStepStatus } from "@clinscriptum/shared";
+export type { PipelineLevel } from "@clinscriptum/shared";
+import type { PipelineLevel } from "@clinscriptum/shared";
 import { logger } from "../lib/logger.js";
 import { recordPipelineMetric, recordPipelineComplete } from "../lib/metrics.js";
 import { publishProcessingEvent } from "../lib/event-publisher.js";
