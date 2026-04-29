@@ -104,6 +104,10 @@ function llmTaskConfig(task: string): LlmTaskConfig {
   };
 }
 
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required in production");
+}
+
 export const config = {
   port: parseInt(process.env.PORT ?? "4000", 10),
   jwtSecret: process.env.JWT_SECRET ?? "dev-secret-change-in-production",
@@ -111,7 +115,7 @@ export const config = {
   refreshTokenExpiresInDays: parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS ?? "30", 10),
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(",")
-    : ["http://localhost:3000", "https://localhost:3001", "http://localhost:3002"],
+    : ["http://localhost:3000", "https://localhost:3001", "http://localhost:3002", "http://127.0.0.1:3000", "http://127.0.0.1:3002"],
 
   storage: {
     type: (process.env.STORAGE_TYPE ?? "local") as "local" | "s3",

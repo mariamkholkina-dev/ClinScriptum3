@@ -6,6 +6,10 @@ import { createContext } from "./trpc/context.js";
 import { config } from "./config.js";
 import { apiRateLimiter } from "./lib/rate-limiter.js";
 import { requestLogger, logger } from "./lib/logger.js";
+import { initEventPublisher, closeEventPublisher } from "./lib/event-publisher.js";
+import { handleProcessingSSE } from "./lib/processing-monitor.js";
+
+initEventPublisher(process.env.REDIS_URL ?? "redis://localhost:6379");
 
 const app = express();
 
@@ -104,10 +108,10 @@ app.get("/api/word-open/:sessionId", async (req, res) => {
     if (ctx.docVersionId) {
       const version = await prisma.documentVersion.findUnique({
         where: { id: ctx.docVersionId },
-        include: { document: true },
+        include: { document: { include: { study: true } } },
       });
 
-      if (!version) {
+      if (!version || version.document.study.tenantId !== session.tenantId) {
         res.status(404).json({ error: "Document version not found" });
         return;
       }
@@ -437,6 +441,10 @@ app.get("/api/generated-doc-export/:generatedDocId", async (req, res) => {
   }
 });
 
+// ─── Processing Monitor SSE ────────────────────────────
+app.get("/api/processing-events/:docVersionId", handleProcessingSSE);
+app.get("/api/processing-events", handleProcessingSSE);
+
 app.use(
   "/trpc",
   createExpressMiddleware({
@@ -445,8 +453,23 @@ app.use(
   })
 );
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   logger.info(`API server running on http://localhost:${config.port}`);
+});
+
+async function shutdown() {
+  logger.info("API server shutting down...");
+  closeEventPublisher();
+  server.close();
+  const { prisma } = await import("@clinscriptum/db");
+  await prisma.$disconnect();
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled rejection", { error: String(reason) });
 });
 
 export type { AppRouter } from "./routers/index.js";

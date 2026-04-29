@@ -8,10 +8,13 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1019.0",
+    "bullmq": "^5",
+    "ioredis": "^5",
     "@clinscriptum/db": "*",
     "@clinscriptum/diff-engine": "*",
     "@clinscriptum/llm-gateway": "*",
