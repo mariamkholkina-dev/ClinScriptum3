@@ -9,7 +9,8 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
-    "e2e:ui": "playwright test --ui"
+    "e2e:ui": "playwright test --ui",
+    "e2e:update-snapshots": "playwright test --update-snapshots"
   },
   "dependencies": {
     "@clinscriptum/shared": "*",

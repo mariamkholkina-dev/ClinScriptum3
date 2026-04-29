@@ -17,12 +17,20 @@
 - **4 новых service-layer теста**: `study.service.test.ts`, `document.service.test.ts`, `audit.service.test.ts`, `processing.service.test.ts` — покрытие CRUD, tenant isolation, бизнес-правил
 - **Orchestrator тест**: `apps/workers/src/pipeline/__tests__/orchestrator.test.ts` — 7 тестов: порядок выполнения, остановка pipeline, skip completed steps, retry failed steps, error handling
 - **4 новых handler теста**: `parse-document.test.ts` (парсинг, ошибки, статусы), `classify-sections.test.ts` (RulesEngine, LLM skip, cache invalidation), `extract-facts.test.ts` (делегация к shared, pipeline wiring), `intra-doc-audit.test.ts` (editorial checks: double spaces, placeholders, mixed tense, status restore)
-- **E2E тесты**: добавлены `auth.spec.ts` (логин/логаут/redirect), `studies.spec.ts` (навигация по исследованиям), `document-upload.spec.ts` (загрузка документов), `audit.spec.ts` (аудит flow) к Playwright
+- **E2E тесты (web)**: добавлены `auth.spec.ts` (логин/логаут/redirect), `studies.spec.ts` (навигация по исследованиям), `document-upload.spec.ts` (загрузка документов), `audit.spec.ts` (аудит flow) к Playwright
+- **E2E тесты (rule-admin)**: настроен Playwright для rule-admin (порт 3002), добавлены 5 спецов: `auth.spec.ts` (вход/выход, проверка ролей, redirect), `navigation.spec.ts` (сайдбар, навигация 12+ пунктов, collapse), `dashboard.spec.ts` (stat-карточки, quick actions, таблица запусков), `rules.spec.ts` (группы правил, создание, expand/collapse), `golden-dataset.spec.ts` (фильтры, создание образца, импорт)
+- **Visual regression**: добавлены `visual.spec.ts` для `apps/web` (3 снимка: login, dashboard, studies) и `apps/rule-admin` (6 снимков: login, dashboard, rules, golden-dataset, sidebar collapsed, llm-config). Настроен `toHaveScreenshot()` с `maxDiffPixelRatio: 0.01`, фиксированный viewport 1280×720, mask для timestamp-элементов. Скрипт `e2e:update-snapshots` для обновления эталонов
+
+### Починка зелёного baseline (pre-existing на master)
+
+- **`apps/word-addin` TS-ошибки (4 шт.)**: `CounterBadge color="warning"` → `"important"` в `FindingsPanel.tsx` и `InterAuditPanel.tsx` (Fluent UI v9 переименовал палитру); удалён несуществующий импорт `Spinner24Regular` в `SectionList.tsx`; `tokens.colorPaletteBlueBorder1` → `tokens.colorBrandStroke1` в `ProtocolContext.tsx`
+- **`packages/rules-engine` fact-extractor**: убрана проверка `value.length < 2` в `extract()`, которая ошибочно отбрасывала однобуквенные значения вроде `"2"` для `Phase 2 study` или `"I"` для `Phase I` (тест `extracts study_phase numeric format` теперь зелёный)
+- **`packages/llm-gateway` lint-ошибки**: добавлен `cause: fetchErr` к `Error` после catch (правило `preserve-caught-error`); удалён лишний escape `\/` внутри character class в regex детекта Yandex модели
 
 ### CI
 
 - **Test coverage**: добавлен `--coverage --reporter=text` к `turbo test` в CI
-- **E2E job**: отдельный Playwright job с Chromium после основной сборки
+- **E2E job**: отдельный Playwright job с Chromium после основной сборки — запускает тесты и для `apps/web`, и для `apps/rule-admin`
 - **test:coverage script**: добавлен в корневой `package.json`
 
 ### Observability

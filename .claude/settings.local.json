@@ -33,7 +33,13 @@
       "Read(//c/c/Users/0/ClinScriptum3/.claude/**)",
       "Read(//c/c/Users/0/ClinScriptum3/apps/api/**)",
       "Bash(chmod -x .husky/commit-msg)",
-      "Bash(HUSKY=0 git -C /c/Users/0/ClinScriptum3 add packages/db/prisma/schema.prisma)"
-    ]
+      "Bash(HUSKY=0 git -C /c/Users/0/ClinScriptum3 add packages/db/prisma/schema.prisma)",
+      "Skill(update-config)",
+      "Bash(HUSKY=0 git add .github/workflows/ci.yml package.json)",
+      "Bash(start bash *)",
+      "Edit",
+      "Write"      
+    ],
+    "defaultMode": "dontAsk"
   }
 }

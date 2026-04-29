@@ -217,7 +217,7 @@ export function InterAuditPanel({ docVersionId, protocolVersionId }: Props) {
           </Text>
           <CounterBadge count={filtered.length} size="small" color="informative" />
           {pendingCount > 0 && (
-            <CounterBadge count={pendingCount} size="small" color="warning" />
+            <CounterBadge count={pendingCount} size="small" color="important" />
           )}
         </div>
       </div>

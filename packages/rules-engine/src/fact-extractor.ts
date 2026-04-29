@@ -44,7 +44,7 @@ export class FactExtractor {
         while ((match = re.exec(text)) !== null) {
           const raw = (match[1] ?? match[0]).trim();
           const value = cleanExtractedValue(raw);
-          if (!value || value.length < 2) continue;
+          if (!value) continue;
 
           results.push({
             factKey: rule.factKey,

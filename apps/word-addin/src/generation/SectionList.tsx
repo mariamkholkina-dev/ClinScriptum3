@@ -9,7 +9,6 @@ import {
 import {
   DocumentBulletList24Regular,
   Checkmark24Regular,
-  Spinner24Regular,
   Dismiss24Regular,
 } from "@fluentui/react-icons";
 

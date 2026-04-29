@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: "http://localhost:3002",
     headless: true,
     screenshot: "only-on-failure",
     viewport: { width: 1280, height: 720 },
@@ -24,8 +24,8 @@ export default defineConfig({
       cwd: "../..",
     },
     {
-      command: "npm run dev --workspace=@clinscriptum/web",
-      port: 3000,
+      command: "npm run dev --workspace=@clinscriptum/rule-admin",
+      port: 3002,
       reuseExistingServer: true,
       cwd: "../..",
     },

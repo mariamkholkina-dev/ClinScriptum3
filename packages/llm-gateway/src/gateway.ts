@@ -101,9 +101,12 @@ export class LLMGateway {
         const delay = attempt * 5000;
         await new Promise((r) => setTimeout(r, delay));
       } catch (fetchErr: any) {
-        const cause = fetchErr?.cause ? `: ${fetchErr.cause.message ?? fetchErr.cause.code ?? fetchErr.cause}` : "";
+        const causeMsg = fetchErr?.cause ? `: ${fetchErr.cause.message ?? fetchErr.cause.code ?? fetchErr.cause}` : "";
         if (attempt === MAX_RETRIES) {
-          throw new Error(`OpenAI-compatible fetch failed after ${MAX_RETRIES} attempts (${url}, body ${Math.round(jsonBody.length / 1024)}KB)${cause}`);
+          throw new Error(
+            `OpenAI-compatible fetch failed after ${MAX_RETRIES} attempts (${url}, body ${Math.round(jsonBody.length / 1024)}KB)${causeMsg}`,
+            { cause: fetchErr },
+          );
         }
         const delay = attempt * 5000;
         await new Promise((r) => setTimeout(r, delay));
@@ -152,7 +155,7 @@ export class LLMGateway {
   }
 
   private async generateYandex(request: LLMRequest): Promise<LLMResponse> {
-    const isNativeModel = /\/yandexgpt[\/-]/.test(this.config.model) || this.config.model.endsWith("/yandexgpt/latest");
+    const isNativeModel = /\/yandexgpt[/-]/.test(this.config.model) || this.config.model.endsWith("/yandexgpt/latest");
     return isNativeModel
       ? this.generateYandexNative(request)
       : this.generateYandexOpenAI(request);

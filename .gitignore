@@ -26,5 +26,9 @@ ehthumbs.db
 # Build artifacts
 *.tsbuildinfo
 
+# Playwright
+test-results/
+playwright-report/
+
 # Database dumps
 *.sql

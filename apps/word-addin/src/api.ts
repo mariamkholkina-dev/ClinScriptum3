@@ -31,7 +31,9 @@ async function refreshAccessToken(): Promise<boolean> {
       setTokens(newAccess, newRefresh);
       return true;
     }
-  } catch {}
+  } catch {
+    // refresh failure → fall through and return false
+  }
   return false;
 }
 

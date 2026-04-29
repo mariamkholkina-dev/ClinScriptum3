@@ -94,8 +94,13 @@ jobs:
       - run: npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
       - run: npx turbo build
       - run: npx playwright install chromium --with-deps
-      - run: npx playwright test --project=chromium
+      - name: E2E — web
+        run: npx playwright test --project=chromium
         working-directory: apps/web
+        continue-on-error: true
+      - name: E2E — rule-admin
+        run: npx playwright test --project=chromium
+        working-directory: apps/rule-admin
         continue-on-error: true
 
   security:
