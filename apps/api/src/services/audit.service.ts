@@ -7,6 +7,38 @@ import { requireTenantResource } from "./tenant-guard.js";
 
 const REVIEWER_ROLES = new Set(["findings_reviewer", "rule_admin", "tenant_admin"]);
 
+async function validateInterAuditPair(
+  tenantId: string,
+  protocolVersionId: string,
+  checkedVersionId: string,
+) {
+  const [protocolVersion, checkedVersion] = await Promise.all([
+    prisma.documentVersion.findUnique({
+      where: { id: protocolVersionId },
+      include: { document: { include: { study: true } } },
+    }),
+    prisma.documentVersion.findUnique({
+      where: { id: checkedVersionId },
+      include: { document: { include: { study: true } } },
+    }),
+  ]);
+  requireTenantResource(protocolVersion, tenantId, (v) => v.document.study.tenantId);
+  requireTenantResource(checkedVersion, tenantId, (v) => v.document.study.tenantId);
+  if (protocolVersion.document.type !== "protocol") {
+    throw new DomainError(
+      "BAD_REQUEST",
+      "protocolVersionId must reference a protocol document",
+    );
+  }
+  if (protocolVersion.document.studyId !== checkedVersion.document.studyId) {
+    throw new DomainError(
+      "BAD_REQUEST",
+      "protocol and checked versions must belong to the same study",
+    );
+  }
+  return { protocolVersion, checkedVersion };
+}
+
 export const auditService = {
   /* ═══════════ Intra-document audit ═══════════ */
 
@@ -317,13 +349,14 @@ export const auditService = {
 
   async getInterAuditStatus(
     tenantId: string,
+    protocolVersionId: string,
     checkedVersionId: string,
   ) {
-    const checkedVersion = await prisma.documentVersion.findUnique({
-      where: { id: checkedVersionId },
-      include: { document: { include: { study: true } } },
-    });
-    requireTenantResource(checkedVersion, tenantId, (v) => v.document.study.tenantId);
+    const { checkedVersion } = await validateInterAuditPair(
+      tenantId,
+      protocolVersionId,
+      checkedVersionId,
+    );
 
     const latestRun = await prisma.processingRun.findFirst({
       where: { docVersionId: checkedVersionId, type: "inter_doc_audit" },
@@ -365,11 +398,11 @@ export const auditService = {
       status?: string;
     },
   ) {
-    const checkedVersion = await prisma.documentVersion.findUnique({
-      where: { id: input.checkedVersionId },
-      include: { document: { include: { study: true } } },
-    });
-    requireTenantResource(checkedVersion, tenantId, (v) => v.document.study.tenantId);
+    const { protocolVersion, checkedVersion } = await validateInterAuditPair(
+      tenantId,
+      input.protocolVersionId,
+      input.checkedVersionId,
+    );
 
     const isReviewerUser = REVIEWER_ROLES.has(userRole);
 
@@ -396,11 +429,6 @@ export const auditService = {
       }
     }
 
-    const protocolVersion = await prisma.documentVersion.findUnique({
-      where: { id: input.protocolVersionId },
-      include: { document: true },
-    });
-
     const where: any = {
       docVersionId: input.checkedVersionId,
       type: "inter_audit",
@@ -419,8 +447,8 @@ export const auditService = {
 
     return {
       findings,
-      protocolTitle: protocolVersion?.document.title ?? "",
-      protocolLabel: protocolVersion?.versionLabel ?? `v${protocolVersion?.versionNumber}`,
+      protocolTitle: protocolVersion.document.title,
+      protocolLabel: protocolVersion.versionLabel ?? `v${protocolVersion.versionNumber}`,
       checkedDocTitle: checkedVersion.document.title,
       checkedDocLabel: checkedVersion.versionLabel ?? `v${checkedVersion.versionNumber}`,
       checkedDocType: checkedVersion.document.type,
@@ -431,13 +459,10 @@ export const auditService = {
 
   async getInterAuditSummary(
     tenantId: string,
+    protocolVersionId: string,
     checkedVersionId: string,
   ) {
-    const checkedVersion = await prisma.documentVersion.findUnique({
-      where: { id: checkedVersionId },
-      include: { document: { include: { study: true } } },
-    });
-    requireTenantResource(checkedVersion, tenantId, (v) => v.document.study.tenantId);
+    await validateInterAuditPair(tenantId, protocolVersionId, checkedVersionId);
 
     const findings = await prisma.finding.findMany({
       where: { docVersionId: checkedVersionId, type: "inter_audit" },

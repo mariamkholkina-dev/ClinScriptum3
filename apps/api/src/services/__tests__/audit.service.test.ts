@@ -130,4 +130,99 @@ describe("auditService", () => {
       ).rejects.toThrow(DomainError);
     });
   });
+
+  describe("inter-audit pair validation", () => {
+    const PROTOCOL_ID = "protocol-001";
+    const CHECKED_ID = "checked-001";
+    const STUDY_ID = "study-001";
+
+    function makeProtocol(tenantId = TENANT_A, studyId = STUDY_ID) {
+      return {
+        id: PROTOCOL_ID,
+        status: "parsed",
+        versionLabel: "v1",
+        versionNumber: 1,
+        document: {
+          type: "protocol",
+          title: "Protocol Title",
+          studyId,
+          study: { id: studyId, tenantId, title: "Study X" },
+        },
+      };
+    }
+    function makeChecked(tenantId = TENANT_A, studyId = STUDY_ID, type = "icf") {
+      return {
+        id: CHECKED_ID,
+        status: "parsed",
+        versionLabel: "v1",
+        versionNumber: 1,
+        document: {
+          type,
+          title: "ICF",
+          studyId,
+          study: { id: studyId, tenantId, title: "Study X" },
+        },
+      };
+    }
+
+    function mockPair(protocol: any, checked: any) {
+      mockVersion.findUnique.mockImplementation(({ where }: any) => {
+        if (where.id === PROTOCOL_ID) return Promise.resolve(protocol);
+        if (where.id === CHECKED_ID) return Promise.resolve(checked);
+        return Promise.resolve(null);
+      });
+    }
+
+    it("getInterAuditStatus: valid pair returns status", async () => {
+      mockPair(makeProtocol(), makeChecked());
+      mockRun.findFirst.mockResolvedValue(null);
+      mockFinding.count.mockResolvedValue(3);
+      mockFindingReview.findUnique.mockResolvedValue(null);
+
+      const result = await auditService.getInterAuditStatus(TENANT_A, PROTOCOL_ID, CHECKED_ID);
+      expect(result.totalFindings).toBe(3);
+    });
+
+    it("rejects when protocolVersion belongs to another tenant", async () => {
+      mockPair(makeProtocol(TENANT_B), makeChecked(TENANT_A));
+
+      await expect(
+        auditService.getInterAuditStatus(TENANT_A, PROTOCOL_ID, CHECKED_ID),
+      ).rejects.toThrow(DomainError);
+    });
+
+    it("rejects when checkedVersion belongs to another tenant", async () => {
+      mockPair(makeProtocol(TENANT_A), makeChecked(TENANT_B));
+
+      await expect(
+        auditService.getInterAuditStatus(TENANT_A, PROTOCOL_ID, CHECKED_ID),
+      ).rejects.toThrow(DomainError);
+    });
+
+    it("rejects when protocolVersionId references non-protocol document", async () => {
+      const fakeProtocol = makeProtocol();
+      fakeProtocol.document.type = "icf";
+      mockPair(fakeProtocol, makeChecked());
+
+      await expect(
+        auditService.getInterAuditStatus(TENANT_A, PROTOCOL_ID, CHECKED_ID),
+      ).rejects.toThrow(/protocol document/);
+    });
+
+    it("rejects when protocol and checked belong to different studies", async () => {
+      mockPair(makeProtocol(TENANT_A, "study-X"), makeChecked(TENANT_A, "study-Y"));
+
+      await expect(
+        auditService.getInterAuditStatus(TENANT_A, PROTOCOL_ID, CHECKED_ID),
+      ).rejects.toThrow(/same study/);
+    });
+
+    it("getInterAuditSummary applies the same validation", async () => {
+      mockPair(makeProtocol(TENANT_B), makeChecked(TENANT_A));
+
+      await expect(
+        auditService.getInterAuditSummary(TENANT_A, PROTOCOL_ID, CHECKED_ID),
+      ).rejects.toThrow(DomainError);
+    });
+  });
 });

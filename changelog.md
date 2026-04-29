@@ -2,6 +2,13 @@
 
 ## 2026-04-30
 
+### Безопасность: валидация пары protocol/checked в inter-audit
+
+- **`audit.service.ts`**: добавлен helper `validateInterAuditPair(tenantId, protocolVersionId, checkedVersionId)` — проверяет, что обе версии существуют, принадлежат тенанту, что `protocolVersionId` указывает на документ типа `protocol`, и что обе версии относятся к одному `study`. Возвращает оба объекта с включённым `document.study`.
+- **`getInterAuditStatus(tenantId, protocolVersionId, checkedVersionId)`**, **`getInterAuditSummary(tenantId, protocolVersionId, checkedVersionId)`**, **`getInterAuditFindings(...)`** теперь все используют `validateInterAuditPair`. Раньше первые два игнорировали `protocolVersionId` (хотя router его принимал), и не проверяли его tenant — потенциальная утечка факта существования чужого протокола + возможность подмены пары.
+- **Routers** `audit.getInterAuditStatus` и `audit.getInterAuditSummary` теперь прокидывают `input.protocolVersionId`.
+- **Тесты `audit.service.test.ts`**: новый describe `inter-audit pair validation` — 6 кейсов (happy path, чужой tenant у protocol, чужой tenant у checked, не-protocol document, разные studies, та же валидация в Summary).
+
 ### Безопасность: tenant isolation в getTaxonomy
 
 - **`document.service.getTaxonomy(tenantId)` и `tuning.service.getTaxonomy(tenantId)`**: добавлен обязательный параметр `tenantId`, фильтр `WHERE type=… AND (tenantId=$1 OR tenantId IS NULL)` с предпочтением tenant-specific RuleSet через `ORDER BY tenantId DESC NULLS LAST`. Раньше `findFirst` без фильтра возвращал любой подходящий RuleSet — потенциальная утечка чужой taxonomy между тенантами.
