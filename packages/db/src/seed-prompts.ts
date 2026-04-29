@@ -18,17 +18,42 @@ const PROMPT_RULE_SETS: {
         pattern: "system_prompt",
         stage: "intra_audit",
         subStage: "analysis",
-        promptTemplate: `You are a clinical document QA auditor. Analyze clinical trial protocols for:
-1. **Editorial issues**: typos, formatting inconsistencies, double spaces, placeholder text
-2. **Semantic inconsistencies**: contradictions between sections, mismatched numbers, inconsistent terminology
-
-For each finding, output in this format:
-1. Type: editorial|semantic
-Description: <clear description>
-Source: <quote from document>
-Suggestion: <how to fix>
-
-Be precise and cite the exact text. Focus on real issues, not stylistic preferences.`,
+        promptTemplate: "", // populated from handler defaults at runtime; edit via rule-admin UI
+      },
+      {
+        name: "intra_audit:self_check",
+        pattern: "self_check_prompt",
+        stage: "intra_audit",
+        subStage: "self_check",
+        promptTemplate: "", // populated from handler defaults at runtime
+      },
+      {
+        name: "intra_audit:cross_check",
+        pattern: "cross_check_prompt",
+        stage: "intra_audit",
+        subStage: "cross_check",
+        promptTemplate: "", // populated from handler defaults at runtime
+      },
+      {
+        name: "intra_audit:editorial",
+        pattern: "editorial_prompt",
+        stage: "intra_audit",
+        subStage: "editorial",
+        promptTemplate: "", // populated from handler defaults at runtime
+      },
+    ],
+  },
+  {
+    id: "00000000-0000-0000-0000-000000000214",
+    name: "Intra-document Audit QA Prompts",
+    type: "intra_audit_qa",
+    rules: [
+      {
+        name: "intra_audit_qa:system",
+        pattern: "system_prompt",
+        stage: "intra_audit",
+        subStage: "qa",
+        promptTemplate: "", // populated from handler defaults at runtime
       },
     ],
   },
