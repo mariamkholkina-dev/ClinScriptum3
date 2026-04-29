@@ -14,6 +14,7 @@
     "db:generate": "npm run generate --workspace=@clinscriptum/db",
     "db:seed": "npm run seed --workspace=@clinscriptum/db",
     "test": "turbo test",
+    "test:coverage": "turbo test -- --coverage",
     "typecheck": "turbo typecheck",
     "prepare": "husky"
   },
