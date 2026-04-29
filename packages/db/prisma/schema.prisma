@@ -313,6 +313,9 @@ model Finding {
 
   @@index([docVersionId])
   @@index([docVersionId, type])
+  @@index([docVersionId, severity])
+  @@index([docVersionId, auditCategory])
+  @@index([docVersionId, status])
   @@map("findings")
 }
 

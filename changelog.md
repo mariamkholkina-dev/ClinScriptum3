@@ -2,6 +2,19 @@
 
 ## 2026-04-30
 
+### Производительность: cursor-пагинация + индексы для findings
+
+Раньше `getAuditFindings` и `getInterAuditFindings` отдавали **все** Finding-записи документа целиком — на протоколе с тысячами findings это блокировало event loop API и раздувало payload.
+
+- **Миграция `20260430000000_add_finding_filter_indexes`**: 3 новых composite индекса на `Finding`:
+  - `(docVersionId, severity)` — фильтр по тяжести
+  - `(docVersionId, auditCategory)` — фильтр по категории
+  - `(docVersionId, status)` — фильтр по статусу finding'а
+  Без них даже фильтрованные запросы сканировали всю партицию по `docVersionId`.
+- **`getAuditFindings` и `getInterAuditFindings`**: добавлены опциональные `take` (1..500) и `cursor` (UUID последнего id). Если ни один не передан — возвращает все findings (back-compat, UI не сломан). Если передан — cursor-based пагинация через `take + 1` фокус для определения `hasMore` и возврат `nextCursor`. `orderBy` дополнен `id: "asc"` для стабильной сортировки на ties.
+- **Routers**: input расширен на `take`/`cursor` через Zod (`z.number().int().min(1).max(500).optional()`, `z.string().uuid().optional()`).
+- **Тесты `audit.service.test.ts`** (+5 кейсов): без пагинации возвращаются все findings (back-compat), `take=N` с overflow → N findings + nextCursor, `take=N` без overflow → nextCursor=null, передача `cursor` добавляет `skip:1`, orderBy включает `id` для стабильности.
+
 ### Надёжность: step-level retry + idempotencyKey в pipeline orchestrator
 
 Раньше при сбое handler в одном из шагов pipeline (`llm_check`/`llm_qa`) единственным safety-net'ом был job-level retry в BullMQ — он перезапускал handler **с самого начала**, теряя весь прогресс предыдущих шагов. Поле `ProcessingStep.idempotencyKey` существовало в schema, но никем не заполнялось.
