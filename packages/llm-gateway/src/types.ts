@@ -1,5 +1,7 @@
 export type LLMProvider = "openai" | "anthropic" | "azure_openai" | "qwen" | "yandexgpt";
 
+export type ReasoningMode = "DISABLED" | "ENABLED_HIDDEN";
+
 export interface LLMConfig {
   provider: LLMProvider;
   model: string;
@@ -7,6 +9,9 @@ export interface LLMConfig {
   baseUrl?: string;
   maxTokens?: number;
   temperature?: number;
+  thinkingEnabled?: boolean;
+  reasoningMode?: ReasoningMode;
+  timeoutMs?: number;
 }
 
 export interface LLMRequest {
@@ -14,6 +19,7 @@ export interface LLMRequest {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   maxTokens?: number;
   temperature?: number;
+  responseFormat?: "text" | "json";
 }
 
 export interface LLMResponse {
