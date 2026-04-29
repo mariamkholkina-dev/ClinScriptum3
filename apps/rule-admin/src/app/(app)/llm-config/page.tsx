@@ -106,8 +106,9 @@ interface ConfigFormData {
   model: string;
   temperature: number;
   maxOutputTokens: number;
-  maxInputTokens: string;
+  maxInputTokens: number;
   contextStrategy: string;
+  reasoningMode: string;
   chunkSizeChars: string;
   chunkOverlapChars: string;
   modelWindowChars: string;
@@ -119,6 +120,11 @@ interface ConfigFormData {
   isActive: boolean;
 }
 
+const REASONING_MODES = [
+  { value: "DISABLED", label: "Выключен" },
+  { value: "ENABLED_HIDDEN", label: "Включён (скрытый)" },
+];
+
 const EMPTY_FORM: ConfigFormData = {
   name: "",
   taskId: "",
@@ -128,8 +134,9 @@ const EMPTY_FORM: ConfigFormData = {
   model: "",
   temperature: 0.1,
   maxOutputTokens: 2048,
-  maxInputTokens: "",
+  maxInputTokens: 16000,
   contextStrategy: "chunk",
+  reasoningMode: "DISABLED",
   chunkSizeChars: "",
   chunkOverlapChars: "",
   modelWindowChars: "",
@@ -173,6 +180,8 @@ export default function LlmConfigPage() {
   const [cloneSource, setCloneSource] = useState<NonNullable<(typeof configsQuery)["data"]>[number] | null>(null);
   const [cloneTargetTasks, setCloneTargetTasks] = useState<string[]>([]);
   const [cloning, setCloning] = useState(false);
+  const [defaultConfirm, setDefaultConfirm] = useState<{ id: string; taskId: string; existingName: string } | null>(null);
+  const [unsetDefaultConfirmId, setUnsetDefaultConfirmId] = useState<string | null>(null);
 
   const utils = trpc.useUtils();
 
@@ -209,7 +218,17 @@ export default function LlmConfigPage() {
   const setDefaultMut = trpc.llmConfig.setDefault.useMutation({
     onSuccess: () => {
       utils.llmConfig.listConfigs.invalidate();
+      setDefaultConfirm(null);
       addToast("success", "Значение по умолчанию обновлено");
+    },
+    onError: (err) => addToast("error", err.message),
+  });
+
+  const unsetDefaultMut = trpc.llmConfig.unsetDefault.useMutation({
+    onSuccess: () => {
+      utils.llmConfig.listConfigs.invalidate();
+      setUnsetDefaultConfirmId(null);
+      addToast("success", "Значение по умолчанию снято");
     },
     onError: (err) => addToast("error", err.message),
   });
@@ -287,16 +306,14 @@ export default function LlmConfigPage() {
     });
   }, [configsQuery.data, filterProvider, filterStatus, searchText, sortKey, sortDir]);
 
-  const toggleSort = useCallback((key: typeof sortKey) => {
-    setSortKey((prev) => {
-      if (prev === key) {
-        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-        return prev;
-      }
+  const toggleSort = (key: typeof sortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
       setSortDir("asc");
-      return key;
-    });
-  }, []);
+    }
+  };
 
   // --- Clone handler ---
   const handleClone = useCallback(async () => {
@@ -315,8 +332,9 @@ export default function LlmConfigPage() {
           model: cloneSource.model,
           temperature: cloneSource.temperature,
           maxOutputTokens: cloneSource.maxOutputTokens,
-          maxInputTokens: cloneSource.maxInputTokens ?? undefined,
+          maxInputTokens: cloneSource.maxInputTokens,
           contextStrategy: (cloneSource.contextStrategy as any) ?? undefined,
+          reasoningMode: (cloneSource.reasoningMode as any) ?? "DISABLED",
           chunkSizeChars: cloneSource.chunkSizeChars ?? undefined,
           chunkOverlapChars: cloneSource.chunkOverlapChars ?? undefined,
           modelWindowChars: cloneSource.modelWindowChars ?? undefined,
@@ -359,8 +377,9 @@ export default function LlmConfigPage() {
         model: config.model,
         temperature: config.temperature,
         maxOutputTokens: config.maxOutputTokens,
-        maxInputTokens: config.maxInputTokens?.toString() ?? "",
+        maxInputTokens: config.maxInputTokens,
         contextStrategy: config.contextStrategy ?? "chunk",
+        reasoningMode: config.reasoningMode ?? "DISABLED",
         chunkSizeChars: config.chunkSizeChars?.toString() ?? "",
         chunkOverlapChars: config.chunkOverlapChars?.toString() ?? "",
         modelWindowChars: config.modelWindowChars?.toString() ?? "",
@@ -386,13 +405,14 @@ export default function LlmConfigPage() {
       model: form.model,
       temperature: form.temperature,
       maxOutputTokens: form.maxOutputTokens,
-      maxInputTokens: optionalInt(form.maxInputTokens),
+      maxInputTokens: form.maxInputTokens,
       contextStrategy: form.contextStrategy as
         | "chunk"
         | "multi_chunk"
         | "full_document"
         | "multi_document"
         | undefined,
+      reasoningMode: form.reasoningMode as "DISABLED" | "ENABLED_HIDDEN",
       chunkSizeChars: optionalInt(form.chunkSizeChars),
       chunkOverlapChars: optionalInt(form.chunkOverlapChars),
       modelWindowChars: optionalInt(form.modelWindowChars),
@@ -424,6 +444,25 @@ export default function LlmConfigPage() {
       testMut.mutate({ id });
     },
     [testMut],
+  );
+
+  const handleStarClick = useCallback(
+    (config: NonNullable<(typeof configsQuery.data)>[number]) => {
+      if (config.isDefault) {
+        setUnsetDefaultConfirmId(config.id);
+        return;
+      }
+      const allConfigs = configsQuery.data ?? [];
+      const currentDefault = allConfigs.find(
+        (c) => c.taskId === config.taskId && c.isDefault && c.id !== config.id,
+      );
+      if (currentDefault) {
+        setDefaultConfirm({ id: config.id, taskId: config.taskId, existingName: currentDefault.name });
+      } else {
+        setDefaultMut.mutate({ id: config.id });
+      }
+    },
+    [configsQuery.data, setDefaultMut],
   );
 
   const setField = useCallback(
@@ -642,11 +681,17 @@ export default function LlmConfigPage() {
                     </Badge>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    {config.isDefault ? (
-                      <Star size={18} className="fill-yellow-400 text-yellow-400" />
-                    ) : (
-                      <Star size={18} className="text-gray-300" />
-                    )}
+                    <button
+                      onClick={() => handleStarClick(config)}
+                      title={config.isDefault ? "Снять по умолчанию" : "Сделать по умолчанию"}
+                      className="rounded p-0.5 hover:bg-yellow-50"
+                    >
+                      {config.isDefault ? (
+                        <Star size={18} className="fill-yellow-400 text-yellow-400" />
+                      ) : (
+                        <Star size={18} className="text-gray-300 hover:text-yellow-400" />
+                      )}
+                    </button>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-1">
@@ -665,15 +710,6 @@ export default function LlmConfigPage() {
                         <Copy size={14} />
                         <span>Клон</span>
                       </button>
-                      {!config.isDefault && (
-                        <button
-                          onClick={() => setDefaultMut.mutate({ id: config.id })}
-                          title="Сделать по умолчанию"
-                          className="rounded p-1.5 text-gray-400 hover:bg-yellow-50 hover:text-yellow-600"
-                        >
-                          <Star size={16} />
-                        </button>
-                      )}
                       <button
                         onClick={() => handleTest(config.id)}
                         title="Проверить соединение"
@@ -819,7 +855,7 @@ export default function LlmConfigPage() {
 
           {/* Max Output Tokens */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Макс. токенов на выходе</label>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Макс. токенов на выходе *</label>
             <input
               type="number"
               min={1}
@@ -831,15 +867,12 @@ export default function LlmConfigPage() {
 
           {/* Max Input Tokens */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Макс. токенов на входе <span className="text-gray-400">(необязательно)</span>
-            </label>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Макс. токенов на входе *</label>
             <input
               type="number"
               min={1}
               value={form.maxInputTokens}
-              onChange={(e) => setField("maxInputTokens", e.target.value)}
-              placeholder="e.g. 128000"
+              onChange={(e) => setField("maxInputTokens", parseInt(e.target.value, 10) || 0)}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           </div>
@@ -855,6 +888,22 @@ export default function LlmConfigPage() {
               {CONTEXT_STRATEGIES.map((cs) => (
                 <option key={cs.value} value={cs.value}>
                   {cs.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Reasoning Mode */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Режим рассуждений</label>
+            <select
+              value={form.reasoningMode}
+              onChange={(e) => setField("reasoningMode", e.target.value)}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            >
+              {REASONING_MODES.map((rm) => (
+                <option key={rm.value} value={rm.value}>
+                  {rm.label}
                 </option>
               ))}
             </select>
@@ -1009,7 +1058,7 @@ export default function LlmConfigPage() {
           </button>
           <button
             onClick={handleSubmit}
-            disabled={isSaving || !form.name || !form.taskId || !form.model}
+            disabled={isSaving || !form.name || !form.taskId || !form.model || !form.maxOutputTokens || !form.maxInputTokens}
             className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSaving && <Loader2 size={16} className="animate-spin" />}
@@ -1158,6 +1207,66 @@ export default function LlmConfigPage() {
           >
             {deleteMut.isPending && <Loader2 size={16} className="animate-spin" />}
             Удалить
+          </button>
+        </div>
+      </Modal>
+
+      {/* Set Default Confirmation Modal */}
+      <Modal
+        open={defaultConfirm !== null}
+        onClose={() => setDefaultConfirm(null)}
+        title="Смена конфигурации по умолчанию"
+      >
+        <p className="text-sm text-gray-600">
+          Для задачи <span className="font-mono font-medium text-gray-900">{defaultConfirm?.taskId}</span> уже
+          установлена конфигурация по умолчанию:{" "}
+          <span className="font-medium text-gray-900">{defaultConfirm?.existingName}</span>.
+        </p>
+        <p className="mt-2 text-sm text-gray-600">
+          Текущее значение по умолчанию будет снято и заменено на выбранную конфигурацию. Продолжить?
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            onClick={() => setDefaultConfirm(null)}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={() => defaultConfirm && setDefaultMut.mutate({ id: defaultConfirm.id })}
+            disabled={setDefaultMut.isPending}
+            className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:opacity-50"
+          >
+            {setDefaultMut.isPending && <Loader2 size={16} className="animate-spin" />}
+            Заменить
+          </button>
+        </div>
+      </Modal>
+
+      {/* Unset Default Confirmation Modal */}
+      <Modal
+        open={unsetDefaultConfirmId !== null}
+        onClose={() => setUnsetDefaultConfirmId(null)}
+        title="Снятие значения по умолчанию"
+      >
+        <p className="text-sm text-gray-600">
+          Вы уверены, что хотите снять эту конфигурацию как значение по умолчанию?
+          Задача останется без конфигурации по умолчанию и будет использовать переменные окружения.
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            onClick={() => setUnsetDefaultConfirmId(null)}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={() => unsetDefaultConfirmId && unsetDefaultMut.mutate({ id: unsetDefaultConfirmId })}
+            disabled={unsetDefaultMut.isPending}
+            className="inline-flex items-center gap-2 rounded-lg bg-yellow-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-yellow-600 disabled:opacity-50"
+          >
+            {unsetDefaultMut.isPending && <Loader2 size={16} className="animate-spin" />}
+            Снять
           </button>
         </div>
       </Modal>
