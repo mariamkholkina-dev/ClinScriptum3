@@ -1,6 +1,6 @@
 import { prisma } from "@clinscriptum/db";
 import { storage } from "../lib/storage.js";
-import { runProcessingPipeline } from "../lib/processing-pipeline.js";
+import { enqueueJob } from "../lib/queue.js";
 import { DomainError } from "./errors.js";
 import { requireTenantResource } from "./tenant-guard.js";
 import { logger } from "../lib/logger.js";
@@ -129,9 +129,13 @@ export const documentService = {
     const buffer = Buffer.from(fileBuffer, "base64");
     await storage.upload(version.fileUrl, buffer);
 
-    runProcessingPipeline(version.id).catch((err) =>
-      logger.error(`[pipeline] Background error for ${version.id}:`, { error: String(err) }),
-    );
+    await prisma.documentVersion.update({
+      where: { id: version.id },
+      data: { status: "parsing" },
+    });
+
+    await enqueueJob("run_pipeline", { versionId: version.id });
+    logger.info("[pipeline] Enqueued run_pipeline job", { versionId: version.id });
 
     return { versionId: version.id, status: "parsing" as const };
   },
@@ -156,15 +160,14 @@ export const documentService = {
       prisma.section.deleteMany({ where: { docVersionId: versionId } }),
       prisma.documentVersion.update({
         where: { id: versionId },
-        data: { status: "uploading" },
+        data: { status: "parsing" },
       }),
     ]);
 
     logger.info("[reprocess] Cleared history, restarting pipeline", { versionId });
 
-    runProcessingPipeline(versionId).catch((err) =>
-      logger.error(`[pipeline] Background error for ${versionId}:`, { error: String(err) }),
-    );
+    await enqueueJob("run_pipeline", { versionId });
+    logger.info("[pipeline] Enqueued run_pipeline job for reprocess", { versionId });
 
     return { versionId, status: "parsing" as const };
   },

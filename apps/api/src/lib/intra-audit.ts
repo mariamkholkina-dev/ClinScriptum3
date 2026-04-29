@@ -113,7 +113,7 @@ export async function runIntraDocAudit(versionId: string): Promise<string> {
     });
 
     await prisma.finding.deleteMany({
-      where: { docVersionId: versionId, type: "intra_audit" },
+      where: { docVersionId: versionId, type: { in: ["intra_audit", "editorial", "semantic"] } },
     });
 
     const sections = await loadSections(versionId);
@@ -531,7 +531,7 @@ function parseLlmCrossCheckResponse(raw: string): RawFinding[] {
     return arr
       .filter((item) => item.description && item.issue_type)
       .map((item) => ({
-        type: "intra_audit" as const,
+        type: "semantic" as const,
         description: item.description,
         suggestion: item.suggestion ?? undefined,
         severity: mapSeverity(item.severity),
@@ -639,6 +639,12 @@ async function saveFindings(versionId: string, findings: RawFinding[]): Promise<
   const ids: string[] = [];
 
   for (const f of findings) {
+    const taskKind = f.auditCategory === "grammar"
+      ? "self_editorial"
+      : f.anchorZone && f.targetZone
+        ? "cross_check"
+        : "self_check";
+
     const record = await prisma.finding.create({
       data: {
         docVersionId: versionId,
@@ -647,15 +653,24 @@ async function saveFindings(versionId: string, findings: RawFinding[]): Promise<
         suggestion: f.suggestion ?? null,
         severity: f.severity as any,
         originalSeverity: f.severity as any,
-        auditCategory: f.auditCategory,
-        issueType: f.issueType,
-        issueFamily: f.issueFamily,
         anchorZone: f.anchorZone ?? null,
         targetZone: f.targetZone ?? null,
-        qaVerified: false,
-        sourceRef: f.sourceRef as any,
+        sourceRef: {
+          ...f.sourceRef,
+          zone: f.targetZone ?? f.anchorZone,
+          anchorZone: f.anchorZone,
+          taskKind,
+        } as any,
         status: "pending",
-        extraAttributes: {},
+        extraAttributes: {
+          severity: f.severity,
+          method: "deterministic",
+          taskKind,
+          issueType: f.issueType,
+          issueFamily: f.issueFamily,
+          auditCategory: f.auditCategory,
+          confidence: "high",
+        },
       },
     });
     ids.push(record.id);

@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
 export interface StorageProvider {
   upload(key: string, data: Buffer): Promise<string>;
@@ -30,10 +31,16 @@ class LocalStorageProvider implements StorageProvider {
   }
 }
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MONOREPO_ROOT = path.resolve(__dirname, "../../../..");
+const API_UPLOADS = path.join(MONOREPO_ROOT, "apps/api/uploads");
+
 export function createStorageProvider(): StorageProvider {
   const type = process.env.STORAGE_TYPE ?? "local";
   if (type === "local") {
-    return new LocalStorageProvider(process.env.STORAGE_LOCAL_PATH ?? "./uploads");
+    const configured = process.env.STORAGE_LOCAL_PATH ?? "./uploads";
+    const uploadsPath = path.isAbsolute(configured) ? configured : API_UPLOADS;
+    return new LocalStorageProvider(uploadsPath);
   }
   throw new Error("S3 provider in workers: use @aws-sdk/client-s3 (not yet wired)");
 }
