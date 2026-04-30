@@ -32,3 +32,5 @@ playwright-report/
 
 # Database dumps
 *.sql
+# Prisma migrations are checked in
+!packages/db/prisma/migrations/**/*.sql
