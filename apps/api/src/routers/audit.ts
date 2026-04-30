@@ -90,7 +90,11 @@ export const auditRouter = router({
       }),
     )
     .query(({ ctx, input }) =>
-      auditService.getInterAuditStatus(ctx.user.tenantId, input.checkedVersionId),
+      auditService.getInterAuditStatus(
+        ctx.user.tenantId,
+        input.protocolVersionId,
+        input.checkedVersionId,
+      ),
     ),
 
   getInterAuditFindings: p
@@ -114,7 +118,11 @@ export const auditRouter = router({
       }),
     )
     .query(({ ctx, input }) =>
-      auditService.getInterAuditSummary(ctx.user.tenantId, input.checkedVersionId),
+      auditService.getInterAuditSummary(
+        ctx.user.tenantId,
+        input.protocolVersionId,
+        input.checkedVersionId,
+      ),
     ),
 
   validateAllInterAuditFindings: p
