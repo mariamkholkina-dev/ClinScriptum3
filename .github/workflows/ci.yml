@@ -55,7 +55,7 @@ jobs:
       - run: npx turbo build
       - run: npx turbo typecheck
       - run: npx turbo lint
-      - run: npx turbo test -- --coverage --reporter=text
+      - run: npx turbo test -- --coverage --coverage.reporter=text
 
   e2e:
     runs-on: ubuntu-latest
