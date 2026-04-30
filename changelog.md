@@ -2,6 +2,21 @@
 
 ## 2026-04-30
 
+### Надёжность: step-level retry + idempotencyKey в pipeline orchestrator
+
+Раньше при сбое handler в одном из шагов pipeline (`llm_check`/`llm_qa`) единственным safety-net'ом был job-level retry в BullMQ — он перезапускал handler **с самого начала**, теряя весь прогресс предыдущих шагов. Поле `ProcessingStep.idempotencyKey` существовало в schema, но никем не заполнялось.
+
+- **Новый модуль `apps/workers/src/lib/step-retry.ts`**:
+  - Per-level retry config: `deterministic`/`operator_review`/`user_validation` — `maxAttempts=1` (нет смысла ретраить чистую логику или пользовательский гейт); `llm_check`/`llm_qa` — `maxAttempts=3, baseDelayMs=5000` с экспоненциальным backoff
+  - `executeStepWithRetry(level, fn)` — оборачивает вызов handler в retry loop, передаёт `attempt` номер в callback для синка с БД
+  - `makeIdempotencyKey(processingRunId, level, attempt)` — стабильный ключ `runId:level:attempt` для будущей дедупликации side-effects (например, LLM cost при повторе)
+- **`orchestrator.ts`**: вызов `handler.execute()` обёрнут в `executeStepWithRetry`. Перед каждым attempt обновляются `attemptNumber` и `idempotencyKey` в `ProcessingStep`. На retry повторно проставляется `startedAt` для корректной длительности.
+- **`metrics.ts`**: к `recordPipelineMetric` добавлено опциональное поле `attempts: number`, чтобы видеть в логах, сколько попыток понадобилось для успеха.
+- **Тесты**:
+  - `apps/workers/src/lib/__tests__/step-retry.test.ts` (9 кейсов): успех с первой попытки, успех на третьей, exhausted attempts, no-retry для deterministic, exponential backoff с fake timers, idempotencyKey формат
+  - `apps/workers/src/pipeline/__tests__/orchestrator.test.ts` (+4 кейса): idempotencyKey ставится на первый attempt, retry с обновлением attemptNumber и нового ключа, exhausted → step `failed`, deterministic не ретраит
+- **Pre-existing lint-fix `packages/shared/soa-detection-core.ts`**: убран лишний escape `\-` внутри character class в двух regex.
+
 ### Тесты: глубокое покрытие 6 worker handlers
 
 Раньше из 10 worker handlers тестами были покрыты только 4 (`parse-document`, `classify-sections`, `extract-facts`, `intra-doc-audit`). Теперь покрыты все 10 — добавлены тесты для оставшихся 6:
