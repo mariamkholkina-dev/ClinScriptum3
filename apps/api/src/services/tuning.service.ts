@@ -733,9 +733,13 @@ export const tuningService = {
     };
   },
 
-  async getTaxonomy() {
+  async getTaxonomy(tenantId: string) {
     const ruleSet = await prisma.ruleSet.findFirst({
-      where: { type: "section_classification" },
+      where: {
+        type: "section_classification",
+        OR: [{ tenantId }, { tenantId: null }],
+      },
+      orderBy: { tenantId: { sort: "desc", nulls: "last" } },
       include: {
         versions: {
           where: { isActive: true },

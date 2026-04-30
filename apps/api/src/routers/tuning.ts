@@ -133,7 +133,7 @@ export const tuningRouter = router({
     .input(z.object({ type: tuningTypeEnum }))
     .mutation(({ ctx, input }) => tuningService.runRegression(ctx.user.tenantId, input.type)),
 
-  getTaxonomy: p.query(() => tuningService.getTaxonomy()),
+  getTaxonomy: p.query(({ ctx }) => tuningService.getTaxonomy(ctx.user.tenantId)),
 
   getVersionsForTuning: p.query(({ ctx }) =>
     tuningService.getVersionsForTuning(ctx.user.tenantId),

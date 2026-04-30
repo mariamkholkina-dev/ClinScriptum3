@@ -99,5 +99,5 @@ export const documentRouter = router({
       ),
     ),
 
-  getTaxonomy: p.query(() => documentService.getTaxonomy()),
+  getTaxonomy: p.query(({ ctx }) => documentService.getTaxonomy(ctx.user.tenantId)),
 });
