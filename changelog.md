@@ -2,6 +2,19 @@
 
 ## 2026-04-30
 
+### Тесты: глубокое покрытие 6 worker handlers
+
+Раньше из 10 worker handlers тестами были покрыты только 4 (`parse-document`, `classify-sections`, `extract-facts`, `intra-doc-audit`). Теперь покрыты все 10 — добавлены тесты для оставшихся 6:
+
+- **`generate-icf.test.ts`** (9 кейсов): регистрация handlers, deterministic читает protocol sections + facts (включая пустой случай), llm_check skip без apiKey, генерация 12 секций, placeholder для отсутствующего source, custom section prompt, trim до inputBudgetChars, propagation LLM-ошибок (no swallowing)
+- **`generate-csr.test.ts`** (10 кейсов): то же что ICF + URS-082 (только priority ≤10), URS-063 (instruction future→past tense), фильтрация generation rules по `documentType='csr'`
+- **`run-evaluation.test.ts`** (10 кейсов): NOT_FOUND throw, статусы running/completed/failed, skip samples без документов, pass/fail на f1≥0.8, error в stage → status='error', аггрегация per-stage метрик, delta с comparedToRunId, exception → failed, loadActualResults для extraction
+- **`run-batch-evaluation.test.ts`** (9 кейсов): NOT_FOUND throw, фильтр status:['parsed','ready'], confidence=classified/total, average fact confidence, confidence buckets, error → null confidence, outer exception, delta, concurrency=5 пакетов
+- **`analyze-corrections.test.ts`** (8 кейсов): early return, threshold (≥3 frequency), группировка по (stage,entityType,patternKey), update existing pending recommendation, derivePatternKey, describeSuggestedChange, фильтр isProcessed:false
+- **`run-pipeline.test.ts`** (9 кейсов): полный 5-stage flow для protocol, skip extract+SOA для ICF/CSR, статусы на каждом этапе, ProcessingRun с активным bundle, SOA failure → marks SOA failed + rethrows, error в parse/classify → status='error'
+
+Итого 55 новых тестов для workers. Также pre-existing lint-fix `classify-sections.ts:470` (`let parseErrors` → `const`).
+
 ### Безопасность: валидация пары protocol/checked в inter-audit
 
 - **`audit.service.ts`**: добавлен helper `validateInterAuditPair(tenantId, protocolVersionId, checkedVersionId)` — проверяет, что обе версии существуют, принадлежат тенанту, что `protocolVersionId` указывает на документ типа `protocol`, и что обе версии относятся к одному `study`. Возвращает оба объекта с включённым `document.study`.
