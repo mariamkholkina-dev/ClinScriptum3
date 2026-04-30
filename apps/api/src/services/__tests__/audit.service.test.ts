@@ -225,4 +225,106 @@ describe("auditService", () => {
       ).rejects.toThrow(DomainError);
     });
   });
+
+  describe("getAuditFindings: cursor pagination", () => {
+    function makeFinding(id: string) {
+      return {
+        id,
+        docVersionId: VERSION_ID,
+        type: "intra_audit",
+        severity: "low",
+        status: "pending",
+        createdAt: new Date(),
+      };
+    }
+
+    it("without take/cursor: returns ALL findings (no pagination, back-compat)", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockFinding.findMany.mockResolvedValueOnce([
+        makeFinding("f1"),
+        makeFinding("f2"),
+        makeFinding("f3"),
+      ]);
+
+      const result = await auditService.getAuditFindings(TENANT_A, "writer", {
+        docVersionId: VERSION_ID,
+      });
+
+      expect(result.findings).toHaveLength(3);
+      expect(result.nextCursor).toBeNull();
+      // findMany called WITHOUT take/cursor when neither was supplied
+      const findManyCall = mockFinding.findMany.mock.calls[0][0];
+      expect(findManyCall.take).toBeUndefined();
+      expect(findManyCall.cursor).toBeUndefined();
+    });
+
+    it("with take=N and more results available: returns N findings + nextCursor", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      // Service requests take+1 (=3) to detect overflow; returns 3
+      mockFinding.findMany.mockResolvedValueOnce([
+        makeFinding("f1"),
+        makeFinding("f2"),
+        makeFinding("f3"),
+      ]);
+
+      const result = await auditService.getAuditFindings(TENANT_A, "writer", {
+        docVersionId: VERSION_ID,
+        take: 2,
+      });
+
+      expect(result.findings).toHaveLength(2);
+      expect(result.findings.map((f: any) => f.id)).toEqual(["f1", "f2"]);
+      expect(result.nextCursor).toBe("f2");
+
+      const findManyCall = mockFinding.findMany.mock.calls[0][0];
+      expect(findManyCall.take).toBe(3); // take + 1
+    });
+
+    it("with take=N and exactly N results: returns N findings, nextCursor=null", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockFinding.findMany.mockResolvedValueOnce([
+        makeFinding("f1"),
+        makeFinding("f2"),
+      ]);
+
+      const result = await auditService.getAuditFindings(TENANT_A, "writer", {
+        docVersionId: VERSION_ID,
+        take: 5,
+      });
+
+      expect(result.findings).toHaveLength(2);
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it("with cursor: passes cursor + skip:1 to findMany", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockFinding.findMany.mockResolvedValueOnce([makeFinding("f3"), makeFinding("f4")]);
+
+      await auditService.getAuditFindings(TENANT_A, "writer", {
+        docVersionId: VERSION_ID,
+        take: 2,
+        cursor: "f2",
+      });
+
+      const findManyCall = mockFinding.findMany.mock.calls[0][0];
+      expect(findManyCall.cursor).toEqual({ id: "f2" });
+      expect(findManyCall.skip).toBe(1);
+    });
+
+    it("orderBy includes id for stable cursor pagination", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockFinding.findMany.mockResolvedValueOnce([]);
+
+      await auditService.getAuditFindings(TENANT_A, "writer", {
+        docVersionId: VERSION_ID,
+        take: 10,
+      });
+
+      const orderBy = mockFinding.findMany.mock.calls[0][0].orderBy;
+      const orderKeys = (orderBy as Array<Record<string, string>>).map(
+        (o) => Object.keys(o)[0],
+      );
+      expect(orderKeys).toContain("id");
+    });
+  });
 });

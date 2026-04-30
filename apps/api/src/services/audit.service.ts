@@ -142,6 +142,8 @@ export const auditService = {
       severity?: string;
       category?: string;
       status?: string;
+      take?: number;
+      cursor?: string;
     },
   ) {
     const version = await prisma.documentVersion.findUnique({
@@ -165,6 +167,7 @@ export const auditService = {
       if (review && review.status !== "published") {
         return {
           findings: [],
+          nextCursor: null as string | null,
           documentTitle: version.document.title,
           versionLabel: version.versionLabel ?? `v${version.versionNumber}`,
           documentType: version.document.type,
@@ -185,16 +188,33 @@ export const auditService = {
       where.hiddenByReviewer = false;
     }
 
+    const paginated = input.take !== undefined || input.cursor !== undefined;
+    const take = input.take ?? 100;
     const findings = await prisma.finding.findMany({
       where,
       orderBy: [
         { severity: "asc" },
         { createdAt: "asc" },
+        { id: "asc" },
       ],
+      ...(paginated
+        ? {
+            take: take + 1,
+            ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+          }
+        : {}),
     });
 
+    let nextCursor: string | null = null;
+    let pagedFindings = findings;
+    if (paginated && findings.length > take) {
+      pagedFindings = findings.slice(0, take);
+      nextCursor = pagedFindings[pagedFindings.length - 1]?.id ?? null;
+    }
+
     return {
-      findings,
+      findings: pagedFindings,
+      nextCursor,
       documentTitle: version.document.title,
       versionLabel: version.versionLabel ?? `v${version.versionNumber}`,
       documentType: version.document.type,
@@ -396,6 +416,8 @@ export const auditService = {
       checkedVersionId: string;
       severity?: string;
       status?: string;
+      take?: number;
+      cursor?: string;
     },
   ) {
     const { protocolVersion, checkedVersion } = await validateInterAuditPair(
@@ -418,6 +440,7 @@ export const auditService = {
       if (review && review.status !== "published") {
         return {
           findings: [],
+          nextCursor: null as string | null,
           protocolTitle: "",
           protocolLabel: "",
           checkedDocTitle: checkedVersion.document.title,
@@ -440,13 +463,29 @@ export const auditService = {
       where.hiddenByReviewer = false;
     }
 
+    const paginated = input.take !== undefined || input.cursor !== undefined;
+    const take = input.take ?? 100;
     const findings = await prisma.finding.findMany({
       where,
-      orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ severity: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      ...(paginated
+        ? {
+            take: take + 1,
+            ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+          }
+        : {}),
     });
 
+    let nextCursor: string | null = null;
+    let pagedFindings = findings;
+    if (paginated && findings.length > take) {
+      pagedFindings = findings.slice(0, take);
+      nextCursor = pagedFindings[pagedFindings.length - 1]?.id ?? null;
+    }
+
     return {
-      findings,
+      findings: pagedFindings,
+      nextCursor,
       protocolTitle: protocolVersion.document.title,
       protocolLabel: protocolVersion.versionLabel ?? `v${protocolVersion.versionNumber}`,
       checkedDocTitle: checkedVersion.document.title,

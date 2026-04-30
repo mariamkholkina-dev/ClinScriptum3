@@ -25,6 +25,8 @@ export const auditRouter = router({
         severity: z.enum(["critical", "high", "medium", "low", "info"]).optional(),
         category: z.string().optional(),
         status: z.enum(["pending", "confirmed", "rejected", "resolved", "false_positive"]).optional(),
+        take: z.number().int().min(1).max(500).optional(),
+        cursor: z.string().uuid().optional(),
       }),
     )
     .query(({ ctx, input }) =>
@@ -104,6 +106,8 @@ export const auditRouter = router({
         checkedVersionId: z.string().uuid(),
         severity: z.enum(["critical", "high", "medium", "low", "info"]).optional(),
         status: z.enum(["pending", "confirmed", "rejected", "resolved", "false_positive"]).optional(),
+        take: z.number().int().min(1).max(500).optional(),
+        cursor: z.string().uuid().optional(),
       }),
     )
     .query(({ ctx, input }) =>
