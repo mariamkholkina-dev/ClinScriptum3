@@ -103,7 +103,7 @@ export default function FindingReviewPage() {
     if (data?.review.status === "pending") {
       startReview.mutate({ reviewId });
     }
-  }, [data?.review.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data?.review.status]);
 
   const review = data?.review;
   const findings = data?.findings ?? [];
@@ -123,7 +123,7 @@ export default function FindingReviewPage() {
     if (selectedFinding) {
       setNoteText(selectedFinding.reviewerNote ?? "");
     }
-  }, [selectedFinding?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedFinding?.id]);
 
   if (isLoading) {
     return (

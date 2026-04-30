@@ -319,7 +319,7 @@ function splitContentIntoBlocks(bodyHtml: string) {
       type: "paragraph",
       content: stripHtml(trailing),
       rawHtml: trailing,
-      order: order++,
+      order: order,
     });
   }
 

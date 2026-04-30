@@ -688,11 +688,19 @@ export default function ExtractionViewer({ versionId }: { versionId: string; exp
   }, [rawFacts, updateStatusMutation]);
 
   const toggleSelect = useCallback((key: string) => {
-    setSelectedKeys((prev) => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
   }, []);
 
   const toggleExpand = useCallback((key: string) => {
-    setExpandedKeys((prev) => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
   }, []);
 
   if (q.isLoading) {
