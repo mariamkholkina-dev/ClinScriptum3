@@ -467,7 +467,7 @@ ${catalog}
       let corrections = 0;
       let totalTokens = 0;
       let skippedInvalidZone = 0;
-      let parseErrors: string[] = [];
+      const parseErrors: string[] = [];
 
       const batchResults = await runWithConcurrency(
         batches.map((batch, batchIdx) => async (): Promise<{ content: string; parsed: unknown[] | null; tokens: number }> => {
