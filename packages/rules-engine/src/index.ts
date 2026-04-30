@@ -6,5 +6,5 @@ export type { RuleSetConfig, SectionMappingRule, FactExtractionRule } from "./ty
 export type { ClassificationResult } from "./section-classifier.js";
 export type { ExtractedFact } from "./fact-extractor.js";
 export type { Contradiction } from "./contradiction-detector.js";
-export { toSectionMappingRules, toFactExtractionRules, toAuditPrompt, toGenerationPrompts } from "./rule-adapter.js";
+export { toSectionMappingRules, toFactExtractionRules, toAuditPrompt, toAuditPromptMap, toGenerationPrompts } from "./rule-adapter.js";
 export type { DbRule } from "./rule-adapter.js";

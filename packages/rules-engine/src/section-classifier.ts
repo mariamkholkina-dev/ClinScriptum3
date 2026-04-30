@@ -7,6 +7,42 @@ export interface ClassificationResult {
   method: "exact" | "pattern" | "content";
 }
 
+const WORD_CHAR = "[а-яА-ЯёЁa-zA-Z0-9_]";
+const WORD_BOUNDARY = `(?:(?<=${WORD_CHAR})(?!${WORD_CHAR})|(?<!${WORD_CHAR})(?=${WORD_CHAR}))`;
+
+function adaptPatternForUnicode(pattern: string): string {
+  return pattern
+    .replace(/\\b/g, WORD_BOUNDARY)
+    .replace(/\\w/g, WORD_CHAR);
+}
+
+const regexCache = new Map<string, RegExp | null>();
+
+function safeRegex(pattern: string): RegExp | null {
+  const cached = regexCache.get(pattern);
+  if (cached !== undefined) return cached;
+  try {
+    let flags = "";
+    let clean = pattern;
+    if (clean.startsWith("(?i)")) {
+      flags = "i";
+      clean = clean.slice(4);
+    }
+    clean = clean.replace(/\(\?[imsu]+\)/g, "");
+    clean = adaptPatternForUnicode(clean);
+    const re = new RegExp(clean, flags || "i");
+    if (regexCache.size >= 500) {
+      const firstKey = regexCache.keys().next().value;
+      if (firstKey !== undefined) regexCache.delete(firstKey);
+    }
+    regexCache.set(pattern, re);
+    return re;
+  } catch {
+    regexCache.set(pattern, null);
+    return null;
+  }
+}
+
 export class SectionClassifier {
   private rules: SectionMappingRule[];
 
@@ -19,7 +55,8 @@ export class SectionClassifier {
 
     for (const rule of this.rules) {
       for (const pattern of rule.patterns) {
-        const re = new RegExp(pattern, "i");
+        const re = safeRegex(pattern);
+        if (!re) continue;
 
         if (re.test(normalizedTitle)) {
           return {
@@ -30,7 +67,6 @@ export class SectionClassifier {
           };
         }
 
-        // URS-072: Also check initial content text when title alone is ambiguous
         if (contentSnippet && re.test(contentSnippet)) {
           return {
             sectionTitle: title,

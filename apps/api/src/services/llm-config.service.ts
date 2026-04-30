@@ -16,12 +16,13 @@ export interface CreateLlmConfigInput {
   apiKey?: string;
   model: string;
   temperature?: number;
-  maxOutputTokens?: number;
-  maxInputTokens?: number;
+  maxOutputTokens: number;
+  maxInputTokens: number;
   contextStrategy?: ContextStrategy;
   chunkSizeChars?: number;
   chunkOverlapChars?: number;
   modelWindowChars?: number;
+  reasoningMode?: "DISABLED" | "ENABLED_HIDDEN";
   rateLimit?: number;
   timeoutMs?: number;
   coldStartMs?: number;
@@ -117,13 +118,14 @@ class LlmConfigService {
         name: data.name,
         taskId: data.taskId,
         provider: data.provider,
-        baseUrl: data.baseUrl ?? "",
+        baseUrl: (data.baseUrl ?? "").trim(),
         apiKey: data.apiKey ?? "",
-        model: data.model,
+        model: data.model.trim(),
         temperature: data.temperature ?? 0.1,
-        maxOutputTokens: data.maxOutputTokens ?? 2048,
-        maxInputTokens: data.maxInputTokens ?? null,
+        maxOutputTokens: data.maxOutputTokens,
+        maxInputTokens: data.maxInputTokens,
         contextStrategy: data.contextStrategy ?? "chunk",
+        reasoningMode: data.reasoningMode ?? "DISABLED",
         chunkSizeChars: data.chunkSizeChars ?? null,
         chunkOverlapChars: data.chunkOverlapChars ?? null,
         modelWindowChars: data.modelWindowChars ?? null,
@@ -153,13 +155,14 @@ class LlmConfigService {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.taskId !== undefined && { taskId: data.taskId }),
         ...(data.provider !== undefined && { provider: data.provider }),
-        ...(data.baseUrl !== undefined && { baseUrl: data.baseUrl }),
+        ...(data.baseUrl !== undefined && { baseUrl: data.baseUrl.trim() }),
         ...(data.apiKey !== undefined && { apiKey: data.apiKey }),
-        ...(data.model !== undefined && { model: data.model }),
+        ...(data.model !== undefined && { model: data.model.trim() }),
         ...(data.temperature !== undefined && { temperature: data.temperature }),
         ...(data.maxOutputTokens !== undefined && { maxOutputTokens: data.maxOutputTokens }),
         ...(data.maxInputTokens !== undefined && { maxInputTokens: data.maxInputTokens }),
         ...(data.contextStrategy !== undefined && { contextStrategy: data.contextStrategy }),
+        ...(data.reasoningMode !== undefined && { reasoningMode: data.reasoningMode }),
         ...(data.chunkSizeChars !== undefined && { chunkSizeChars: data.chunkSizeChars }),
         ...(data.chunkOverlapChars !== undefined && { chunkOverlapChars: data.chunkOverlapChars }),
         ...(data.modelWindowChars !== undefined && { modelWindowChars: data.modelWindowChars }),
@@ -212,6 +215,25 @@ class LlmConfigService {
     return prisma.llmConfig.findUnique({ where: { id } });
   }
 
+  async unsetDefault(id: string) {
+    const config = await prisma.llmConfig.findUnique({ where: { id } });
+    if (!config) {
+      throw new DomainError("NOT_FOUND", "LLM config not found");
+    }
+    if (!config.isDefault) {
+      throw new DomainError("BAD_REQUEST", "Config is not default");
+    }
+
+    await prisma.llmConfig.update({
+      where: { id },
+      data: { isDefault: false },
+    });
+
+    logger.info("LLM config unset as default", { configId: id, taskId: config.taskId });
+
+    return prisma.llmConfig.findUnique({ where: { id } });
+  }
+
   async testConnection(id: string): Promise<{ success: boolean; latencyMs: number; error?: string }> {
     const config = await prisma.llmConfig.findUnique({ where: { id } });
     if (!config) {
@@ -239,6 +261,8 @@ class LlmConfigService {
       baseUrl: effectiveBaseUrl,
       maxTokens: 50,
       temperature: 0,
+      reasoningMode: (config.reasoningMode as "DISABLED" | "ENABLED_HIDDEN") ?? "DISABLED",
+      timeoutMs: config.timeoutMs ?? 50_000,
     });
 
     const start = Date.now();

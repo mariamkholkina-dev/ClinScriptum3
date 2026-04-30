@@ -138,6 +138,82 @@ Copy `.env.example` to `.env`. Key variables: `DATABASE_URL`, `REDIS_URL`, `JWT_
 - **ESLint**: Flat config (`eslint.config.mjs`) with `typescript-eslint`. `no-console: warn`.
 - **Run**: `npm run lint` or `npx turbo lint`
 
+### Security
+
+- Never log JWT tokens, API keys, passwords, or patient/clinical data
+- All new tRPC procedures must use `verifyAccessToken` middleware (see `apps/api/src/trpc/trpc.ts`)
+- Every DB query on tenant data must filter by `tenantId` — use `requireTenantResource()` guard
+- All tRPC inputs validated via Zod schemas — never trust raw input
+- No `eval()`, no dynamic `require()`, no SQL string concatenation
+- File uploads: validate MIME type, enforce size limits, sanitize filenames
+
+### Common gotchas
+
+- After editing `packages/db/prisma/schema.prisma`: run `npm run db:generate` before typecheck
+- After adding a new tRPC router: register it in `apps/api/src/routers/index.ts` (import + add to `router({})`)
+- ESM: imports in `apps/api` and `apps/workers` require `.js` extension (`import { x } from './file.js'`)
+- After adding new service: export from `apps/api/src/services/index.ts`
+- Prisma enums: after adding enum value, create migration `npx prisma migrate dev --name add_enum_value`
+- Frontend env vars must be prefixed `NEXT_PUBLIC_` to be available in browser
+
+## Git Workflow
+
+- Never push directly to `master`
+- Create feature branch: `git checkout -b feat/short-description`
+- Naming: `feat/...`, `fix/...`, `refactor/...`, `docs/...`
+- Commit with Conventional Commits: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`
+- Before committing: run `npm run typecheck && npm run lint && npm test`
+- Create PR via `gh pr create`, run `/review` before merging
+- Squash merge to master
+
+### Commit message format
+
+```
+<type>: <description>
+
+[optional body]
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+```
+
+Types: `feat` (new feature), `fix` (bug fix), `refactor` (no behavior change),
+`test` (adding tests), `docs` (documentation), `chore` (tooling, deps)
+
+## Before committing
+
+Always run before creating a commit:
+1. `npm run typecheck` — must pass with zero errors
+2. `npm run lint` — must pass (warnings OK, errors not)
+3. `npm test` — all tests must pass
+4. Update `changelog.md` with description of changes (Russian, grouped by date)
+
+## Development Process (Plan & Act)
+
+For tasks touching >3 files or spanning multiple layers (DB → API → UI):
+
+1. **Plan** — enter `/plan` mode, describe the task, agree on approach
+2. **Research** — explore affected files, check existing patterns
+3. **Decompose** — break into atomic steps (migration → service → router → UI → tests)
+4. **Execute** — implement each step, commit after each with passing checks
+5. **Review** — run `/review` on the branch before creating PR
+6. **Simplify** — run `/simplify` to check for duplication and quality
+
+For small tasks (<3 files, single layer): skip steps 1-3, go directly to execute.
+
+### Task decomposition template
+
+When implementing a feature, follow this order:
+
+1. **Schema** — Prisma model changes + migration + `db:generate`
+2. **Service** — business logic in `apps/api/src/services/`
+3. **Router** — tRPC endpoints in `apps/api/src/routers/`
+4. **Workers** — if async processing needed, add handler + orchestrator step
+5. **Frontend** — UI in `apps/web/src/app/(app)/`
+6. **Tests** — unit for service, integration for router, component for UI
+7. **Docs** — update CLAUDE.md if patterns changed
+
+Each step = separate commit. Each commit must pass typecheck + lint.
+
 ## CI
 
 GitHub Actions on push/PR to `main`: `npm ci` → `prisma generate` → `prisma migrate deploy` → `turbo build` → `turbo typecheck` → `turbo lint` → `turbo test`. Runs against PostgreSQL 16 and Redis 7 service containers.

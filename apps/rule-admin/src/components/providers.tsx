@@ -28,7 +28,9 @@ async function tryRefreshToken(): Promise<string | null> {
       localStorage.setItem("refreshToken", result.refreshToken);
       return result.accessToken;
     }
-  } catch {}
+  } catch {
+    // refresh failure → fall through and return null
+  }
   return null;
 }
 

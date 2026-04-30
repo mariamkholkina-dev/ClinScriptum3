@@ -7,6 +7,8 @@ const p = qualityProcedure.use(withDomainErrors);
 
 const contextStrategyEnum = z.enum(["chunk", "multi_chunk", "full_document", "multi_document"]);
 
+const reasoningModeEnum = z.enum(["DISABLED", "ENABLED_HIDDEN"]);
+
 const llmConfigInputSchema = z.object({
   name: z.string(),
   taskId: z.string(),
@@ -15,9 +17,10 @@ const llmConfigInputSchema = z.object({
   apiKey: z.string().optional(),
   model: z.string(),
   temperature: z.number().min(0).max(2).optional(),
-  maxOutputTokens: z.number().int().positive().optional(),
-  maxInputTokens: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive(),
+  maxInputTokens: z.number().int().positive(),
   contextStrategy: contextStrategyEnum.optional(),
+  reasoningMode: reasoningModeEnum.optional(),
   chunkSizeChars: z.number().int().positive().optional(),
   chunkOverlapChars: z.number().int().nonnegative().optional(),
   modelWindowChars: z.number().int().positive().optional(),
@@ -89,6 +92,12 @@ export const llmConfigRouter = router({
     .input(z.object({ id: z.string().uuid() }))
     .mutation(({ input }) =>
       llmConfigService.setDefault(input.id),
+    ),
+
+  unsetDefault: p
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(({ input }) =>
+      llmConfigService.unsetDefault(input.id),
     ),
 
   testConnection: p

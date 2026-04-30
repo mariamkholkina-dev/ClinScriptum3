@@ -54,6 +54,16 @@ export function toAuditPrompt(dbRules: DbRule[]): string | null {
   return systemRule?.promptTemplate ?? null;
 }
 
+export function toAuditPromptMap(dbRules: DbRule[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const rule of dbRules) {
+    if (rule.promptTemplate) {
+      map.set(rule.pattern, rule.promptTemplate);
+    }
+  }
+  return map;
+}
+
 export function toGenerationPrompts(
   dbRules: DbRule[],
 ): { systemPrompt: string | null; sectionPrompts: Map<string, string> } {

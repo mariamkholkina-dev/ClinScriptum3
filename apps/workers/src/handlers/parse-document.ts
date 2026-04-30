@@ -24,10 +24,14 @@ export async function handleParseDocument(data: { versionId: string }) {
     await prisma.documentVersion.update({
       where: { id: version.id },
       data: {
-        status: "parsed",
         digitalTwin: JSON.parse(JSON.stringify(parsed)),
       },
     });
+
+    await prisma.contentBlock.deleteMany({
+      where: { section: { docVersionId: version.id } },
+    });
+    await prisma.section.deleteMany({ where: { docVersionId: version.id } });
 
     await saveSections(version.id, parsed.sections, null);
 
@@ -52,37 +56,45 @@ async function saveSections(
   docVersionId: string,
   sections: any[],
   _parentId: string | null,
-  orderOffset = 0
 ) {
-  for (let i = 0; i < sections.length; i++) {
-    const s = sections[i];
+  const counter = { value: 0 };
+  await prisma.$transaction(async (tx) => {
+    await saveSectionsBatch(tx, docVersionId, sections, counter);
+  });
+}
 
-    const section = await prisma.section.create({
+async function saveSectionsBatch(
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  docVersionId: string,
+  sections: any[],
+  counter: { value: number },
+) {
+  for (const s of sections) {
+    const section = await tx.section.create({
       data: {
         docVersionId,
         title: s.title,
         level: s.level,
-        order: orderOffset + i,
+        order: counter.value++,
         sourceAnchor: s.sourceAnchor ?? {},
       },
     });
 
-    for (let j = 0; j < (s.contentBlocks ?? []).length; j++) {
-      const cb = s.contentBlocks[j];
-      await prisma.contentBlock.create({
-        data: {
-          sectionId: section.id,
-          type: cb.type,
-          content: cb.content,
-          rawHtml: cb.rawHtml,
-          order: j,
-          sourceAnchor: cb.sourceAnchor ?? {},
-        },
-      });
+    const blocks = (s.contentBlocks ?? []).map((cb: any, j: number) => ({
+      sectionId: section.id,
+      type: cb.type,
+      content: cb.content,
+      rawHtml: cb.rawHtml,
+      order: j,
+      sourceAnchor: cb.sourceAnchor ?? {},
+    }));
+
+    if (blocks.length > 0) {
+      await tx.contentBlock.createMany({ data: blocks });
     }
 
     if (s.children?.length > 0) {
-      await saveSections(docVersionId, s.children, section.id, 0);
+      await saveSectionsBatch(tx, docVersionId, s.children, counter);
     }
   }
 }

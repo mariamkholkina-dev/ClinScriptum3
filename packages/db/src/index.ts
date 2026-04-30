@@ -15,7 +15,7 @@ if (process.env.NODE_ENV !== "production") {
 export { PrismaClient } from "@prisma/client";
 export type * from "@prisma/client";
 export { getEffectiveLlmConfig, toConfigSnapshot, getInputBudgetChars } from "./llm-config-resolver.js";
-export type { LlmTaskConfig, LlmConfigSnapshot } from "./llm-config-resolver.js";
+export type { LlmTaskConfig, LlmConfigSnapshot, ReasoningMode } from "./llm-config-resolver.js";
 export { loadGenerationPrompts } from "./generation-prompts.js";
 export { loadBundleRules, loadRulesForType, snapshotRules, resolveActiveBundle } from "./bundle-rule-loader.js";
 export type { ResolvedRuleSet } from "./bundle-rule-loader.js";

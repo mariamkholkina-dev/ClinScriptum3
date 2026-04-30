@@ -18,7 +18,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
   },
   quote: {
-    borderLeft: `3px solid ${tokens.colorPaletteBlueBorder1}`,
+    borderLeft: `3px solid ${tokens.colorBrandStroke1}`,
     paddingLeft: "10px",
     fontStyle: "italic",
     marginTop: "4px",

@@ -28,7 +28,9 @@ async function tryRefreshToken(): Promise<string | null> {
       localStorage.setItem("refreshToken", result.refreshToken);
       return result.accessToken;
     }
-  } catch {}
+  } catch {
+    // refresh failure → fall through and return null
+  }
   return null;
 }
 
@@ -59,7 +61,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           url: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/trpc",
           transformer: superjson,
           async headers() {
-            let token = useAuthStore.getState().accessToken;
+            const token = useAuthStore.getState().accessToken;
             return token ? { authorization: `Bearer ${token}` } : {};
           },
           async fetch(url, options) {

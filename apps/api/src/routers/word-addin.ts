@@ -3,7 +3,8 @@ import { TRPCError } from "@trpc/server";
 import { prisma } from "@clinscriptum/db";
 import { router, protectedProcedure } from "../trpc/trpc.js";
 import { storage } from "../lib/storage.js";
-import { runProcessingPipeline } from "../lib/processing-pipeline.js";
+import { enqueueJob } from "../lib/queue.js";
+import { logger } from "../lib/logger.js";
 
 export const wordAddinRouter = router({
   getContext: protectedProcedure.query(async ({ ctx }) => {
@@ -80,9 +81,8 @@ export const wordAddinRouter = router({
         },
       });
 
-      runProcessingPipeline(newVersion.id).catch((err) =>
-        console.error(`[word-addin-upload] Pipeline error for ${newVersion.id}:`, err)
-      );
+      await enqueueJob("run_pipeline", { versionId: newVersion.id });
+      logger.info("[word-addin-upload] Enqueued run_pipeline job", { versionId: newVersion.id });
 
       return {
         versionId: newVersion.id,

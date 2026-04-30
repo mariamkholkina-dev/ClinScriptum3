@@ -19,10 +19,12 @@ import {
   Cpu,
   ChevronDown,
   ChevronRight,
+  Download,
 } from "lucide-react";
 import { ParsingTreeViewer } from "./parsing-viewer";
 import { ClassificationTreeViewer } from "./classification-viewer";
 import { ExtractionViewer } from "./extraction-viewer";
+import { SoaStageViewer } from "./soa-viewer";
 
 /* ═══════════════ Constants ═══════════════ */
 
@@ -326,6 +328,86 @@ const SEVERITY_STYLE: Record<string, string> = {
   info: "bg-gray-100 text-gray-700",
 };
 
+const SEVERITY_BORDER: Record<string, string> = {
+  critical: "border-l-red-500",
+  high: "border-l-orange-400",
+  medium: "border-l-yellow-400",
+  low: "border-l-blue-400",
+  info: "border-l-gray-300",
+};
+
+const SEVERITY_LABEL: Record<string, string> = {
+  critical: "CRITICAL",
+  high: "HIGH",
+  medium: "MEDIUM",
+  low: "LOW",
+  info: "INFO",
+};
+
+const FINDING_TYPE_LABEL: Record<string, string> = {
+  editorial: "Редакторская",
+  semantic: "Семантическая",
+  intra_audit: "Внутренний аудит",
+  inter_audit: "Межд. аудит",
+};
+
+const TASK_KIND_LABEL: Record<string, string> = {
+  self_check: "Self-check",
+  cross_check: "Cross-check",
+  self_editorial: "Editorial",
+};
+
+const METHOD_LABEL: Record<string, { text: string; cls: string }> = {
+  deterministic: { text: "Детерм.", cls: "bg-emerald-50 text-emerald-700" },
+  llm: { text: "LLM", cls: "bg-indigo-50 text-indigo-700" },
+};
+
+const ISSUE_FAMILY_LABEL: Record<string, string> = {
+  PLACEHOLDER: "Плейсхолдер",
+  NUMERIC: "Числовое",
+  MISSINGNESS: "Пропуск",
+  RANGE_CONSISTENCY: "Диапазон",
+  EDITORIAL: "Редакторское",
+  TIMING_SCHEDULE: "Расписание",
+  IP_DOSING: "Дозирование",
+  POPULATION_ELIGIBILITY: "Популяция",
+  ENDPOINTS_ANALYSIS: "Конечные точки",
+  SAFETY_REPORTING: "Безопасность",
+  TEXT_CONTRADICTION: "Противоречие",
+};
+
+const AUDIT_CATEGORY_LABEL: Record<string, string> = {
+  consistency: "Согласованность",
+  logic: "Логика",
+  terminology: "Терминология",
+  compliance: "Соответствие",
+  grammar: "Редакторское",
+};
+
+function parseJsonDescription(desc: string): Record<string, unknown> | null {
+  if (!desc || !desc.trimStart().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(desc);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed;
+  } catch { /* not JSON */ }
+  return null;
+}
+
+const QA_VERDICT_STYLE: Record<string, { label: string; cls: string }> = {
+  confirmed: { label: "Подтверждено QA", cls: "bg-green-100 text-green-800" },
+  dismissed: { label: "Отклонено QA", cls: "bg-red-100 text-red-700" },
+  adjusted: { label: "Скорректировано QA", cls: "bg-amber-100 text-amber-800" },
+  deduplicated: { label: "Дубликат", cls: "bg-gray-100 text-gray-600" },
+};
+
+const STATUS_ICON: Record<string, string> = {
+  pending: "⏳",
+  confirmed: "✅",
+  resolved: "✅",
+  rejected: "❌",
+  false_positive: "🚫",
+};
+
 function SectionsViewer({ versionId }: { versionId: string }) {
   const q = trpc.document.getVersion.useQuery(
     { versionId },
@@ -531,42 +613,245 @@ function SoaViewer({ versionId }: { versionId: string }) {
   );
 }
 
+function FindingCard({ f, defaultExpanded }: { f: Record<string, unknown>; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultExpanded ?? false);
+
+  const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
+  const ref = (f.sourceRef ?? {}) as Record<string, unknown>;
+  const jsonDesc = parseJsonDescription(String(f.description ?? ""));
+
+  const description = jsonDesc
+    ? (jsonDesc.description as string) ?? String(f.description ?? "")
+    : String(f.description ?? "");
+  const suggestion = (f.suggestion as string) ?? (jsonDesc?.recommendation as string) ?? (jsonDesc?.suggestion as string) ?? null;
+
+  const severity = (extra.severity as string) ?? (jsonDesc?.severity as string) ?? (f.severity as string) ?? null;
+  const issueType = (extra.issueType as string) ?? (jsonDesc?.issue_type as string) ?? (f.issueType as string) ?? null;
+  const issueFamily = (extra.issueFamily as string) ?? (f.issueFamily as string) ?? null;
+  const auditCategory = (extra.auditCategory as string) ?? (f.auditCategory as string) ?? null;
+  const type = f.type as string | undefined;
+  const taskKind = (extra.taskKind as string) ?? (ref.taskKind as string) ?? (jsonDesc?.mode as string) ?? null;
+  const method = (extra.method as string) ?? null;
+  const confidence = (extra.confidence as string) ?? (jsonDesc?.confidence as string) ?? undefined;
+  const contextStatus = (extra.contextStatus as string) ?? (jsonDesc?.context_status as string) ?? undefined;
+  const qaVerdict = extra.qaVerdict as string | undefined;
+  const qaReason = extra.qaReason as string | undefined;
+  const editorialFix = (extra.editorialFix as string) ?? (jsonDesc?.editorial_fix_suggestion as string) ?? undefined;
+  const block = (extra.block as string) ?? (jsonDesc?.block as string) ?? undefined;
+  const field = (extra.field as string) ?? (jsonDesc?.field as string) ?? undefined;
+
+  const textSnippet = (ref.textSnippet as string) ?? (jsonDesc?.target_quote as string) ?? (jsonDesc?.source as string) ?? undefined;
+  const referenceQuote = (ref.referenceQuote as string) ?? (jsonDesc?.reference_quote as string) ?? undefined;
+  const anchorQuote = ref.anchorQuote as string | undefined;
+  const targetQuote = ref.targetQuote as string | undefined;
+  const sectionTitle = ref.sectionTitle as string | undefined;
+  const zone = (ref.zone as string) ?? (f.targetZone as string) ?? null;
+  const anchorZone = (ref.anchorZone as string) ?? (f.anchorZone as string) ?? null;
+
+  const hasQuotes = textSnippet || referenceQuote || anchorQuote || targetQuote || sectionTitle;
+  const hasQa = qaVerdict || qaReason;
+  const hasMeta = confidence || contextStatus || editorialFix || block || field;
+  const hasExpandable = hasQuotes || hasQa || hasMeta;
+
+  const borderColor = severity ? (SEVERITY_BORDER[severity] ?? "border-l-gray-300") : "border-l-gray-300";
+
+  return (
+    <div className={`rounded-md border border-gray-200 border-l-4 ${borderColor} bg-white`}>
+      <button
+        type="button"
+        onClick={() => hasExpandable && setExpanded(!expanded)}
+        className={`w-full px-3 py-2.5 text-left ${hasExpandable ? "cursor-pointer hover:bg-gray-50/50" : ""}`}
+      >
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {severity && (
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${SEVERITY_STYLE[severity] ?? "bg-gray-100"}`}>
+              {SEVERITY_LABEL[severity] ?? severity.toUpperCase()}
+            </span>
+          )}
+          {method && METHOD_LABEL[method] && (
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${METHOD_LABEL[method].cls}`}>
+              {METHOD_LABEL[method].text}
+            </span>
+          )}
+          {taskKind && (
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">
+              {TASK_KIND_LABEL[taskKind] ?? taskKind}
+            </span>
+          )}
+          {issueFamily && (
+            <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+              {ISSUE_FAMILY_LABEL[issueFamily] ?? issueFamily}
+            </span>
+          )}
+          {auditCategory && (
+            <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[10px] text-cyan-700">
+              {AUDIT_CATEGORY_LABEL[auditCategory] ?? auditCategory}
+            </span>
+          )}
+          {qaVerdict && QA_VERDICT_STYLE[qaVerdict] && (
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${QA_VERDICT_STYLE[qaVerdict].cls}`}>
+              {QA_VERDICT_STYLE[qaVerdict].label}
+            </span>
+          )}
+          <span className="ml-auto flex items-center gap-1 text-xs text-gray-500">
+            {STATUS_ICON[f.status as string] ?? ""} {STATUS_LABEL[f.status as string] ?? String(f.status ?? "")}
+          </span>
+        </div>
+        <p className="mt-1.5 text-sm text-gray-900">{description}</p>
+        {suggestion && (
+          <p className="mt-1 text-xs text-green-700">
+            <span className="font-medium">→</span> {suggestion}
+          </p>
+        )}
+        {(zone || anchorZone) && (
+          <div className="mt-1 flex items-center gap-1 text-[10px] text-gray-400">
+            {anchorZone && <span className="font-medium">{anchorZone}</span>}
+            {anchorZone && zone && <span>→</span>}
+            {zone && <span className="font-medium">{zone}</span>}
+          </div>
+        )}
+        {issueType && (
+          <div className="mt-1">
+            <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">{issueType}</span>
+          </div>
+        )}
+        {hasExpandable && (
+          <div className="mt-1 flex items-center gap-0.5 text-[10px] text-gray-400">
+            {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+            <span>Подробности</span>
+          </div>
+        )}
+      </button>
+
+      {expanded && hasExpandable && (
+        <div className="border-t border-gray-100 px-3 py-2 space-y-2">
+          {hasQuotes && (
+            <div className="space-y-1">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Цитаты</div>
+              {textSnippet && (
+                <blockquote className="border-l-2 border-gray-300 pl-2 text-xs text-gray-700 italic">
+                  {sectionTitle && <span className="not-italic text-[10px] text-gray-400 block mb-0.5">{sectionTitle}</span>}
+                  {textSnippet}
+                </blockquote>
+              )}
+              {referenceQuote && (
+                <blockquote className="border-l-2 border-blue-300 pl-2 text-xs text-blue-800 italic">
+                  <span className="not-italic text-[10px] text-blue-500">Референс: </span>
+                  {referenceQuote}
+                </blockquote>
+              )}
+              {anchorQuote && (
+                <blockquote className="border-l-2 border-brand-300 pl-2 text-xs text-gray-700 italic">
+                  <span className="not-italic text-[10px] text-brand-500">Якорная зона: </span>
+                  {anchorQuote}
+                </blockquote>
+              )}
+              {targetQuote && (
+                <blockquote className="border-l-2 border-orange-300 pl-2 text-xs text-gray-700 italic">
+                  <span className="not-italic text-[10px] text-orange-500">Проверяемая зона: </span>
+                  {targetQuote}
+                </blockquote>
+              )}
+            </div>
+          )}
+
+          {editorialFix && (
+            <div className="space-y-0.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Редакторская правка</div>
+              <div className="rounded bg-green-50 px-2 py-1 text-xs text-green-800">{editorialFix}</div>
+            </div>
+          )}
+
+          {hasQa && (
+            <div className="space-y-0.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">QA верификация</div>
+              {qaReason && <div className="text-xs text-gray-700">{qaReason}</div>}
+            </div>
+          )}
+
+          {hasMeta && (
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-gray-500">
+              {confidence && <span>Уверенность: <span className="font-medium text-gray-700">{confidence}</span></span>}
+              {block && <span>Блок: <span className="font-medium text-gray-700">{block}</span></span>}
+              {field && <span>Поле: <span className="font-medium text-gray-700">{field}</span></span>}
+              {contextStatus && contextStatus !== "ok" && (
+                <span className="text-amber-600">Контекст: {contextStatus}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FindingsViewer({ versionId }: { versionId: string }) {
+  const [severityFilter, setSeverityFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
+
   const q = trpc.processing.listFindings.useQuery(
     { docVersionId: versionId },
     { staleTime: 60_000, refetchOnWindowFocus: false },
   );
   if (q.isLoading) return <LoadingSpinner />;
   if (q.error) return <ErrorMsg msg={q.error.message} />;
-  const findings = q.data ?? [];
-  if (findings.length === 0) return <EmptyMsg text="Замечания не найдены. Аудит ещё не выполнен." />;
+  const allFindings = q.data ?? [];
+  if (allFindings.length === 0) return <EmptyMsg text="Замечания не найдены. Аудит ещё не выполнен." />;
+
+  const getSeverity = (f: Record<string, unknown>) => {
+    const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
+    return (extra.severity as string) ?? (f.severity as string) ?? "";
+  };
+
+  const findings = allFindings.filter((f: Record<string, unknown>) => {
+    const sev = getSeverity(f);
+    const st = f.status as string ?? "";
+    if (severityFilter && sev !== severityFilter) return false;
+    if (statusFilter && st !== statusFilter) return false;
+    return true;
+  });
+
+  const severities = [...new Set(allFindings.map(getSeverity).filter(Boolean))];
+  const statuses = [...new Set(allFindings.map((f: Record<string, unknown>) => f.status as string).filter(Boolean))];
+  const countBySeverity = (sev: string) => allFindings.filter((f) => getSeverity(f) === sev).length;
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-gray-500">Найдено замечаний: {findings.length}</p>
-      <div className="max-h-[500px] overflow-y-auto space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-500">
+          Замечаний: {findings.length}{findings.length !== allFindings.length ? ` из ${allFindings.length}` : ""}
+        </p>
+        <div className="flex items-center gap-2">
+          {severities.length > 1 && (
+            <select
+              value={severityFilter}
+              onChange={(e) => setSeverityFilter(e.target.value)}
+              className="rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-600"
+            >
+              <option value="">Все уровни</option>
+              {severities.map((s) => (
+                <option key={s} value={s}>{(SEVERITY_LABEL[s] ?? s).toLowerCase()} ({countBySeverity(s)})</option>
+              ))}
+            </select>
+          )}
+          {statuses.length > 1 && (
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-600"
+            >
+              <option value="">Все статусы</option>
+              {statuses.map((s) => (
+                <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+
+      <div className="max-h-[600px] overflow-y-auto space-y-2">
         {findings.map((f: Record<string, unknown>, i: number) => (
-          <div key={(f.id as string) ?? i} className="rounded-md border border-gray-200 p-3">
-            <div className="mb-1 flex items-center gap-2">
-              {typeof f.severity === "string" && (
-                <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${SEVERITY_STYLE[f.severity] ?? "bg-gray-100"}`}>
-                  {f.severity.toUpperCase()}
-                </span>
-              )}
-              {typeof f.auditCategory === "string" && (
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">{f.auditCategory}</span>
-              )}
-              <span className="ml-auto text-xs text-gray-500">
-                {STATUS_LABEL[f.status as string] ?? String(f.status ?? "")}
-              </span>
-            </div>
-            <p className="text-sm text-gray-900">{String(f.description ?? "")}</p>
-            {typeof f.suggestion === "string" && (
-              <p className="mt-1 text-xs text-gray-600">
-                <span className="font-medium">Рекомендация:</span> {f.suggestion}
-              </p>
-            )}
-          </div>
+          <FindingCard key={(f.id as string) ?? i} f={f} />
         ))}
       </div>
     </div>
@@ -751,7 +1036,7 @@ function StageDataViewer({ stageKey, versionIds, expectedResults }: { stageKey: 
     case "extraction":
       return <ExtractionViewer versionId={vid} expectedResults={expectedResults} />;
     case "soa":
-      return <SoaViewer versionId={vid} />;
+      return <SoaStageViewer versionId={vid} expectedResults={expectedResults} />;
     case "intra_audit":
     case "inter_audit":
       return <FindingsViewer versionId={vid} />;
@@ -818,6 +1103,39 @@ function ReviewCommentModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function ExpectedResultsViewer({ data, stageKey }: { data?: unknown; stageKey: string }) {
+  if (!data) {
+    return (
+      <p className="py-3 text-center text-sm text-gray-400 italic">
+        Ожидаемые результаты не определены.
+      </p>
+    );
+  }
+
+  const obj = data as Record<string, unknown>;
+  const isAuditStage = stageKey === "intra_audit" || stageKey === "inter_audit";
+  const findings = isAuditStage && Array.isArray(obj.findings) ? obj.findings as Array<Record<string, unknown>> : null;
+
+  if (findings && findings.length > 0) {
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-gray-500">Ожидаемых замечаний: {findings.length}</p>
+        <div className="max-h-80 overflow-y-auto space-y-1.5">
+          {findings.map((f, i) => (
+            <FindingCard key={i} f={f} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <pre className="max-h-64 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-700">
+      {JSON.stringify(data, null, 2)}
+    </pre>
   );
 }
 
@@ -946,12 +1264,21 @@ function StagePanel({
       case "inter_audit": {
         const findings = (findingsQuery.data ?? []) as Array<Record<string, unknown>>;
         generated = {
-          findings: findings.map((f) => ({
-            description: f.description,
-            severity: f.severity,
-            status: f.status,
-            auditCategory: f.auditCategory,
-          })),
+          findings: findings.map((f) => {
+            const ex = (f.extraAttributes ?? {}) as Record<string, unknown>;
+            const sr = (f.sourceRef ?? {}) as Record<string, unknown>;
+            return {
+              type: f.type,
+              description: f.description,
+              severity: (ex.severity as string) ?? f.severity,
+              status: f.status,
+              method: ex.method,
+              taskKind: (ex.taskKind as string) ?? sr.taskKind,
+              issueType: (ex.issueType as string) ?? f.issueType,
+              issueFamily: (ex.issueFamily as string) ?? f.issueFamily,
+              auditCategory: (ex.auditCategory as string) ?? f.auditCategory,
+            };
+          }),
         };
         break;
       }
@@ -1168,11 +1495,7 @@ function StagePanel({
                 className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             ) : (
-              <pre className="max-h-64 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-700">
-                {stageStatus?.expectedResults
-                  ? JSON.stringify(stageStatus.expectedResults, null, 2)
-                  : "Ожидаемые результаты не определены."}
-              </pre>
+              <ExpectedResultsViewer data={stageStatus?.expectedResults} stageKey={stageKey} />
             )}
           </>
         )}
@@ -1305,7 +1628,7 @@ export default function GoldenDatasetDetailPage() {
                 <th className="pb-2 pr-4">Тип</th>
                 <th className="pb-2 pr-4">Роль</th>
                 <th className="pb-2 pr-4">Версия</th>
-                <th className="pb-2 w-10"></th>
+                <th className="pb-2 w-20"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -1332,17 +1655,43 @@ export default function GoldenDatasetDetailPage() {
                       `v${doc.documentVersion?.versionNumber ?? "?"}`}
                   </td>
                   <td className="py-2.5">
-                    <button
-                      onClick={() => {
-                        if (confirm("Удалить этот документ из образца?")) {
-                          removeMutation.mutate({ goldenSampleDocumentId: doc.id });
-                        }
-                      }}
-                      disabled={removeMutation.isPending}
-                      className="invisible text-gray-400 hover:text-red-500 group-hover:visible"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      {doc.documentVersion?.id && (
+                        <button
+                          onClick={async () => {
+                            const { useAuthStore } = await import("@/lib/auth-store");
+                            const token = useAuthStore.getState().accessToken;
+                            const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/trpc").replace("/trpc", "");
+                            const res = await fetch(`${apiUrl}/api/download/${doc.documentVersion!.id}`, {
+                              headers: { Authorization: `Bearer ${token}` },
+                            });
+                            if (!res.ok) return;
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `${doc.documentVersion?.document?.title ?? "document"}.docx`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="invisible text-gray-400 hover:text-brand-600 group-hover:visible"
+                          title="Скачать документ"
+                        >
+                          <Download size={14} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          if (confirm("Удалить этот документ из образца?")) {
+                            removeMutation.mutate({ goldenSampleDocumentId: doc.id });
+                          }
+                        }}
+                        disabled={removeMutation.isPending}
+                        className="invisible text-gray-400 hover:text-red-500 group-hover:visible"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

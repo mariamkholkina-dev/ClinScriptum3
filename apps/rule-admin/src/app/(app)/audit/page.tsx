@@ -69,12 +69,16 @@ function LlmConfigCell({ snapshot }: { snapshot: any }) {
   const provider = snapshot.provider ?? snapshot.llmProvider ?? "?";
   const model = snapshot.model ?? snapshot.llmModel ?? "?";
   const temp = snapshot.temperature ?? snapshot.llmTemperature;
+  const reasoning = snapshot.reasoningMode;
   return (
     <div className="text-xs leading-tight">
       <div className="font-medium">{provider}</div>
       <div className="text-gray-500">{model}</div>
       {temp !== undefined && temp !== null && (
         <div className="text-gray-400">t={temp}</div>
+      )}
+      {reasoning && reasoning !== "DISABLED" && (
+        <div className="text-purple-600">reasoning</div>
       )}
     </div>
   );
@@ -85,6 +89,187 @@ function RuleSnapshotCell({ snapshot }: { snapshot: any }) {
   const rules = Array.isArray(snapshot) ? snapshot : snapshot.rules;
   if (!rules) return <span className="text-gray-400">—</span>;
   return <span className="text-xs text-gray-600">{rules.length} правил(а)</span>;
+}
+
+const RESULT_KEY_LABELS: Record<string, { label: string; color: "green" | "red" | "yellow" | "gray" | "blue" }> = {
+  total: { label: "Всего", color: "gray" },
+  updated: { label: "Обновлено", color: "green" },
+  classified: { label: "Классифицировано", color: "green" },
+  unclassified: { label: "Не классифицировано", color: "yellow" },
+  reviewed: { label: "Проверено", color: "gray" },
+  corrections: { label: "Исправлено", color: "blue" },
+  skippedNoZone: { label: "Без зоны (null)", color: "yellow" },
+  skippedInvalidZone: { label: "Невалидная зона", color: "red" },
+  parseErrors: { label: "Ошибки парсинга", color: "red" },
+  retries: { label: "Повторов", color: "yellow" },
+  totalTokens: { label: "Токены", color: "gray" },
+  tokensUsed: { label: "Токены", color: "gray" },
+  batches: { label: "Батчи", color: "gray" },
+  llmFindings: { label: "LLM находки", color: "blue" },
+  verified: { label: "Верифицировано", color: "green" },
+  deduplicated: { label: "Дедупликация", color: "yellow" },
+  deterministicFindings: { label: "Детерм. находки", color: "blue" },
+  dismissed: { label: "Отклонено", color: "red" },
+  adjusted: { label: "Скорректировано", color: "yellow" },
+  confirmed: { label: "Подтверждено", color: "green" },
+};
+
+const AUDIT_MODE_LABELS: Record<string, string> = {
+  auto: "Авто",
+  single_call: "Один вызов",
+  zone_based: "По зонам",
+};
+
+const VARIANT_LABELS: Record<number, string> = {
+  1: "Вариант 1 — весь документ",
+  2: "Вариант 2 — по зонам",
+};
+
+const METRIC_COLORS: Record<string, string> = {
+  green: "bg-green-100 text-green-800",
+  red: "bg-red-100 text-red-800",
+  yellow: "bg-amber-100 text-amber-800",
+  gray: "bg-gray-100 text-gray-700",
+  blue: "bg-blue-100 text-blue-800",
+};
+
+function StepResultSummary({ result }: { result: Record<string, unknown> }) {
+  const metrics: Array<{ key: string; label: string; value: number | string; color: string }> = [];
+  const rest: Record<string, unknown> = {};
+  const skipKeys = new Set(["results", "message", "llmError", "auditMode", "variant"]);
+
+  for (const [k, v] of Object.entries(result)) {
+    if (skipKeys.has(k)) continue;
+    const meta = RESULT_KEY_LABELS[k];
+    if (meta && (typeof v === "number" || typeof v === "string")) {
+      metrics.push({ key: k, label: meta.label, value: v, color: METRIC_COLORS[meta.color] });
+    } else if (k === "parseErrors" && Array.isArray(v)) {
+      metrics.push({ key: k, label: RESULT_KEY_LABELS.parseErrors.label, value: v.length, color: METRIC_COLORS.red });
+      rest[k] = v;
+    } else {
+      rest[k] = v;
+    }
+  }
+
+  if (result.message && metrics.length === 0 && !result.llmError) {
+    return <div className="text-xs text-gray-500 italic">{String(result.message)}</div>;
+  }
+
+  const auditMode = result.auditMode as string | undefined;
+  const variant = result.variant as number | undefined;
+  const hasAuditInfo = auditMode || variant;
+
+  const qaGroup = ["confirmed", "dismissed", "adjusted"].filter(
+    (k) => typeof result[k] === "number",
+  );
+  const hasQaVerdicts = qaGroup.length > 0;
+
+  const nonQaMetrics = hasQaVerdicts
+    ? metrics.filter((m) => !qaGroup.includes(m.key))
+    : metrics;
+  const qaMetrics = hasQaVerdicts
+    ? metrics.filter((m) => qaGroup.includes(m.key))
+    : [];
+
+  const qaTotal =
+    hasQaVerdicts
+      ? qaGroup.reduce((sum, k) => sum + (typeof result[k] === "number" ? (result[k] as number) : 0), 0)
+      : 0;
+
+  const restKeys = Object.keys(rest);
+
+  return (
+    <div className="space-y-1.5">
+      {result.llmError ? (
+        <div className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+          <span className="font-medium">LLM ошибка:</span> {String(result.llmError)}
+        </div>
+      ) : null}
+
+      {hasAuditInfo && (
+        <div className="flex flex-wrap items-center gap-2">
+          {auditMode && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+              Режим: {AUDIT_MODE_LABELS[auditMode] ?? auditMode}
+            </span>
+          )}
+          {variant && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">
+              {VARIANT_LABELS[variant] ?? `Вариант ${variant}`}
+            </span>
+          )}
+        </div>
+      )}
+
+      {nonQaMetrics.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {nonQaMetrics.map((m) => (
+            <span
+              key={m.key}
+              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${m.color}`}
+            >
+              {m.label}: {typeof m.value === "number" ? m.value.toLocaleString("ru") : m.value}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {hasQaVerdicts && (
+        <div className="rounded border border-gray-200 bg-gray-50/50 px-2.5 py-1.5">
+          <div className="mb-1 text-xs font-medium text-gray-600">
+            QA вердикты ({qaTotal})
+          </div>
+          <div className="flex gap-3">
+            {qaMetrics.map((m) => {
+              const pct = qaTotal > 0 ? Math.round(((m.value as number) / qaTotal) * 100) : 0;
+              return (
+                <div key={m.key} className="flex items-center gap-1.5">
+                  <span className={`inline-block h-2.5 w-2.5 rounded-full ${m.key === "confirmed" ? "bg-green-500" : m.key === "dismissed" ? "bg-red-400" : "bg-amber-400"}`} />
+                  <span className="text-xs text-gray-700">
+                    {m.label}: <span className="font-medium">{(m.value as number).toLocaleString("ru")}</span>
+                    <span className="ml-0.5 text-gray-400">({pct}%)</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {result.message ? (
+        <div className="text-xs text-gray-500 italic">{String(result.message)}</div>
+      ) : null}
+
+      {restKeys.length > 0 && (
+        <details className="group">
+          <summary className="cursor-pointer text-xs text-gray-400 hover:text-gray-600">
+            Подробности ({restKeys.length})
+          </summary>
+          <div className="mt-1 max-h-64 overflow-auto rounded border border-gray-200 bg-white p-1.5">
+            <table className="w-full text-xs">
+              <tbody>
+                {restKeys.map((k) => {
+                  const v = rest[k];
+                  const isSimple = typeof v === "string" || typeof v === "number" || typeof v === "boolean" || v === null;
+                  return (
+                    <tr key={k} className="border-b border-gray-100 last:border-0">
+                      <td className="whitespace-nowrap py-0.5 pr-3 align-top font-medium text-gray-500">{k}</td>
+                      <td className="py-0.5 text-gray-700">
+                        {isSimple
+                          ? String(v ?? "—")
+                          : <pre className="whitespace-pre-wrap text-gray-600">{JSON.stringify(v, null, 2)}</pre>
+                        }
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </div>
+  );
 }
 
 function ExpandedRow({ runId }: { runId: string }) {
@@ -161,6 +346,14 @@ function ExpandedRow({ runId }: { runId: string }) {
                             <pre className="max-h-20 overflow-auto whitespace-pre-wrap rounded border border-red-200 bg-white p-1.5 text-xs text-red-700">
                               {stepError}
                             </pre>
+                          </td>
+                        </tr>
+                      )}
+                      {stepResult && step.status === "completed" && (
+                        <tr className="bg-gray-50/30">
+                          <td />
+                          <td colSpan={5} className="px-3 pb-2">
+                            <StepResultSummary result={stepResult} />
                           </td>
                         </tr>
                       )}

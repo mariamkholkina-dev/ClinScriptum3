@@ -28,6 +28,7 @@ import { handleExtractFacts } from "./fact-extraction-pipeline.js";
 import { detectSoaForVersion } from "./soa-detection.js";
 import { runIntraDocAudit } from "./intra-audit.js";
 import { logger } from "./logger.js";
+import { publishProcessingEvent } from "./event-publisher.js";
 
 /* ═══════════════════════ Types ═══════════════════════ */
 
@@ -59,6 +60,7 @@ const LLM_QA_BATCH_SIZE = 10;
 /* ═══════════════════════ Entry point ═══════════════════════ */
 
 export async function runProcessingPipeline(versionId: string) {
+  let tenantId: string | null = null;
   try {
     logger.info("[pipeline] Starting", { versionId });
 
@@ -66,19 +68,19 @@ export async function runProcessingPipeline(versionId: string) {
       where: { id: versionId },
       include: { document: { include: { study: true } } },
     });
-    const tenantId = versionDoc?.document.study.tenantId ?? null;
+    tenantId = versionDoc?.document.study.tenantId ?? null;
     const studyId = versionDoc?.document.studyId;
 
     const bundleId = await resolveActiveBundle(tenantId);
     logger.info("[pipeline] Resolved bundle", { bundleId, tenantId: tenantId ?? undefined });
 
     // Stage 1: Parsing
-    await setVersionStatus(versionId, "parsing");
+    await setVersionStatus(versionId, "parsing", tenantId);
     const sections = await parseDocument(versionId);
     logger.info("[pipeline] Parsed sections", { count: sections.length });
 
     // Stage 2: Section classification (3-step)
-    await setVersionStatus(versionId, "classifying_sections");
+    await setVersionStatus(versionId, "classifying_sections", tenantId);
 
     const taxonomy = await loadTaxonomyFromBundle(bundleId);
     await classifySectionsDeterministic(versionId, taxonomy);
@@ -91,7 +93,7 @@ export async function runProcessingPipeline(versionId: string) {
     logger.info("[pipeline] Step 2c (LLM QA) complete");
 
     if (versionDoc?.document.type === "protocol") {
-      await setVersionStatus(versionId, "extracting_facts");
+      await setVersionStatus(versionId, "extracting_facts", tenantId);
 
       const factRun = await prisma.processingRun.create({
         data: {
@@ -103,16 +105,12 @@ export async function runProcessingPipeline(versionId: string) {
         },
       });
 
-      try {
-        await handleExtractFacts({ processingRunId: factRun.id });
-        logger.info("[pipeline] Stage 3 (fact extraction) complete");
-      } catch (factErr) {
-        logger.error("[pipeline] Stage 3 (fact extraction) failed", { error: String(factErr) });
-      }
+      await handleExtractFacts({ processingRunId: factRun.id });
+      logger.info("[pipeline] Stage 3 (fact extraction) complete");
     }
 
     if (versionDoc?.document.type === "protocol") {
-      await setVersionStatus(versionId, "detecting_soa");
+      await setVersionStatus(versionId, "detecting_soa", tenantId);
 
       const soaRun = await prisma.processingRun.create({
         data: {
@@ -133,34 +131,39 @@ export async function runProcessingPipeline(versionId: string) {
         });
         logger.info("[pipeline] Stage 4 (SOA detection) complete");
       } catch (soaErr) {
-        logger.error("[pipeline] Stage 4 (SOA detection) failed", { error: String(soaErr) });
         await prisma.processingRun.update({
           where: { id: soaRun.id },
-          data: { status: "failed" },
-        }).catch(() => {});
+          data: { status: "failed", lastError: String(soaErr) },
+        }).catch((updateErr) => logger.error("[pipeline] Failed to update SOA run status", { error: String(updateErr) }));
+        throw soaErr;
       }
     }
 
-    try {
-      await runIntraDocAudit(versionId);
-      logger.info("[pipeline] Stage 5 (intra-audit) complete");
-    } catch (auditErr) {
-      logger.error("[pipeline] Stage 5 (intra-audit) failed", { error: String(auditErr) });
-      await setVersionStatus(versionId, "parsed").catch(() => {});
-    }
+    await runIntraDocAudit(versionId);
+    logger.info("[pipeline] Stage 5 (intra-audit) complete");
 
     logger.info("[pipeline] Done", { versionId, bundleId });
   } catch (err) {
     logger.error("[pipeline] Error", { versionId, error: String(err) });
-    await setVersionStatus(versionId, "error").catch(() => {});
+    await setVersionStatus(versionId, "error", tenantId).catch(() => {});
   }
 }
 
-async function setVersionStatus(versionId: string, status: string) {
+async function setVersionStatus(versionId: string, status: string, tenantId?: string | null) {
   await prisma.documentVersion.update({
     where: { id: versionId },
     data: { status: status as any },
   });
+
+  if (tenantId) {
+    await publishProcessingEvent({
+      type: "version_status_changed",
+      docVersionId: versionId,
+      tenantId,
+      timestamp: new Date().toISOString(),
+      data: { status },
+    });
+  }
 }
 
 /* ═══════════════════════ Stage 1: Parse ═══════════════════════ */
@@ -316,7 +319,7 @@ function splitContentIntoBlocks(bodyHtml: string) {
       type: "paragraph",
       content: stripHtml(trailing),
       rawHtml: trailing,
-      order: order++,
+      order: order,
     });
   }
 
@@ -351,11 +354,11 @@ async function classifySectionsDeterministic(versionId: string, taxonomy: Taxono
     include: { contentBlocks: { orderBy: { order: "asc" }, take: 3 } },
   });
 
-  for (const section of sections) {
+  const updates = sections.map((section) => {
     const preview = section.contentBlocks.map((b) => b.content).join(" ").slice(0, 500);
     const match = classifyHeading(section.title, preview, taxonomy);
 
-    await prisma.section.update({
+    return prisma.section.update({
       where: { id: section.id },
       data: {
         standardSection: match?.pattern ?? null,
@@ -365,7 +368,9 @@ async function classifySectionsDeterministic(versionId: string, taxonomy: Taxono
         algoConfidence: match?.score ?? 0,
       },
     });
-  }
+  });
+
+  await prisma.$transaction(updates);
 }
 
 /* ═══════════ Parent heading chain builder ═══════════ */
@@ -430,6 +435,8 @@ async function classifySectionsLlm(versionId: string, taxonomy: TaxonomyRule[]) 
   const classifyCfg = await llmGetConfig("section_classify");
   const inputBudget = getInputBudgetChars(classifyCfg);
 
+  const pendingUpdates: ReturnType<typeof prisma.section.update>[] = [];
+
   for (const section of targets) {
     try {
       const preview = section.contentBlocks.map((b) => b.content).join(" ").slice(0, inputBudget);
@@ -437,20 +444,26 @@ async function classifySectionsLlm(versionId: string, taxonomy: TaxonomyRule[]) 
       const result = await llmClassifySection(section.title, preview, breadcrumb, taxonomyCatalog, validPatterns);
 
       if (result) {
-        await prisma.section.update({
-          where: { id: section.id },
-          data: {
-            standardSection: result.section,
-            confidence: result.confidence,
-            classifiedBy: "llm_check",
-            llmSection: result.section,
-            llmConfidence: result.confidence,
-          },
-        });
+        pendingUpdates.push(
+          prisma.section.update({
+            where: { id: section.id },
+            data: {
+              standardSection: result.section,
+              confidence: result.confidence,
+              classifiedBy: "llm_check",
+              llmSection: result.section,
+              llmConfidence: result.confidence,
+            },
+          }),
+        );
       }
     } catch (err) {
       logger.warn("[pipeline] LLM classify error", { sectionTitle: section.title, error: String(err) });
     }
+  }
+
+  if (pendingUpdates.length > 0) {
+    await prisma.$transaction(pendingUpdates);
   }
 }
 
@@ -540,6 +553,8 @@ async function classifySectionsLlmQa(versionId: string, taxonomy: TaxonomyRule[]
 
   const taxonomyMap = new Map(taxonomy.map((r) => [r.pattern, r.config.titleRu]));
 
+  const qaUpdates: ReturnType<typeof prisma.section.update>[] = [];
+
   for (let i = 0; i < targets.length; i += LLM_QA_BATCH_SIZE) {
     const batch = targets.slice(i, i + LLM_QA_BATCH_SIZE);
 
@@ -552,32 +567,40 @@ async function classifySectionsLlmQa(versionId: string, taxonomy: TaxonomyRule[]
 
         if (correction.correct) {
           const newConf = Math.min((sec.confidence ?? 0) + 0.15, 1.0);
-          await prisma.section.update({
-            where: { id: sec.id },
-            data: {
-              confidence: newConf,
-              classifiedBy: "llm_qa",
-              llmSection: sec.standardSection,
-              llmConfidence: newConf,
-            },
-          });
+          qaUpdates.push(
+            prisma.section.update({
+              where: { id: sec.id },
+              data: {
+                confidence: newConf,
+                classifiedBy: "llm_qa",
+                llmSection: sec.standardSection,
+                llmConfidence: newConf,
+              },
+            }),
+          );
         } else if (correction.suggestedSection) {
           const qaConf = correction.suggestedConfidence ?? 0.6;
-          await prisma.section.update({
-            where: { id: sec.id },
-            data: {
-              standardSection: correction.suggestedSection,
-              confidence: qaConf,
-              classifiedBy: "llm_qa",
-              llmSection: correction.suggestedSection,
-              llmConfidence: qaConf,
-            },
-          });
+          qaUpdates.push(
+            prisma.section.update({
+              where: { id: sec.id },
+              data: {
+                standardSection: correction.suggestedSection,
+                confidence: qaConf,
+                classifiedBy: "llm_qa",
+                llmSection: correction.suggestedSection,
+                llmConfidence: qaConf,
+              },
+            }),
+          );
         }
       }
     } catch (err) {
       logger.warn("[pipeline] LLM QA batch error", { batch: i / LLM_QA_BATCH_SIZE, error: String(err) });
     }
+  }
+
+  if (qaUpdates.length > 0) {
+    await prisma.$transaction(qaUpdates);
   }
 }
 
@@ -757,6 +780,7 @@ function classifyHeading(
   return best;
 }
 
+const REGEX_CACHE_MAX_SIZE = 500;
 const regexCache = new Map<string, RegExp | null>();
 
 const WORD_CHAR = "[а-яА-ЯёЁa-zA-Z0-9_]";
@@ -781,6 +805,10 @@ function safeRegex(pattern: string): RegExp | null {
     }
     cleanPattern = adaptPatternForUnicode(cleanPattern);
     const re = new RegExp(cleanPattern, flags);
+    if (regexCache.size >= REGEX_CACHE_MAX_SIZE) {
+      const firstKey = regexCache.keys().next().value;
+      if (firstKey !== undefined) regexCache.delete(firstKey);
+    }
     regexCache.set(pattern, re);
     return re;
   } catch {

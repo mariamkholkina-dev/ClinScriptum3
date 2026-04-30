@@ -308,6 +308,15 @@ ip:
         - "(?i)\\bфармаколог\\w*\\b|\\bpharmacolog\\w*\\b"
         - "(?i)\\bживотн\\w*\\b|\\banimal\\b"
 
+    contraindications:
+      title_ru: Противопоказания
+      require_patterns:
+        - "(?i)\\b(противопоказан\\w*|contraindication\\w*)\\b"
+      patterns:
+        - "(?i)\\bпротивопоказан\\w*\\b"
+        - "(?i)\\bcontraindication\\w*\\b"
+        - "(?i)\\bкогда\\s+нельзя\\b|\\bwhen\\s+not\\s+to\\s+use\\b"
+
 # -------------------------------
 # POPULATION
 # -------------------------------

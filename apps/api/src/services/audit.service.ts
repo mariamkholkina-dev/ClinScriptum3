@@ -1,6 +1,6 @@
-import { prisma } from "@clinscriptum/db";
-import { runIntraDocAudit } from "../lib/intra-audit.js";
+import { prisma, resolveActiveBundle } from "@clinscriptum/db";
 import { runInterDocAudit } from "../lib/inter-audit.js";
+import { enqueueJob } from "../lib/queue.js";
 import { logger } from "../lib/logger.js";
 import { DomainError } from "./errors.js";
 import { requireTenantResource } from "./tenant-guard.js";
@@ -30,11 +30,38 @@ export const auditService = {
       }
     }
 
-    runIntraDocAudit(docVersionId).catch((err) =>
-      logger.error(`[audit] Background error for ${docVersionId}:`, { error: String(err) }),
-    );
+    await prisma.finding.deleteMany({
+      where: { docVersionId, type: { in: ["intra_audit", "editorial"] } },
+    });
 
-    return { runId: null, status: "started" as const };
+    await prisma.documentVersion.update({
+      where: { id: docVersionId },
+      data: { status: "intra_audit" },
+    });
+
+    const studyId = version.document.studyId;
+    const bundleId = await resolveActiveBundle(tenantId);
+    const operatorReviewEnabled = version.document.study.operatorReviewEnabled;
+
+    const run = await prisma.processingRun.create({
+      data: {
+        studyId,
+        docVersionId,
+        type: "intra_doc_audit",
+        status: "queued",
+        ruleSetBundleId: bundleId,
+      },
+    });
+
+    await enqueueJob("intra_doc_audit", {
+      processingRunId: run.id,
+      operatorReviewEnabled,
+      restoreStatusOnComplete: true,
+    });
+
+    logger.info("[audit] Enqueued intra_doc_audit job", { docVersionId, runId: run.id });
+
+    return { runId: run.id, status: "started" as const };
   },
 
   async getAuditStatus(tenantId: string, docVersionId: string) {
@@ -50,10 +77,7 @@ export const auditService = {
     });
 
     const findingsCount = await prisma.finding.count({
-      where: { docVersionId, type: "intra_audit" },
-    });
-    const editorialCount = await prisma.finding.count({
-      where: { docVersionId, type: "editorial", issueFamily: "EDITORIAL" },
+      where: { docVersionId, type: { in: ["intra_audit", "editorial", "semantic"] } },
     });
 
     const review = await prisma.findingReview.findUnique({
@@ -70,10 +94,11 @@ export const auditService = {
       versionStatus: version.status,
       runStatus: latestRun?.status ?? null,
       runId: latestRun?.id ?? null,
-      totalFindings: findingsCount + editorialCount,
+      totalFindings: findingsCount,
       isRunning: version.status === "intra_audit" || latestRun?.status === "running",
       reviewStatus: review?.status ?? null,
       reviewId: review?.id ?? null,
+      operatorReviewEnabled: version.document.study.operatorReviewEnabled,
     };
   },
 
@@ -94,8 +119,9 @@ export const auditService = {
     requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
 
     const isReviewer = REVIEWER_ROLES.has(userRole);
+    const operatorReviewEnabled = version.document.study.operatorReviewEnabled;
 
-    if (!isReviewer) {
+    if (!isReviewer && operatorReviewEnabled) {
       const review = await prisma.findingReview.findUnique({
         where: {
           docVersionId_auditType: {
@@ -117,10 +143,7 @@ export const auditService = {
 
     const where: any = {
       docVersionId: input.docVersionId,
-      OR: [
-        { type: "intra_audit" },
-        { type: "editorial", issueFamily: "EDITORIAL" },
-      ],
+      type: { in: ["intra_audit", "editorial", "semantic"] },
     };
     if (input.severity) where.severity = input.severity;
     if (input.category) where.auditCategory = input.category;

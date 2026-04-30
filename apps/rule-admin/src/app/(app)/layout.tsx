@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   TestTubes,
   Settings,
+  Beaker,
   LogOut,
   ChevronLeft,
   ChevronRight,
@@ -44,6 +45,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Согласования", href: "/approvals", icon: <ShieldCheck size={20} />, approverOnly: true },
   { label: "Пакетное тестирование", href: "/batch-testing", icon: <TestTubes size={20} /> },
   { label: "Настройка LLM", href: "/llm-config", icon: <Settings size={20} /> },
+  { label: "Настройки обработки", href: "/study-settings", icon: <Beaker size={20} /> },
 ];
 
 const SIDEBAR_KEY = "rule-admin:sidebar-collapsed";

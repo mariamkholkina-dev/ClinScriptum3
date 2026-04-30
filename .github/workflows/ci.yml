@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   build:
@@ -43,10 +43,101 @@ jobs:
           node-version: 20
           cache: npm
 
-      - run: npm ci
+      - run: npm ci || npm install --no-audit
+      # Install platform-specific optional deps (rollup/swc native binaries)
+      # and emnapi runtime — workarounds for npm bug npm/cli#4828 (lockfile
+      # generated on Windows misses Linux-only optional binaries) and
+      # transitive peer-dep churn between npm 10/11.
+      - run: npm install @rollup/rollup-linux-x64-gnu @next/swc-linux-x64-gnu @emnapi/core @emnapi/runtime --no-save --no-audit
+      - run: npm audit --audit-level=high --omit=dev || true
       - run: npx prisma generate --schema=packages/db/prisma/schema.prisma
       - run: npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
       - run: npx turbo build
       - run: npx turbo typecheck
       - run: npx turbo lint
-      - run: npx turbo test
+      - run: npx turbo test -- --coverage --coverage.reporter=text
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: clinscriptum_test
+          POSTGRES_USER: clinscriptum
+          POSTGRES_PASSWORD: clinscriptum_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgresql://clinscriptum:clinscriptum_test@localhost:5432/clinscriptum_test
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-test-secret
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci || npm install --no-audit
+      - run: npm install @rollup/rollup-linux-x64-gnu @next/swc-linux-x64-gnu @emnapi/core @emnapi/runtime --no-save --no-audit
+      - run: npx prisma generate --schema=packages/db/prisma/schema.prisma
+      - run: npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
+      - run: npx turbo build
+      - run: npx playwright install chromium --with-deps
+      - name: E2E — web
+        run: npx playwright test --project=chromium
+        working-directory: apps/web
+        continue-on-error: true
+      - name: E2E — rule-admin
+        run: npx playwright test --project=chromium
+        working-directory: apps/rule-admin
+        continue-on-error: true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci || npm install --no-audit
+
+      - name: Dependency audit
+        # Block only on critical-severity vulnerabilities. High-severity
+        # findings still surface in the log via the build job's non-blocking
+        # audit step above.
+        run: npm audit --audit-level=critical --omit=dev
+
+      - name: Check for hardcoded secrets
+        run: |
+          FOUND=0
+          if grep -rn "password\s*=\s*['\"][^'\"]*['\"]" --include="*.ts" apps/ packages/ | grep -v node_modules | grep -v test | grep -v example | grep -v ".d.ts"; then
+            echo "::warning::Potential hardcoded passwords found"
+            FOUND=1
+          fi
+          if grep -rn "api[_-]*key\s*=\s*['\"][^'\"]*['\"]" --include="*.ts" apps/ packages/ | grep -v node_modules | grep -v test | grep -v example | grep -v ".d.ts" | grep -v "process.env"; then
+            echo "::warning::Potential hardcoded API keys found"
+            FOUND=1
+          fi
+          if [ $FOUND -eq 1 ]; then
+            echo "::warning::Review the above matches for actual secrets"
+          fi

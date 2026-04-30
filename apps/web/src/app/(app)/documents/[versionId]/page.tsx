@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
+import { useProcessingMonitor } from "@/lib/useProcessingMonitor";
 import {
   ArrowLeft,
   FileText,
@@ -48,12 +49,82 @@ const VERSION_STATUS_LABELS: Record<string, string> = {
   error: "Ошибка",
 };
 
+const PROCESSING_STAGES = [
+  { key: "parsing", label: "Разбор" },
+  { key: "classifying_sections", label: "Секции" },
+  { key: "extracting_facts", label: "Факты" },
+  { key: "detecting_soa", label: "SOA" },
+  { key: "ready", label: "Готов" },
+] as const;
+
+const STAGE_INDEX: Record<string, number> = {};
+PROCESSING_STAGES.forEach((s, i) => { STAGE_INDEX[s.key] = i; });
+
+function isProcessingStatus(status: string) {
+  return ["uploading", "parsing", "classifying_sections", "extracting_facts", "detecting_soa"].includes(status);
+}
+
+function ProcessingProgress({ status }: { status: string }) {
+  const currentIdx = STAGE_INDEX[status] ?? -1;
+
+  return (
+    <div className="mt-4 rounded-lg border bg-white px-6 py-4 shadow-sm flex-shrink-0">
+      <div className="flex items-center gap-2 mb-3">
+        <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+        <span className="text-sm font-medium text-gray-700">
+          Обработка документа: {VERSION_STATUS_LABELS[status] ?? status}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-1">
+        {PROCESSING_STAGES.map((stage, idx) => {
+          const isDone = currentIdx > idx;
+          const isCurrent = currentIdx === idx;
+
+          return (
+            <div key={stage.key} className="flex items-center flex-1 last:flex-initial">
+              <div className="flex flex-col items-center flex-1 min-w-0">
+                <div
+                  className={cn(
+                    "h-2 w-full rounded-full transition-colors",
+                    isDone && "bg-green-500",
+                    isCurrent && "bg-brand-500 animate-pulse",
+                    !isDone && !isCurrent && "bg-gray-200",
+                  )}
+                />
+                <span
+                  className={cn(
+                    "mt-1.5 text-[11px] font-medium truncate",
+                    isDone && "text-green-600",
+                    isCurrent && "text-brand-700",
+                    !isDone && !isCurrent && "text-gray-400",
+                  )}
+                >
+                  {stage.label}
+                </span>
+              </div>
+              {idx < PROCESSING_STAGES.length - 1 && (
+                <ChevronRight
+                  className={cn(
+                    "h-3 w-3 flex-shrink-0 mx-1",
+                    isDone ? "text-green-400" : "text-gray-300",
+                  )}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 
 const CLASSIFIED_BY_LABELS: Record<string, string> = {
   deterministic: "Детерминированный",
-  llm_check: "LLM-верификация",
-  llm_qa: "LLM QA",
+  llm_check: "LLM",
+  llm_qa: "LLM",
   manual: "Ручной",
 };
 
@@ -64,6 +135,12 @@ export default function DocumentVersionPage() {
   const [activeTab, setActiveTab] = useState<Tab>("sections");
 
   const versionQuery = trpc.document.getVersion.useQuery({ versionId });
+
+  const isProcessing = versionQuery.data
+    ? isProcessingStatus(versionQuery.data.status)
+    : false;
+
+  useProcessingMonitor(versionId, { enabled: isProcessing });
 
   if (versionQuery.isLoading) {
     return (
@@ -124,6 +201,9 @@ export default function DocumentVersionPage() {
           {VERSION_STATUS_LABELS[version.status] ?? version.status}
         </span>
       </div>
+
+      {/* Processing progress */}
+      {isProcessing && <ProcessingProgress status={version.status} />}
 
       {/* Tabs */}
       <div className="border-b flex-shrink-0 mt-5">
@@ -218,10 +298,8 @@ type FactFilter = "all" | "found" | "not_found" | "contradiction" | "deferred";
 function FactsTab({ versionId }: { versionId: string }) {
   const [filter, setFilter] = useState<FactFilter>("all");
   const [expandedFact, setExpandedFact] = useState<string | null>(null);
-  const [editingFactId, setEditingFactId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
 
-  const factsQuery = trpc.processing.listFacts.useQuery({ docVersionId: versionId });
+  const factsQuery = trpc.processing.listFactsGrouped.useQuery({ docVersionId: versionId });
   const validateAll = trpc.processing.validateAllFacts.useMutation({
     onSuccess: () => factsQuery.refetch(),
   });
@@ -229,10 +307,7 @@ function FactsTab({ versionId }: { versionId: string }) {
     onSuccess: () => factsQuery.refetch(),
   });
   const updateValue = trpc.processing.updateFactValue.useMutation({
-    onSuccess: () => {
-      factsQuery.refetch();
-      setEditingFactId(null);
-    },
+    onSuccess: () => factsQuery.refetch(),
   });
 
   if (factsQuery.isLoading) {
@@ -290,13 +365,13 @@ function FactsTab({ versionId }: { versionId: string }) {
     <div className="space-y-4 h-full overflow-auto">
       {/* Stats + Actions bar */}
       <div className="flex items-center justify-between gap-4 flex-shrink-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {filters.map((f) => (
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
               className={cn(
-                "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-full px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap",
                 filter === f.key
                   ? "bg-brand-600 text-white"
                   : "bg-gray-100 text-gray-600 hover:bg-gray-200"
@@ -348,29 +423,24 @@ function FactsTab({ versionId }: { versionId: string }) {
             <div className="divide-y">
               {(catFacts as any[]).map((fact: any) => (
                 <FactRow
-                  key={fact.id}
+                  key={fact.factKey}
                   fact={fact}
-                  isExpanded={expandedFact === fact.id}
-                  isEditing={editingFactId === fact.id}
-                  editValue={editingFactId === fact.id ? editValue : ""}
+                  isExpanded={expandedFact === fact.factKey}
                   onToggleExpand={() =>
-                    setExpandedFact(expandedFact === fact.id ? null : fact.id)
+                    setExpandedFact(expandedFact === fact.factKey ? null : fact.factKey)
                   }
-                  onStartEdit={() => {
-                    setEditingFactId(fact.id);
-                    setEditValue(fact.manualValue ?? fact.value ?? "");
+                  onSelectVariant={(value: string) => {
+                    if (fact.factIds?.[0]) updateValue.mutate({ factId: fact.factIds[0], manualValue: value });
                   }}
-                  onCancelEdit={() => setEditingFactId(null)}
-                  onEditValueChange={setEditValue}
-                  onSaveValue={() =>
-                    updateValue.mutate({ factId: fact.id, manualValue: editValue })
-                  }
-                  onValidate={() =>
-                    updateStatus.mutate({ factId: fact.id, status: "validated" })
-                  }
-                  onDefer={() =>
-                    updateStatus.mutate({ factId: fact.id, status: "deferred" })
-                  }
+                  onSaveManual={(value: string) => {
+                    if (fact.factIds?.[0]) updateValue.mutate({ factId: fact.factIds[0], manualValue: value });
+                  }}
+                  onValidate={() => {
+                    if (fact.factIds?.[0]) updateStatus.mutate({ factId: fact.factIds[0], status: "validated" });
+                  }}
+                  onDefer={() => {
+                    if (fact.factIds?.[0]) updateStatus.mutate({ factId: fact.factIds[0], status: "deferred" });
+                  }}
                   isSaving={updateValue.isPending || updateStatus.isPending}
                 />
               ))}
@@ -419,37 +489,48 @@ function StatCard({
 
 /* ──────────── Fact Row ──────────── */
 
+interface FactVariantUI {
+  value: string;
+  confidence: number;
+  level: "deterministic" | "llm_check" | "llm_qa";
+  sourceText: string;
+  sectionTitle: string;
+}
+
 function FactRow({
   fact,
   isExpanded,
-  isEditing,
-  editValue,
   onToggleExpand,
-  onStartEdit,
-  onCancelEdit,
-  onEditValueChange,
-  onSaveValue,
+  onSelectVariant,
+  onSaveManual,
   onValidate,
   onDefer,
   isSaving,
 }: {
   fact: any;
   isExpanded: boolean;
-  isEditing: boolean;
-  editValue: string;
   onToggleExpand: () => void;
-  onStartEdit: () => void;
-  onCancelEdit: () => void;
-  onEditValueChange: (v: string) => void;
-  onSaveValue: () => void;
+  onSelectVariant: (value: string) => void;
+  onSaveManual: (value: string) => void;
   onValidate: () => void;
   onDefer: () => void;
   isSaving: boolean;
 }) {
+  const [showAllDet, setShowAllDet] = useState(false);
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
+
   const isNotFound = fact.status === "not_found";
-  const displayValue = fact.manualValue || fact.value || "";
-  const sources: any[] = Array.isArray(fact.sources) ? fact.sources : [];
-  const confidencePercent = Math.round((fact.confidence ?? 0) * 100);
+  const displayValue = fact.manualValue || fact.finalValue || "";
+  const confidencePercent = Math.round((fact.finalConfidence ?? 0) * 100);
+
+  const allVariants = (fact.variants ?? []) as FactVariantUI[];
+  const detVariants = allVariants.filter((v) => v.level === "deterministic");
+  const llmVariants = allVariants.filter((v) => v.level === "llm_check");
+  const qaVariants = allVariants.filter((v) => v.level === "llm_qa");
+  const hasLevels = allVariants.length > 0;
 
   const confidenceColor =
     confidencePercent >= 85
@@ -481,25 +562,18 @@ function FactRow({
     >
       {/* Main row */}
       <div className="flex items-center gap-3">
-        {/* Expand toggle */}
         <button
           onClick={onToggleExpand}
           className="flex-shrink-0 rounded p-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100"
         >
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
+          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
 
-        {/* Fact info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium text-gray-900 truncate">
               {fact.description || fact.factKey}
             </span>
-
             {fact.hasContradiction && (
               <span className="inline-flex items-center gap-0.5 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">
                 <AlertTriangle className="h-3 w-3" />
@@ -507,37 +581,52 @@ function FactRow({
               </span>
             )}
           </div>
-
-          <p className="text-xs text-gray-400 mt-0.5">{fact.factKey}</p>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <p className="text-xs text-gray-400">{fact.factKey}</p>
+            {detVariants.length > 0 && (
+              <span className="rounded bg-gray-200 px-1 py-0.5 text-[10px] font-medium text-gray-600">
+                Д{detVariants.length > 1 ? ` ×${detVariants.length}` : ""}
+              </span>
+            )}
+            {llmVariants.length > 0 && (
+              <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">
+                LLM
+              </span>
+            )}
+            {qaVariants.length > 0 && (
+              <span className="rounded bg-purple-100 px-1 py-0.5 text-[10px] font-medium text-purple-700">
+                QA
+              </span>
+            )}
+            {fact.manualValue && (
+              <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-700">
+                Ручной
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Value */}
         <div className="flex-shrink-0 max-w-xs text-right">
-          {!isEditing && (
-            <p
-              className={cn(
-                "text-sm font-mono",
-                isNotFound && !displayValue ? "text-gray-400 italic" : "text-gray-800"
-              )}
-            >
-              {displayValue || (isNotFound ? "—" : "—")}
-            </p>
-          )}
+          <p
+            className={cn(
+              "text-sm font-mono",
+              isNotFound && !displayValue ? "text-gray-400 italic" : "text-gray-800"
+            )}
+          >
+            {displayValue || "—"}
+          </p>
         </div>
 
-        {/* Confidence */}
         {!isNotFound && (
           <span className={cn("flex-shrink-0 rounded px-2 py-0.5 text-xs font-medium", confidenceColor)}>
             {confidencePercent}%
           </span>
         )}
 
-        {/* Status */}
         <span className={cn("flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", statusColor)}>
           {FACT_STATUS_LABELS[fact.status] ?? fact.status}
         </span>
 
-        {/* Actions */}
         <div className="flex items-center gap-1 flex-shrink-0">
           {fact.status !== "validated" && (
             <button
@@ -549,7 +638,6 @@ function FactRow({
               <Check className="h-4 w-4" />
             </button>
           )}
-
           {fact.status !== "deferred" && (
             <button
               onClick={onDefer}
@@ -560,99 +648,292 @@ function FactRow({
               <Clock className="h-4 w-4" />
             </button>
           )}
-
-          <button
-            onClick={onStartEdit}
-            className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-            title="Редактировать значение"
-          >
-            <PenLine className="h-4 w-4" />
-          </button>
         </div>
       </div>
 
-      {/* Inline editor */}
-      {isEditing && (
-        <div className="flex items-center gap-2 mt-2 ml-8">
-          <input
-            type="text"
-            value={editValue}
-            onChange={(e) => onEditValueChange(e.target.value)}
-            className="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent"
-            placeholder="Введите значение факта..."
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onSaveValue();
-              if (e.key === "Escape") onCancelEdit();
-            }}
-          />
-          <button
-            onClick={onSaveValue}
-            disabled={isSaving}
-            className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-          >
-            {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Сохранить"}
-          </button>
-          <button
-            onClick={onCancelEdit}
-            className="rounded border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-          >
-            Отмена
-          </button>
-        </div>
-      )}
-
-      {/* Expanded: sources */}
-      {isExpanded && sources.length > 0 && (
-        <div className="mt-3 ml-8 space-y-2">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            Источники в документе ({sources.length})
-          </p>
-          {sources.map((src: any, idx: number) => (
-            <div
-              key={idx}
-              className={cn(
-                "rounded border px-3 py-2 text-sm",
-                src.isSynopsis
-                  ? "border-brand-200 bg-brand-50/50"
-                  : "border-gray-200 bg-gray-50/50"
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-gray-600">
-                  {src.sectionTitle || "—"}
-                </span>
-                {src.isSynopsis && (
-                  <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700">
-                    SYNOPSIS
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-gray-700 mt-1 leading-relaxed italic">
-                &laquo;{src.text}&raquo;
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {isExpanded && sources.length === 0 && !isNotFound && (
+      {/* Expanded: variant columns */}
+      {isExpanded && hasLevels && (
         <div className="mt-3 ml-8">
-          <p className="text-xs text-gray-400 italic">Нет ссылок на источники</p>
+          <div className="grid grid-cols-3 gap-3">
+            <VariantColumn
+              title="Детерминированный"
+              variants={detVariants}
+              color="gray"
+              displayValue={pendingSelection ?? displayValue}
+              expandedSource={expandedSource}
+              onExpandSource={setExpandedSource}
+              onSelect={(v) => setPendingSelection(v)}
+              prefix="det"
+              maxCollapsed={3}
+              showAll={showAllDet}
+              onToggleShowAll={() => setShowAllDet(!showAllDet)}
+            />
+            <VariantColumn
+              title="LLM"
+              variants={llmVariants}
+              color="blue"
+              displayValue={pendingSelection ?? displayValue}
+              expandedSource={expandedSource}
+              onExpandSource={setExpandedSource}
+              onSelect={(v) => setPendingSelection(v)}
+              prefix="llm"
+            />
+            <VariantColumn
+              title="LLM QA"
+              variants={qaVariants}
+              color="purple"
+              displayValue={pendingSelection ?? displayValue}
+              expandedSource={expandedSource}
+              onExpandSource={setExpandedSource}
+              onSelect={(v) => setPendingSelection(v)}
+              prefix="qa"
+            />
+          </div>
+
+          {/* Save selected variant */}
+          {pendingSelection !== null && (
+            <div className="mt-3 flex items-center gap-2 rounded bg-brand-50 border border-brand-200 px-4 py-2">
+              <span className="flex-1 text-xs text-brand-700">
+                Выбрано: <span className="font-medium">{pendingSelection}</span>
+              </span>
+              <button
+                onClick={() => {
+                  onSelectVariant(pendingSelection);
+                  setPendingSelection(null);
+                }}
+                disabled={isSaving}
+                className="rounded bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Сохранить выбор"}
+              </button>
+              <button
+                onClick={() => setPendingSelection(null)}
+                className="rounded border border-brand-200 px-3 py-1.5 text-xs text-brand-600 hover:bg-brand-100"
+              >
+                Отмена
+              </button>
+            </div>
+          )}
+
+          {/* Manual input */}
+          <div className="mt-3 border-t pt-3">
+            {!isEditing ? (
+              <button
+                onClick={() => {
+                  setIsEditing(true);
+                  setEditValue(fact.manualValue ?? "");
+                }}
+                className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+              >
+                <PenLine className="h-3 w-3" />
+                {fact.manualValue ? "Изменить ручное значение" : "Ввести значение вручную"}
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  className="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent"
+                  placeholder="Введите значение факта..."
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      onSaveManual(editValue);
+                      setIsEditing(false);
+                    }
+                    if (e.key === "Escape") setIsEditing(false);
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    onSaveManual(editValue);
+                    setIsEditing(false);
+                  }}
+                  disabled={isSaving}
+                  className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Сохранить"}
+                </button>
+                <button
+                  onClick={() => setIsEditing(false)}
+                  className="rounded border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+                >
+                  Отмена
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {isExpanded && isNotFound && !displayValue && (
+      {/* Expanded: no variants, not found */}
+      {isExpanded && !hasLevels && isNotFound && !displayValue && (
         <div className="mt-3 ml-8 rounded border border-dashed border-gray-300 p-3 text-center">
           <p className="text-xs text-gray-500">
-            Факт не найден в документе. Нажмите{" "}
-            <button onClick={onStartEdit} className="text-brand-600 underline">
-              редактировать
+            Факт не найден в документе.{" "}
+            <button
+              onClick={() => {
+                setIsEditing(true);
+                setEditValue("");
+              }}
+              className="text-brand-600 underline"
+            >
+              Введите значение вручную
             </button>
-            , чтобы ввести значение вручную.
           </p>
         </div>
       )}
+
+      {isExpanded && !hasLevels && !isNotFound && (
+        <div className="mt-3 ml-8">
+          <p className="text-xs text-gray-400 italic">Нет данных о вариантах</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────── Variant Column ──────────── */
+
+const VARIANT_COLORS = {
+  gray: {
+    border: "border-gray-200",
+    header: "text-gray-700 bg-gray-50",
+    badge: "bg-gray-200 text-gray-600",
+  },
+  blue: {
+    border: "border-blue-200",
+    header: "text-blue-700 bg-blue-50",
+    badge: "bg-blue-100 text-blue-700",
+  },
+  purple: {
+    border: "border-purple-200",
+    header: "text-purple-700 bg-purple-50",
+    badge: "bg-purple-100 text-purple-700",
+  },
+} as const;
+
+function VariantColumn({
+  title,
+  variants,
+  color,
+  displayValue,
+  expandedSource,
+  onExpandSource,
+  onSelect,
+  prefix,
+  maxCollapsed = 999,
+  showAll = false,
+  onToggleShowAll,
+}: {
+  title: string;
+  variants: FactVariantUI[];
+  color: keyof typeof VARIANT_COLORS;
+  displayValue: string;
+  expandedSource: string | null;
+  onExpandSource: (key: string | null) => void;
+  onSelect: (value: string) => void;
+  prefix: string;
+  maxCollapsed?: number;
+  showAll?: boolean;
+  onToggleShowAll?: () => void;
+}) {
+  const style = VARIANT_COLORS[color];
+
+  if (variants.length === 0) {
+    return (
+      <div className="rounded border border-dashed border-gray-200 p-3">
+        <p className="text-xs font-medium text-gray-400 mb-2">{title}</p>
+        <p className="text-xs text-gray-300 italic">—</p>
+      </div>
+    );
+  }
+
+  const visibleVariants = showAll ? variants : variants.slice(0, maxCollapsed);
+  const hasMore = variants.length > maxCollapsed;
+  const norm = (v: string) => v?.toLowerCase().trim() ?? "";
+
+  return (
+    <div className={cn("rounded border", style.border)}>
+      <div className={cn("px-3 py-1.5 text-xs font-semibold flex items-center justify-between", style.header)}>
+        <span>{title}</span>
+        {variants.length > 1 && (
+          <span className={cn("rounded px-1.5 py-0.5 text-[10px]", style.badge)}>
+            {variants.length}
+          </span>
+        )}
+      </div>
+      <div className="p-2 space-y-1.5">
+        {visibleVariants.map((v, idx) => {
+          const key = `${prefix}-${idx}`;
+          const isActive = norm(v.value) === norm(displayValue);
+          const isSourceOpen = expandedSource === key;
+
+          return (
+            <div key={key} className="text-xs">
+              <div className="flex items-start gap-1.5">
+                <button
+                  onClick={() => onSelect(v.value)}
+                  className={cn(
+                    "flex-shrink-0 mt-0.5 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center transition-colors",
+                    isActive
+                      ? "border-brand-600 bg-brand-600"
+                      : "border-gray-300 hover:border-gray-400"
+                  )}
+                >
+                  {isActive && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                </button>
+                <span
+                  className={cn("flex-1 break-words leading-snug", isActive && "font-medium")}
+                  title={v.value}
+                >
+                  {v.value.length > 80 ? v.value.slice(0, 80) + "…" : v.value}
+                </span>
+                <span className="text-gray-400 flex-shrink-0">
+                  {Math.round(v.confidence * 100)}%
+                </span>
+              </div>
+
+              {v.sourceText && (
+                <button
+                  onClick={() => onExpandSource(isSourceOpen ? null : key)}
+                  className="ml-5 mt-0.5 text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-0.5"
+                >
+                  {isSourceOpen ? (
+                    <ChevronDown className="h-2.5 w-2.5" />
+                  ) : (
+                    <ChevronRight className="h-2.5 w-2.5" />
+                  )}
+                  {v.sectionTitle || "источник"}
+                </button>
+              )}
+              {isSourceOpen && v.sourceText && (
+                <div className="ml-5 mt-1 p-1.5 rounded bg-gray-50 text-[11px] text-gray-600 italic leading-relaxed break-words">
+                  &laquo;{v.sourceText}&raquo;
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {hasMore && !showAll && onToggleShowAll && (
+          <button
+            onClick={onToggleShowAll}
+            className="text-[10px] text-brand-600 hover:text-brand-700 ml-5"
+          >
+            показать ещё {variants.length - maxCollapsed}…
+          </button>
+        )}
+        {hasMore && showAll && onToggleShowAll && (
+          <button
+            onClick={onToggleShowAll}
+            className="text-[10px] text-brand-600 hover:text-brand-700 ml-5"
+          >
+            свернуть
+          </button>
+        )}
+      </div>
     </div>
   );
 }

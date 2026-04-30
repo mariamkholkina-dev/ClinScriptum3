@@ -55,6 +55,12 @@ export const processingRouter = router({
       processingService.listFacts(ctx.user.tenantId, input.docVersionId),
     ),
 
+  listFactsGrouped: p
+    .input(z.object({ docVersionId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      processingService.listFactsGrouped(ctx.user.tenantId, input.docVersionId),
+    ),
+
   listFindings: p
     .input(z.object({ docVersionId: z.string().uuid() }))
     .query(({ ctx, input }) =>
@@ -171,6 +177,37 @@ export const processingRouter = router({
     .input(z.object({ soaTableId: z.string().uuid(), procedureName: z.string().min(1) }))
     .mutation(({ ctx, input }) =>
       processingService.addSoaProcedure(ctx.user.tenantId, input.soaTableId, input.procedureName),
+    ),
+
+  setSoaTableStatus: p
+    .input(
+      z.object({
+        soaTableId: z.string().uuid(),
+        status: z.enum(["detected", "validated", "not_soa"]),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      processingService.setSoaTableStatus(ctx.user.tenantId, input.soaTableId, input.status),
+    ),
+
+  updateSoaCellFootnoteRefs: p
+    .input(z.object({ cellId: z.string().uuid(), footnoteRefs: z.array(z.number()) }))
+    .mutation(({ ctx, input }) =>
+      processingService.updateSoaCellFootnoteRefs(
+        ctx.user.tenantId,
+        input.cellId,
+        input.footnoteRefs,
+      ),
+    ),
+
+  updateSoaTableFootnotes: p
+    .input(z.object({ soaTableId: z.string().uuid(), footnotes: z.array(z.string()) }))
+    .mutation(({ ctx, input }) =>
+      processingService.updateSoaTableFootnotes(
+        ctx.user.tenantId,
+        input.soaTableId,
+        input.footnotes,
+      ),
     ),
 
   updateSectionStructureStatus: p

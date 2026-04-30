@@ -15,6 +15,7 @@ const RETRY_CONFIGS: Record<string, JobRetryConfig> = {
   run_evaluation: { attempts: 2, backoff: { type: "exponential", delay: 10000 } },
   run_batch_evaluation: { attempts: 2, backoff: { type: "exponential", delay: 10000 } },
   analyze_corrections: { attempts: 1, backoff: { type: "exponential", delay: 5000 } },
+  run_pipeline: { attempts: 2, backoff: { type: "exponential", delay: 10000 } },
 };
 
 const DEFAULT_CONFIG: JobRetryConfig = {

@@ -88,6 +88,9 @@ export async function handleGenerateCSR(data: {
         apiKey: llmConfig.apiKey,
         baseUrl: llmConfig.baseUrl || undefined,
         temperature: llmConfig.temperature,
+        thinkingEnabled: ctx.llmThinkingEnabled,
+        reasoningMode: llmConfig.reasoningMode,
+        timeoutMs: llmConfig.timeoutMs,
       });
 
       const genRules = await loadRulesForType(ctx.bundleId, "generation");

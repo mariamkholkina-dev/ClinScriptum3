@@ -1,0 +1,240 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("@clinscriptum/db", () => ({
+  prisma: {
+    section: { update: vi.fn() },
+  },
+  loadRulesForType: vi.fn(),
+  snapshotRules: vi.fn().mockReturnValue({}),
+  getEffectiveLlmConfig: vi.fn(),
+  toConfigSnapshot: vi.fn().mockReturnValue({}),
+  getInputBudgetChars: vi.fn().mockReturnValue(100000),
+}));
+
+vi.mock("@clinscriptum/rules-engine", () => {
+  const classifyMock = vi.fn().mockReturnValue({
+    sectionTitle: "Test Section",
+    standardSection: "synopsis",
+    confidence: 0.95,
+    method: "keyword",
+  });
+  return {
+    RulesEngine: class MockRulesEngine {
+      getSectionClassifier() {
+        return { classify: classifyMock };
+      }
+    },
+    toSectionMappingRules: vi.fn().mockReturnValue([]),
+    __classifyMock: classifyMock,
+  };
+});
+
+vi.mock("@clinscriptum/llm-gateway", () => ({
+  LLMGateway: vi.fn(),
+}));
+
+vi.mock("../../pipeline/orchestrator.js", () => ({
+  runPipeline: vi.fn(),
+}));
+
+vi.mock("../../lib/logger.js", () => ({
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock("../../lib/concurrency.js", () => ({
+  runWithConcurrency: vi.fn().mockImplementation((tasks) => Promise.all(tasks.map((t: () => Promise<unknown>) => t()))),
+}));
+
+vi.mock("../../lib/section-cache.js", () => ({
+  loadSections: vi.fn(),
+  invalidateSectionsCache: vi.fn(),
+}));
+
+import { prisma, loadRulesForType, snapshotRules, getEffectiveLlmConfig } from "@clinscriptum/db";
+import { runPipeline } from "../../pipeline/orchestrator.js";
+import { loadSections, invalidateSectionsCache } from "../../lib/section-cache.js";
+import { handleClassifySections } from "../classify-sections.js";
+import type { PipelineContext, PipelineStepHandler, PipelineConfig } from "../../pipeline/orchestrator.js";
+
+const { __classifyMock } = await import("@clinscriptum/rules-engine") as any;
+const mockClassify = __classifyMock as ReturnType<typeof vi.fn>;
+
+const mockRunPipeline = runPipeline as ReturnType<typeof vi.fn>;
+const mockLoadSections = loadSections as ReturnType<typeof vi.fn>;
+const mockLoadRulesForType = loadRulesForType as ReturnType<typeof vi.fn>;
+const mockGetEffectiveLlmConfig = getEffectiveLlmConfig as ReturnType<typeof vi.fn>;
+const mockSectionUpdate = prisma.section.update as ReturnType<typeof vi.fn>;
+
+const RUN_ID = "run-classify-001";
+
+const TEST_SECTIONS = [
+  {
+    id: "sec-1",
+    title: "Synopsis",
+    standardSection: null,
+    confidence: null,
+    classifiedBy: null,
+    algoSection: null,
+    algoConfidence: null,
+    llmSection: null,
+    llmConfidence: null,
+    level: 0,
+    order: 0,
+    contentBlocks: [{ id: "cb-1", type: "text", content: "Study overview", rawHtml: null, order: 0 }],
+  },
+];
+
+function makeMockContext(overrides: Partial<PipelineContext> = {}): PipelineContext {
+  return {
+    processingRunId: RUN_ID,
+    docVersionId: "version-001",
+    studyId: "study-001",
+    tenantId: "tenant-001",
+    bundleId: null,
+    previousResults: new Map(),
+    sectionsCache: new Map(),
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockRunPipeline.mockResolvedValue(undefined);
+  mockLoadSections.mockResolvedValue(TEST_SECTIONS);
+  mockLoadRulesForType.mockResolvedValue(null);
+  mockSectionUpdate.mockResolvedValue({});
+});
+
+describe("handleClassifySections", () => {
+  it("calls runPipeline with processingRunId and 3 handler levels", async () => {
+    await handleClassifySections({ processingRunId: RUN_ID });
+
+    expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    expect(mockRunPipeline).toHaveBeenCalledWith(
+      RUN_ID,
+      expect.any(Object),
+      expect.any(Map),
+    );
+
+    const handlers: Map<string, PipelineStepHandler> = mockRunPipeline.mock.calls[0][2];
+    expect(handlers.size).toBe(3);
+    expect(handlers.has("deterministic")).toBe(true);
+    expect(handlers.has("llm_check")).toBe(true);
+    expect(handlers.has("llm_qa")).toBe(true);
+  });
+
+  it("passes operatorReviewEnabled to runPipeline config", async () => {
+    await handleClassifySections({ processingRunId: RUN_ID, operatorReviewEnabled: true });
+
+    const config: PipelineConfig = mockRunPipeline.mock.calls[0][1];
+    expect(config.operatorReviewEnabled).toBe(true);
+  });
+
+  it("defaults operatorReviewEnabled to false when not provided", async () => {
+    await handleClassifySections({ processingRunId: RUN_ID });
+
+    const config: PipelineConfig = mockRunPipeline.mock.calls[0][1];
+    expect(config.operatorReviewEnabled).toBe(false);
+  });
+
+  describe("deterministic handler", () => {
+    async function getDeterministicHandler(): Promise<PipelineStepHandler> {
+      await handleClassifySections({ processingRunId: RUN_ID });
+      const handlers: Map<string, PipelineStepHandler> = mockRunPipeline.mock.calls[0][2];
+      return handlers.get("deterministic")!;
+    }
+
+    it("classifies sections using RulesEngine and updates prisma", async () => {
+      const handler = await getDeterministicHandler();
+      const ctx = makeMockContext();
+
+      const result = await handler.execute(ctx);
+
+      expect(mockLoadSections).toHaveBeenCalledWith(ctx);
+      expect(mockSectionUpdate).toHaveBeenCalledWith({
+        where: { id: "sec-1" },
+        data: {
+          algoSection: "synopsis",
+          algoConfidence: 0.95,
+          standardSection: "synopsis",
+          confidence: 0.95,
+          classifiedBy: "deterministic",
+        },
+      });
+      expect(result.needsNextStep).toBe(true);
+    });
+
+    it("tracks classified vs unclassified counts", async () => {
+      const handler = await getDeterministicHandler();
+      const ctx = makeMockContext();
+
+      const result = await handler.execute(ctx);
+
+      expect(result.data.classified).toBe(1);
+      expect(result.data.unclassified).toBe(0);
+    });
+
+    it("does not update prisma for unclassified sections", async () => {
+      mockClassify.mockReturnValueOnce({
+        sectionTitle: "Unknown",
+        standardSection: null,
+        confidence: 0,
+        method: "none",
+      });
+
+      const handler = await getDeterministicHandler();
+      const ctx = makeMockContext();
+
+      const result = await handler.execute(ctx);
+
+      expect(mockSectionUpdate).not.toHaveBeenCalled();
+      expect(result.data.classified).toBe(0);
+      expect(result.data.unclassified).toBe(1);
+    });
+
+    it("invalidates sections cache after classification", async () => {
+      const handler = await getDeterministicHandler();
+      const ctx = makeMockContext();
+
+      await handler.execute(ctx);
+
+      expect(invalidateSectionsCache).toHaveBeenCalledWith(ctx);
+    });
+  });
+
+  describe("llm_check handler", () => {
+    async function getLlmCheckHandler(): Promise<PipelineStepHandler> {
+      await handleClassifySections({ processingRunId: RUN_ID });
+      const handlers: Map<string, PipelineStepHandler> = mockRunPipeline.mock.calls[0][2];
+      return handlers.get("llm_check")!;
+    }
+
+    it("skips when no API key configured", async () => {
+      mockGetEffectiveLlmConfig.mockResolvedValue({
+        provider: "openai",
+        model: "gpt-4o",
+        apiKey: "",
+        baseUrl: "",
+        temperature: 0,
+      });
+
+      const handler = await getLlmCheckHandler();
+      const ctx = makeMockContext();
+
+      const result = await handler.execute(ctx);
+
+      expect(result.data.message).toBe("LLM API key not configured, skipping");
+      expect(result.needsNextStep).toBe(true);
+    });
+  });
+
+  it("handler levels match their map keys", async () => {
+    await handleClassifySections({ processingRunId: RUN_ID });
+
+    const handlers: Map<string, PipelineStepHandler> = mockRunPipeline.mock.calls[0][2];
+
+    for (const [key, handler] of handlers) {
+      expect(handler.level).toBe(key);
+    }
+  });
+});

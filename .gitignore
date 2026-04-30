@@ -25,3 +25,12 @@ ehthumbs.db
 
 # Build artifacts
 *.tsbuildinfo
+
+# Playwright
+test-results/
+playwright-report/
+
+# Database dumps
+*.sql
+# Prisma migrations are checked in
+!packages/db/prisma/migrations/**/*.sql

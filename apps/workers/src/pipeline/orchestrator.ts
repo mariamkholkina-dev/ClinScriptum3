@@ -1,7 +1,10 @@
 import { prisma } from "@clinscriptum/db";
-import type { PipelineLevel, ProcessingStepStatus } from "@clinscriptum/shared";
+import type { ProcessingStepStatus } from "@clinscriptum/shared";
+export type { PipelineLevel } from "@clinscriptum/shared";
+import type { PipelineLevel } from "@clinscriptum/shared";
 import { logger } from "../lib/logger.js";
 import { recordPipelineMetric, recordPipelineComplete } from "../lib/metrics.js";
+import { publishProcessingEvent } from "../lib/event-publisher.js";
 
 export interface PipelineStepHandler {
   level: PipelineLevel;
@@ -14,7 +17,12 @@ export interface PipelineContext {
   studyId: string;
   tenantId: string;
   bundleId: string | null;
+  llmThinkingEnabled?: boolean;
+  excludedSectionPrefixes?: string[];
+  auditMode?: string;
+  crossCheckPairs?: [string, string][] | null;
   previousResults: Map<PipelineLevel, StepResult>;
+  sectionsCache: Map<string, unknown>;
 }
 
 export interface StepResult {
@@ -44,7 +52,7 @@ export async function runPipeline(
 ): Promise<void> {
   const run = await prisma.processingRun.findUnique({
     where: { id: processingRunId },
-    include: { steps: true, study: { select: { tenantId: true } } },
+    include: { steps: true, study: { select: { tenantId: true, llmThinkingEnabled: true, excludedSectionPrefixes: true, auditMode: true, crossCheckPairs: true } } },
   });
   if (!run) throw new Error(`Processing run ${processingRunId} not found`);
 
@@ -53,9 +61,28 @@ export async function runPipeline(
     data: { status: "running" },
   });
 
+  await publishProcessingEvent({
+    type: "run_started",
+    docVersionId: run.docVersionId,
+    tenantId: run.study.tenantId,
+    processingRunId,
+    timestamp: new Date().toISOString(),
+    data: { runType: run.type, status: "running" },
+  });
+
   const existingSteps = new Map(
     run.steps.map((s) => [s.level, s]),
   );
+
+  let excludedPrefixes: string[] | undefined;
+  if (run.study.excludedSectionPrefixes.length > 0) {
+    excludedPrefixes = run.study.excludedSectionPrefixes;
+  } else {
+    const tenantCfg = await prisma.tenantConfig.findUnique({ where: { tenantId: run.study.tenantId } });
+    if (tenantCfg && tenantCfg.excludedSectionPrefixes.length > 0) {
+      excludedPrefixes = tenantCfg.excludedSectionPrefixes;
+    }
+  }
 
   const context: PipelineContext = {
     processingRunId,
@@ -63,7 +90,12 @@ export async function runPipeline(
     studyId: run.studyId,
     tenantId: run.study.tenantId,
     bundleId: (run as any).ruleSetBundleId ?? null,
+    llmThinkingEnabled: run.study.llmThinkingEnabled,
+    excludedSectionPrefixes: excludedPrefixes,
+    auditMode: run.study.auditMode,
+    crossCheckPairs: run.study.crossCheckPairs as [string, string][] | null,
     previousResults: new Map(),
+    sectionsCache: new Map(),
   };
 
   const pipelineStart = Date.now();
@@ -108,6 +140,15 @@ export async function runPipeline(
 
       logger.info("Pipeline step started", { processingRunId, pipelineLevel: level });
 
+      await publishProcessingEvent({
+        type: "step_started",
+        docVersionId: context.docVersionId,
+        tenantId: context.tenantId,
+        processingRunId,
+        timestamp: new Date().toISOString(),
+        data: { level, runType: run.type },
+      });
+
       try {
         const result = await handler.execute(context);
         context.previousResults.set(level, result);
@@ -128,6 +169,15 @@ export async function runPipeline(
         stepsCompleted++;
         recordPipelineMetric({ processingRunId, pipelineLevel: level, status: "completed", durationMs });
 
+        await publishProcessingEvent({
+          type: "step_completed",
+          docVersionId: context.docVersionId,
+          tenantId: context.tenantId,
+          processingRunId,
+          timestamp: new Date().toISOString(),
+          data: { level, runType: run.type, durationMs, stepsCompleted },
+        });
+
         if (!result.needsNextStep) {
           logger.info("Pipeline step halted early", { processingRunId, pipelineLevel: level });
           break;
@@ -145,6 +195,16 @@ export async function runPipeline(
         });
 
         recordPipelineMetric({ processingRunId, pipelineLevel: level, status: "failed", durationMs });
+
+        await publishProcessingEvent({
+          type: "step_failed",
+          docVersionId: context.docVersionId,
+          tenantId: context.tenantId,
+          processingRunId,
+          timestamp: new Date().toISOString(),
+          data: { level, runType: run.type, durationMs, error: (err as Error).message },
+        });
+
         logger.error("Pipeline step failed", {
           processingRunId,
           pipelineLevel: level,
@@ -154,18 +214,26 @@ export async function runPipeline(
       }
     }
 
+    const totalDurationMs = Date.now() - pipelineStart;
+
     await prisma.processingRun.update({
       where: { id: processingRunId },
       data: { status: "completed" },
     });
 
-    recordPipelineComplete({
+    recordPipelineComplete({ processingRunId, totalDurationMs, stepsCompleted, status: "completed" });
+
+    await publishProcessingEvent({
+      type: "run_completed",
+      docVersionId: context.docVersionId,
+      tenantId: context.tenantId,
       processingRunId,
-      totalDurationMs: Date.now() - pipelineStart,
-      stepsCompleted,
-      status: "completed",
+      timestamp: new Date().toISOString(),
+      data: { runType: run.type, durationMs: totalDurationMs, stepsCompleted, status: "completed" },
     });
   } catch (err) {
+    const totalDurationMs = Date.now() - pipelineStart;
+
     await prisma.processingRun.update({
       where: { id: processingRunId },
       data: {
@@ -174,12 +242,17 @@ export async function runPipeline(
       },
     });
 
-    recordPipelineComplete({
+    recordPipelineComplete({ processingRunId, totalDurationMs, stepsCompleted, status: "failed" });
+
+    await publishProcessingEvent({
+      type: "run_failed",
+      docVersionId: context.docVersionId,
+      tenantId: context.tenantId,
       processingRunId,
-      totalDurationMs: Date.now() - pipelineStart,
-      stepsCompleted,
-      status: "failed",
+      timestamp: new Date().toISOString(),
+      data: { runType: run.type, durationMs: totalDurationMs, stepsCompleted, error: (err as Error).message },
     });
+
     throw err;
   }
 }

@@ -95,7 +95,7 @@ export default function CrossAuditPage() {
     ) {
       startAudit.mutate({ protocolVersionId, checkedVersionId });
     }
-  }, [statusQuery.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusQuery.data]);
 
   const handleRerun = useCallback(() => {
     startAudit.mutate(
