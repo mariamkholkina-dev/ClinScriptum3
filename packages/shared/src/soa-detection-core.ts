@@ -115,12 +115,12 @@ const PROCEDURE_ROW_PATTERNS: RegExp[] = [
 ];
 
 const X_MARK_PATTERN = /^[xхXХ✓✔☑●+×\uf06e]+$/;
-const X_MARK_DASH = /^[–—\-]$/;
+const X_MARK_DASH = /^[–—-]$/;
 const X_MARK_PARENS = /^\([xхXХ]\)$/;
 
 const POSITIVE_MARKER_RE = /^[xхXХ✓✔☑●+×\uf06e]+[\d*†‡§¶#,.\s]*$/;
 const PARENS_MARKER_RE = /^\([xхXХ]\)[\d*]*$/;
-const DASH_MARKER_RE = /^[–—\-]$/;
+const DASH_MARKER_RE = /^[–—-]$/;
 
 const TIMEPOINT_TIME_RE = /\d+\s*(мин|ч|час|hour|min)/i;
 const TIMEPOINT_DAY_RE = /\b(день|day|недел|week)\b/i;
