@@ -623,7 +623,10 @@ function SectionTreeRow({
         </span>
 
         {/* Title */}
-        <span className="flex-1 min-w-0 truncate text-sm text-gray-900 font-medium">
+        <span
+          className="flex-1 min-w-0 truncate text-sm text-gray-900 font-medium"
+          title={section.title || "(без названия)"}
+        >
           {section.title || "(без названия)"}
         </span>
 
@@ -744,6 +747,9 @@ export default function ParsingTreeViewer({
 
   const bulkUpdate = useCallback(
     (status: "validated" | "requires_rework", structureComment?: string) => {
+      // Защита от пустого выделения: иначе mutation отправит пустой массив, бэкенд молча
+      // отработает 0 строк и кажется что «ничего не происходит».
+      if (selectedIds.size === 0) return;
       bulkStructureMutation.mutate({
         sectionIds: Array.from(selectedIds),
         status,
@@ -923,7 +929,7 @@ export default function ParsingTreeViewer({
         onBulkValidate={() => bulkUpdate("validated")}
         onBulkRework={(comment) => bulkUpdate("requires_rework", comment)}
         onClearSelection={() => setSelectedIds(new Set())}
-        onSelectAll={() => setSelectedIds(new Set(visibleSections.map((s) => s.id)))}
+        onSelectAll={() => setSelectedIds(new Set(rawSections.map((s) => s.id)))}
         onExpandAll={expandAll}
         onCollapseAll={collapseAll}
         showDiff={showDiff}
