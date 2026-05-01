@@ -2,6 +2,15 @@
 
 ## 2026-05-01
 
+### PR-2 спринта качества классификации: handler classify-sections + точная eval-метрика
+
+Второй из 3-х PR. Оптимизирует workers handler и приводит метрику evaluation к per-section уровню.
+
+- **task 1.2 — LLM-промпты из БД с `{{catalog}}` плейсхолдером.** `classify-sections` теперь параллельно с правилами таксономии грузит `loadRulesForType(ctx.bundleId, "section_classification_qa")` и берёт оттуда `section_classify:llm_check` / `section_classify:qa` промпты по `name`. Шаблон содержит `{{catalog}}`, который заменяется на актуальный `buildZoneCatalog(rules)`. Fallback `DEFAULT_LLM_CHECK_PROMPT` / `DEFAULT_LLM_QA_PROMPT` — копии текущих захардкоженных версий с тем же плейсхолдером (safety net для свежих/тестовых инсталляций). `seed-prompts.ts`: оба промпта переписаны до уровня полных русскоязычных правил классификации (раньше там были stub'ы из 8 строк). Теперь rule-admin UI действительно влияет на runtime — раньше промпты в БД были мёртвым кодом.
+- **task 1.3 — skip LLM Check при `confidence ≥ 0.85`.** Перед запуском `classifyOne` фильтруем по `HIGH_CONFIDENCE_SKIP=0.85`: LLM зовётся только на секции с `algoSection=null` или `algoConfidence<0.85`. Сократит ~60% LLM-запросов на типичном протоколе, где deterministic уже даёт высокую уверенность по очевидным `Synopsis`/`References`/etc. В response добавлены `verifiedByLlm` и `skippedHighConfidence` для метрик прогона.
+- **task 1.5 — согласовать content snippet det/llm.** В deterministic step раньше передавался только `contentBlocks[0]?.content`; LLM steps использовали `join + slice(0, 2000)`. Теперь deterministic тоже получает `join + slice(0, 1000)`. Убирает рассинхрон уровней.
+- **task 1.6 — per-section метрика в `run-evaluation.extractKeys` для classification.** Раньше `extractKeys` для `key='sections'` собирал ключ только по `standardSection` — set-уровень, дубли зон в одном документе считались как одна запись (3 секции `safety` = 1 ключ). Теперь для `key='sections'` если есть `title` — собираем пару `sections:<title.lowercase.trim>=<zone>`. Для других stages (extraction, contradiction_detection) логика сохранена. Существующие тесты `run-evaluation.test.ts` обновлены под новый shape (добавлен `title` в expected.sections).
+
 ### PR-1 спринта качества классификации: гейты в classifier + правки таксономии
 
 Первый из 3-х PR по плану `docs/section-classification-quality-plan.md`. Восстанавливает FP-min логику таксономии и приводит ключи зон в порядок.
