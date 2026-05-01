@@ -45,7 +45,8 @@ Turbo monorepo with npm workspaces. All TypeScript, ESM modules (`"type": "modul
 |-----|------|---------|
 | `apps/api` | 4000 | Express + tRPC v11 server (SuperJSON transformer). JWT auth, tenant isolation |
 | `apps/web` | 3000 | Next.js 14 + React 18 frontend. tRPC React Query hooks, Zustand state, Tailwind |
-| `apps/workers` | — | BullMQ job processors (5 concurrent). Connects to Redis for queue, PostgreSQL for data |
+| `apps/rule-admin` | 3002 | Next.js admin UI for rule management, golden datasets, evaluation runs |
+| `apps/workers` | — | BullMQ job processors. Connects to Redis for queue, PostgreSQL for data |
 | `apps/word-addin` | 3001 | Office.js Word add-in (Vite + Fluent UI) |
 
 ### Packages
@@ -91,11 +92,12 @@ Every extraction/classification step can go through up to 5 levels:
 Pipeline jobs: `parse_document`, `classify_sections`, `extract_facts`, `intra_doc_audit`, `generate_icf`, `generate_csr`. Orchestrated via `apps/workers/src/pipeline/orchestrator.ts`.
 
 Workers features:
-- **Retry**: Per-job-type exponential backoff via `lib/retry-config.ts` (parse/classify/extract: 3 attempts, audit: 2, generation: 2)
+- **Job-level retry**: BullMQ exponential backoff via `lib/retry-config.ts` (parse/classify/extract: 3 attempts, audit: 2, generation: 2)
+- **Step-level retry**: Inside one handler invocation, `llm_check` and `llm_qa` steps retry with exponential backoff via `lib/step-retry.ts` (3 attempts, baseDelayMs=5000). `deterministic`/`operator_review`/`user_validation` do not retry (maxAttempts=1)
+- **Idempotency**: Each `ProcessingStep` gets `idempotencyKey = ${runId}:${level}:${attempt}` plus `attemptNumber` updated per retry. Orchestrator skips already completed steps and deletes failed ones before re-execution
 - **DLQ**: Dead-letter queue (`processing-dlq`) for exhausted retries (`dlq.ts`)
-- **Idempotency**: Orchestrator skips completed steps on retry, cleans up failed steps before re-execution
 - **Startup recovery**: Marks stale `running` pipelines (>5min) as `failed` on worker restart (`lib/startup-recovery.ts`)
-- **Metrics**: Step-level timing and pipeline completion metrics (`lib/metrics.ts`)
+- **Metrics**: Step-level timing, attempt count and pipeline completion metrics (`lib/metrics.ts`)
 
 ### Document Version Status Flow
 
@@ -108,9 +110,11 @@ uploading → parsing → classifying_sections → extracting_facts → detectin
 
 - Tenant isolation via `tenantId` foreign key on all data models
 - JWT access tokens (15min) + refresh tokens (30 days)
-- 5 roles: `writer`, `qc_operator`, `findings_reviewer`, `rule_admin`, `tenant_admin`
+- 6 roles: `writer`, `qc_operator`, `findings_reviewer`, `rule_admin`, `rule_approver`, `tenant_admin`
 - tRPC middleware `verifyAccessToken` on protected procedures
 - `requireTenantResource()` guard replaces inline fetch-check-throw patterns
+- **Global-vs-tenant resources** (e.g. `RuleSet`): when a model has nullable `tenantId`, queries must use `where: { OR: [{ tenantId }, { tenantId: null }] }` with `orderBy: { tenantId: { sort: "desc", nulls: "last" } }` to prefer tenant-specific over global
+- **Inter-document audit**: any endpoint that takes a `(protocolVersionId, checkedVersionId)` pair must validate the pair via `validateInterAuditPair()` — checks both belong to the tenant, the protocol is actually `type='protocol'`, and both belong to the same study
 
 ### LLM Configuration
 
@@ -130,8 +134,15 @@ Copy `.env.example` to `.env`. Key variables: `DATABASE_URL`, `REDIS_URL`, `JWT_
 ### Testing
 
 - **Framework**: Vitest with workspace mode (`vitest.workspace.ts`)
-- **Tested packages**: `rules-engine` (section-classifier, fact-extractor, contradiction-detector), `doc-parser` (heading-detector, table-parser, footnote-extractor)
-- **Run**: `npm test` or `npx turbo test`
+- **Coverage**:
+  - `packages/rules-engine` — section-classifier, fact-extractor, contradiction-detector (130+ tests)
+  - `packages/doc-parser` — heading-detector, table-parser, footnote-extractor
+  - `apps/api/src/services/__tests__` — service-layer tests for `study`, `document`, `audit`, `processing`, `evaluation` (+90 tests)
+  - `apps/api/src/__tests__/integration` — integration tests on real DB: `auth`, `document-upload`, `tenant-isolation`
+  - `apps/workers/src/handlers/__tests__` — all 10 handlers covered (parse, classify, extract, intra/inter audit, generate-icf/csr, run-evaluation, run-batch-evaluation, analyze-corrections, run-pipeline) (90+ tests)
+  - `apps/workers/src/pipeline/__tests__/orchestrator.test.ts` + `lib/__tests__/step-retry.test.ts`
+- **Run**: `npm test` or `npx turbo test`. CI runs `--coverage --coverage.reporter=text`. Turbo-passed env vars for tests: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `NODE_ENV` (configured in `turbo.json` `test.env`)
+- **E2E**: Playwright in `apps/web/e2e/` and `apps/rule-admin/e2e/` (auth flow, navigation, golden-dataset, visual regression). Run: `npm run e2e --workspace=@clinscriptum/web`
 
 ### Linting
 
@@ -153,7 +164,11 @@ Copy `.env.example` to `.env`. Key variables: `DATABASE_URL`, `REDIS_URL`, `JWT_
 - After adding a new tRPC router: register it in `apps/api/src/routers/index.ts` (import + add to `router({})`)
 - ESM: imports in `apps/api` and `apps/workers` require `.js` extension (`import { x } from './file.js'`)
 - After adding new service: export from `apps/api/src/services/index.ts`
+- Prisma migrations: when schema changes, **always** create a migration via `npx prisma migrate dev --name <descriptive_name>` — do NOT use `prisma db push` (it creates schema drift between dev DB and the migrations folder, which breaks `prisma migrate deploy` in CI). The `20260430100000_consolidate_schema_drift` migration was needed to recover from past `db push` usage; avoid recreating that situation.
 - Prisma enums: after adding enum value, create migration `npx prisma migrate dev --name add_enum_value`
+- New large list-returning queries (findings, sections, etc.) should support cursor-based pagination — see `audit.service.getAuditFindings` pattern: optional `take`/`cursor` in input, `take + 1` query, return `nextCursor`
+- `.gitignore` includes `*.sql` for dumps but **whitelists** Prisma migrations via `!packages/db/prisma/migrations/**/*.sql` — don't accidentally re-block them
+- Cross-platform lockfile: `package-lock.json` may resolve differently on Windows (npm 11) vs Linux/CI (npm 10), causing `npm ci` to fail on optional native binaries (rollup, swc). CI handles this via `npm ci || npm install --no-audit` fallback + explicit installs of `@rollup/rollup-linux-x64-gnu`, `@next/swc-linux-x64-gnu`, `@emnapi/core`, `@emnapi/runtime`
 - Frontend env vars must be prefixed `NEXT_PUBLIC_` to be available in browser
 
 ## Git Workflow
@@ -173,7 +188,7 @@ Copy `.env.example` to `.env`. Key variables: `DATABASE_URL`, `REDIS_URL`, `JWT_
 
 [optional body]
 
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
 
 Types: `feat` (new feature), `fix` (bug fix), `refactor` (no behavior change),
@@ -216,4 +231,8 @@ Each step = separate commit. Each commit must pass typecheck + lint.
 
 ## CI
 
-GitHub Actions on push/PR to `main`: `npm ci` → `prisma generate` → `prisma migrate deploy` → `turbo build` → `turbo typecheck` → `turbo lint` → `turbo test`. Runs against PostgreSQL 16 and Redis 7 service containers.
+GitHub Actions on push/PR to `main` or `master`. Three jobs:
+
+- **build**: `npm ci || npm install --no-audit` → install Linux-only optional deps (rollup/swc/emnapi) → `prisma generate` → `prisma migrate deploy` → `turbo build` → `turbo typecheck` → `turbo lint` → `turbo test --coverage --coverage.reporter=text`. Runs against PostgreSQL 16 and Redis 7 service containers.
+- **e2e** (depends on build): runs Playwright for both `apps/web` and `apps/rule-admin` with `continue-on-error: true`
+- **security**: `npm audit --audit-level=critical --omit=dev` (blocking) + grep for hardcoded passwords/api-keys (warning). High-severity audit findings surface in build job non-blocking.

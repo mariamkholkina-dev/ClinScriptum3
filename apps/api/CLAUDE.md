@@ -30,6 +30,9 @@ Express + tRPC v11, SuperJSON transformer. Port 4000.
 - Tenant guard: `requireTenantResource(resource, tenantId)` — throws FORBIDDEN if mismatch
 - Context: `getRequestContext()` from `@clinscriptum/shared` — returns `{ tenantId, userId, correlationId }`
 - Logging: `import { logger } from '../lib/logger.js'` — never use `console.*`
+- Inter-audit pairs: any service method taking `(protocolVersionId, checkedVersionId)` must call `validateInterAuditPair()` first (validates tenant + `document.type='protocol'` + same `studyId` for both)
+- Global-vs-tenant resources (`RuleSet` etc.): `where: { OR: [{ tenantId }, { tenantId: null }] }` + `orderBy: { tenantId: { sort: "desc", nulls: "last" } }`
+- Cursor pagination on list endpoints with potentially large results: optional `take` (1..500) + `cursor` (UUID) input, `take + 1` query, return `nextCursor`. Without `take`/`cursor` — back-compat full list. Pattern: see `audit.service.getAuditFindings`
 
 ## Tests
 

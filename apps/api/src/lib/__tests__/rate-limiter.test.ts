@@ -147,4 +147,103 @@ describe("rateLimiter (Redis-backed)", () => {
     const zaddCall = mockMulti.zremrangebyscore.mock.calls[0];
     expect(zaddCall[0]).toBe("rl:ip:192.168.1.1");
   });
+
+  it("falls back to IP key when JWT is malformed", async () => {
+    const { __mockMulti: mockMulti } = await import("ioredis") as any;
+    const limiter = rateLimiter(2);
+    const next = vi.fn();
+
+    // Malformed JWT — base64-decoding the second segment will produce invalid JSON
+    const malformedJwt = "header.notbase64-or-json.signature";
+    const req = mockReq({
+      ip: "10.0.0.99",
+      headers: { authorization: `Bearer ${malformedJwt}` },
+    });
+
+    setNextCount(1);
+
+    await limiter(req, mockRes() as unknown as Response, next as NextFunction);
+
+    const zaddCall = mockMulti.zremrangebyscore.mock.calls[0];
+    expect(zaddCall[0]).toBe("rl:ip:10.0.0.99");
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to IP key when Bearer prefix is missing", async () => {
+    const { __mockMulti: mockMulti } = await import("ioredis") as any;
+    const limiter = rateLimiter(2);
+    const next = vi.fn();
+
+    const req = mockReq({
+      ip: "10.0.0.100",
+      headers: { authorization: "Basic abcdef" },
+    });
+
+    setNextCount(1);
+
+    await limiter(req, mockRes() as unknown as Response, next as NextFunction);
+
+    const zaddCall = mockMulti.zremrangebyscore.mock.calls[0];
+    expect(zaddCall[0]).toBe("rl:ip:10.0.0.100");
+  });
+
+  it("uses 'unknown' suffix when neither JWT nor IP is available", async () => {
+    const { __mockMulti: mockMulti } = await import("ioredis") as any;
+    const limiter = rateLimiter(2);
+    const next = vi.fn();
+
+    const req = mockReq({ ip: undefined });
+
+    setNextCount(1);
+
+    await limiter(req, mockRes() as unknown as Response, next as NextFunction);
+
+    const zaddCall = mockMulti.zremrangebyscore.mock.calls[0];
+    expect(zaddCall[0]).toBe("rl:ip:unknown");
+  });
+
+  it("at exact boundary (count == limit) request is allowed", async () => {
+    const limiter = rateLimiter(5);
+    const req = mockReq({ ip: "10.0.0.10" });
+    const res = mockRes();
+    const next = vi.fn();
+
+    setNextCount(5);
+
+    await limiter(req, res as unknown as Response, next as NextFunction);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["X-RateLimit-Remaining"]).toBe(0);
+  });
+
+  it("X-RateLimit-Remaining never goes negative", async () => {
+    const limiter = rateLimiter(3);
+    const req = mockReq({ ip: "10.0.0.11" });
+    const res = mockRes();
+    const next = vi.fn();
+
+    setNextCount(100);
+
+    await limiter(req, res as unknown as Response, next as NextFunction);
+
+    expect(res.headers["X-RateLimit-Remaining"]).toBe(0);
+    expect(res.statusCode).toBe(429);
+  });
+
+  it("fails open (calls next) when Redis exec throws", async () => {
+    const { __mockMulti: mockMulti } = await import("ioredis") as any;
+    const limiter = rateLimiter(5);
+    const req = mockReq({ ip: "10.0.0.12" });
+    const res = mockRes();
+    const next = vi.fn();
+
+    mockMulti.exec.mockRejectedValueOnce(new Error("redis down"));
+
+    await limiter(req, res as unknown as Response, next as NextFunction);
+
+    // fail-open: request continues, no 429
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+  });
 });
