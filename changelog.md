@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-05-02
+
+### Hotfix: защита cleanupTestData + merge SoA → visit_schedule
+
+Два связанных фикса по результатам инцидента data-loss и анализа baseline спринта качества классификации.
+
+- **Safety guard в `cleanupTestData()`** (`apps/api/src/__tests__/integration/helpers.ts`). Функция выполняет `TRUNCATE TABLE x CASCADE` для всех таблиц схемы `public`. Тесты используют общий `DATABASE_URL` (нет отдельной test-DB через `.env.test`) — каждый запуск `npm test` на dev стирал user-данные. Добавлен `assertSafeTestDatabase()` который требует, чтобы `DATABASE_URL` содержал `_test` в имени БД ИЛИ выставлен `ALLOW_DESTRUCTIVE_TEST_CLEANUP=1`. На dev (`clinscriptum3`) тесты теперь упадут с понятной ошибкой вместо wipe. На CI (`clinscriptum_test`, `.github/workflows/ci.yml:17,67`) guard пропускает по pattern. Долгосрочный TODO — отдельная dev test-DB + `.env.test` + override в `turbo.json`.
+- **Merge `procedures.schedule_of_assessments` → `design.visit_schedule`** (`taxonomy.yaml` + `apps/workers/scripts/migrate-taxonomy-keys.ts`). Pending decision из плана и memory зафиксирован: эти зоны слишком сильно пересекаются на реальных протоколах. Объединены в `design.visit_schedule` (title `«График визитов / процедур / SoA / расписание»`), все patterns/require_patterns/not_keywords из обеих зон объединены. В migration script добавлен mapping `procedures.schedule_of_assessments → design.visit_schedule` + bug fix в `countExpectedResultsRefs`: JSON может сериализоваться с пробелом после `:` или без — теперь проверяются оба варианта.
+
 ## 2026-05-01
 
 ### PR-3 спринта качества классификации: Sprint 0 mitigation + UI fixes
