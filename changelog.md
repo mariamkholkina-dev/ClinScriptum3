@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-05-01
+
+### План улучшений классификации секций + первый baseline
+
+Зафиксирован план комплексной доработки этапа `classify_sections` после аудита pipeline и инфраструктура для baseline-замеров на golden-наборах tenant Golden Set.
+
+- **`docs/section-classification-quality-plan.md`** — план на 6 спринтов (≈13.5-17 дней, 19 коммитов): Спринт 0 — фикс flaky `TypeError: fetch failed` на `section_classify_qa`; Спринт 1 — восстановление `require_patterns`/`not_keywords` гейтов из таксономии (сейчас игнорируются), подгрузка LLM-промпта из БД (сейчас inline в handler), пропуск LLM Check на high-confidence секциях, calibrated confidence, согласование content snippet, per-section метрика в evaluation; Спринт 2 — иерархия zone/subzone, оконный контекст соседних решений, few-shot; Спринт 3 — batch LLM Check, robust JSON-парсер; Спринт 4 — heading detection без bold, singleton constraints, fuzzy zone resolve; Спринт 5 — correction-loop как источник few-shot. Каждая задача — затронутые файлы со строками, конкретные изменения, тесты, риски, оценка.
+- **`apps/workers/scripts/run-baseline-evaluation.ts`** — скрипт через `npm run baseline --workspace=@clinscriptum/workers`: создаёт `EvaluationRun` с фиксацией активной `RuleSetVersion` + default LLM-config, ставит job `run_evaluation` в BullMQ-очередь `processing`, поллит до завершения (timeout 10 мин), сохраняет в `docs/baselines/{name}.json` git-коммит, ветку, конфиг, summary, per-sample результаты, delta. Опции `--name`, `--tenant`, `--stage`, `--output-dir`, `--compared-to`, `--dry-run`.
+- **`docs/baselines/baseline-master-no-qa-2026-05-01.json`** — первый baseline на 4 размеченных golden-сэмплах (FNT-AS-III-2026, Тетра-AHAGGN-11/25, STP-08-25, VLT-015-II/2025): avgPrecision=0.969, avgRecall=0.930, avgF1=0.949, passRate=1.000. Зафиксирован git-коммит и снимок ruleSetVersion + llmConfig для воспроизводимости. Помечен `no-qa` — во всех 4 reprocess-прогонах llm_qa-стадия упала с `TypeError: fetch failed` (системная проблема DeepSeek-V32 endpoint, задача 0.1 в плане).
+- **`apps/workers/package.json`** — добавлен npm-script `baseline`: `tsx --env-file=../../.env scripts/run-baseline-evaluation.ts`.
+- **`.gitignore`** — добавлены `*.dump` и `backups/` (Postgres-дампы и snapshot-папка не попадают в репо). Прежде блокировались только `*.sql`.
+
 ## 2026-04-30
 
 ### Производительность: cursor-пагинация + индексы для findings
