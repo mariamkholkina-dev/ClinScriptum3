@@ -620,33 +620,48 @@ Convert ALL future tense to past tense. Be balanced and objective. Conclusions m
         pattern: "system_prompt",
         stage: "classification",
         subStage: "analysis",
-        promptTemplate: `You are a clinical protocol section classifier. Given a section title and content snippet, determine the standard section name according to ICH E6/E3 guidelines.
+        promptTemplate: `Ты — эксперт по структуре документов клинических исследований (протокол, ICF, IB, CSR).
 
-Return a JSON object:
-{
-  "standardSection": "<canonical section name or null>",
-  "confidence": <0.0-1.0>,
-  "reasoning": "<brief explanation>"
-}
+ЗАДАЧА: Классифицируй секцию документа, присвоив ей стандартную зону из каталога ниже.
 
-Standard sections include: Synopsis, Introduction, Study Objectives, Study Design, Study Population, Treatments, Efficacy Assessments, Safety Assessments, Statistics, Ethics, References, Appendices, and their sub-sections.`,
+ПРИОРИТЕТ ИСТОЧНИКОВ ИНФОРМАЦИИ:
+1. ЗАГОЛОВОК секции + ПУТЬ родительских заголовков — главный источник. В большинстве случаев заголовка и его позиции в иерархии достаточно для уверенной классификации.
+2. СТРУКТУРА ДОКУМЕНТА (список всех заголовков) — помогает определить контекст и тип документа.
+3. СОДЕРЖАНИЕ РАЗДЕЛА — используй ТОЛЬКО если заголовок неоднозначен и не позволяет уверенно определить зону (confidence < 0.7 по заголовку). Не позволяй содержанию перевесить очевидный заголовок.
+
+КАТАЛОГ ЗОН (выбирай ТОЛЬКО из этого списка):
+{{catalog}}
+
+ПРАВИЛА:
+1. Используй zone key ТОЧНО как он написан в каталоге. НЕ добавляй к нему имя родительской зоны — поле «parent» в каталоге это метаданные, а не часть ключа. Например, если в каталоге написано «preclinical_clinical_data (subzone, parent: ip)», верни "preclinical_clinical_data", а НЕ "ip.preclinical_clinical_data"
+2. Если секция является подзоной — используй ключ подзоны, а не родительской зоны
+3. Учитывай иерархию: путь родительских заголовков и общую структуру документа
+4. Если алгоритм уже предложил зону — проверь: если согласен, верни ту же; если нет — верни правильную
+5. Если секция не подходит ни к одной зоне — zone: null, confidence: 0
+6. confidence: 0.0–1.0
+
+ФОРМАТ ОТВЕТА — только JSON-объект, без текста, без markdown:
+{"zone":"preclinical_clinical_data","confidence":0.95}`,
       },
       {
         name: "section_classify:qa",
         pattern: "system_prompt",
         stage: "classification",
         subStage: "qa",
-        promptTemplate: `You are a QA reviewer for clinical document section classification. You are given two classification results: one from a deterministic algorithm and one from an LLM.
+        promptTemplate: `Ты — QA-ревьюер структуры документа клинического исследования.
+Проверь корректность присвоенных зон. Для секций с ошибочной зоной предложи исправление.
 
-Compare both results and determine which classification is correct. If neither is correct, provide the right classification.
+КАТАЛОГ ЗОН:
+{{catalog}}
 
-Return a JSON object:
-{
-  "chosenSource": "algo" | "llm" | "custom",
-  "standardSection": "<correct section name>",
-  "confidence": <0.0-1.0>,
-  "reasoning": "<explanation of your decision>"
-}`,
+ПРАВИЛА:
+- Проверь, что присвоенная зона соответствует заголовку и месту секции в иерархии документа
+- Если зона правильная — не включай секцию в ответ
+- Если зона неправильная — укажи правильную зону строго из каталога выше
+- Если секция не подходит ни к одной зоне — correct_zone: null
+
+ФОРМАТ ОТВЕТА — только JSON-массив (без markdown). Если все зоны верны — пустой массив []:
+[{"idx":1,"current_zone":"overview","correct_zone":"introduction","confidence":0.9,"reason":"..."}]`,
       },
     ],
   },

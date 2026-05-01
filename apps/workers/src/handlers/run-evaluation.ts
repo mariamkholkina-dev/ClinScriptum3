@@ -301,10 +301,19 @@ function extractKeys(data: Record<string, unknown>): Set<string> {
     if (Array.isArray(value)) {
       for (const item of value) {
         if (typeof item === "object" && item !== null) {
+          const obj = item as Record<string, unknown>;
+          // For classification stage (key='sections'): match by (title, standardSection) pair.
+          // Старая логика — set-уровень по уникальным standardSection — занижала f1 для документов
+          // с дублями зон (3 секции safety считались как 1). См. task 1.6 в плане.
+          if (key === "sections" && obj.title != null && "standardSection" in obj) {
+            const title = String(obj.title).trim().toLowerCase();
+            keys.add(`sections:${title}=${String(obj.standardSection)}`);
+            continue;
+          }
           const identifier =
-            (item as Record<string, unknown>).factKey ??
-            (item as Record<string, unknown>).standardSection ??
-            (item as Record<string, unknown>).id ??
+            obj.factKey ??
+            obj.standardSection ??
+            obj.id ??
             JSON.stringify(item);
           keys.add(`${key}:${String(identifier)}`);
         } else {
