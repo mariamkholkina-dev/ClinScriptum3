@@ -578,52 +578,71 @@ async function persistSoaTables(
   versionId: string,
   soaTables: SoaDetectionResult[]
 ): Promise<void> {
-  await prisma.$transaction(async (tx) => {
-    const existing = await tx.soaTable.findMany({
-      where: { docVersionId: versionId },
-      select: { id: true },
-    });
-    for (const t of existing) {
-      await tx.soaCell.deleteMany({ where: { soaTableId: t.id } });
-    }
-    await tx.soaTable.deleteMany({ where: { docVersionId: versionId } });
-
-    for (const soa of soaTables) {
-      const table = await tx.soaTable.create({
-        data: {
-          docVersionId: versionId,
-          sourceBlockId: soa.tableBlockId,
-          title: soa.title,
-          soaScore: soa.score,
-          status: "detected",
-          headerData: { visits: soa.visits, headerRows: soa.headerRows },
-          rawMatrix: soa.rawMatrix,
-          footnotes: soa.footnotes,
-        },
+  // На больших матрицах (200+ cells) per-cell create в loop упирался в default
+  // Prisma transaction timeout (5s) и падал с "Transaction not found" — см.
+  // project_known_bugs.md (2026-05-02). Фикс: bulk-вставка через createMany
+  // (1 SQL вместо N) + увеличенный transaction timeout как defense-in-depth.
+  await prisma.$transaction(
+    async (tx) => {
+      const existing = await tx.soaTable.findMany({
+        where: { docVersionId: versionId },
+        select: { id: true },
       });
+      for (const t of existing) {
+        await tx.soaCell.deleteMany({ where: { soaTableId: t.id } });
+      }
+      await tx.soaTable.deleteMany({ where: { docVersionId: versionId } });
 
-      for (let row = 0; row < soa.procedures.length; row++) {
+      for (const soa of soaTables) {
+        const table = await tx.soaTable.create({
+          data: {
+            docVersionId: versionId,
+            sourceBlockId: soa.tableBlockId,
+            title: soa.title,
+            soaScore: soa.score,
+            status: "detected",
+            headerData: { visits: soa.visits, headerRows: soa.headerRows },
+            rawMatrix: soa.rawMatrix,
+            footnotes: soa.footnotes,
+          },
+        });
+
         const visitName = (idx: number) =>
           idx < soa.visits.length ? soa.visits[idx] : `Col ${idx + 1}`;
 
-        for (let col = 0; col < soa.visits.length; col++) {
-          const cell = soa.matrix[row]?.[col];
-          if (!cell) continue;
+        const cellsData: Array<{
+          soaTableId: string;
+          rowIndex: number;
+          colIndex: number;
+          procedureName: string;
+          visitName: string;
+          rawValue: string;
+          normalizedValue: string;
+          confidence: number;
+        }> = [];
 
-          await tx.soaCell.create({
-            data: {
+        for (let row = 0; row < soa.procedures.length; row++) {
+          for (let col = 0; col < soa.visits.length; col++) {
+            const cell = soa.matrix[row]?.[col];
+            if (!cell) continue;
+            cellsData.push({
               soaTableId: table.id,
               rowIndex: row,
               colIndex: col,
               procedureName: soa.procedures[row],
               visitName: visitName(col),
               rawValue: cell.rawValue,
-              normalizedValue: cell.normalizedValue,
+              normalizedValue: cell.normalizedValue ?? "",
               confidence: cell.confidence,
-            },
-          });
+            });
+          }
+        }
+
+        if (cellsData.length > 0) {
+          await tx.soaCell.createMany({ data: cellsData });
         }
       }
-    }
-  });
+    },
+    { timeout: 60_000, maxWait: 10_000 },
+  );
 }

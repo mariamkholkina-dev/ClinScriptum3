@@ -39,3 +39,23 @@ Express + tRPC v11, SuperJSON transformer. Port 4000.
 - Location: `src/__tests__/` (integration), `src/lib/__tests__/` (unit), `src/services/__tests__/` (service)
 - Framework: Vitest
 - Run: `npx vitest run` or `npm test --workspace=@clinscriptum/api`
+
+### Integration tests use a dedicated test-DB
+
+`cleanupTestData()` in `__tests__/integration/helpers.ts` does `TRUNCATE TABLE x CASCADE`
+on every table in schema `public` — must run on a separate DB, never on dev `clinscriptum3`.
+
+`apps/api/.env.test` (committed) sets `DATABASE_URL=postgresql://...clinscriptum3_test` and
+`vitest.config.ts` loads it via `setupFiles: [vitest.setup.ts]`. CI's own env-vars take
+precedence (the loader skips already-set vars).
+
+**First-time local setup:**
+```bash
+docker compose exec postgres createdb -U clinscriptum clinscriptum3_test
+DATABASE_URL=postgresql://clinscriptum:clinscriptum_dev@localhost:5432/clinscriptum3_test \
+  npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma
+```
+
+**Defense-in-depth:** `assertSafeTestDatabase()` inside `cleanupTestData()` throws if
+`DATABASE_URL` doesn't contain `_test` and `ALLOW_DESTRUCTIVE_TEST_CLEANUP=1` is unset.
+This catches missing `.env.test` setup before any `TRUNCATE` runs.
