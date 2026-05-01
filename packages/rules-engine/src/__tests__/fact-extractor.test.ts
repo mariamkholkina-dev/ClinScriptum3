@@ -124,6 +124,29 @@ describe("FactExtractor", () => {
       const ec = facts.find((f) => f.factKey === "exclusion_criteria");
       expect(ec).toBeDefined();
     });
+
+    it("captures multi-line bullet lists for criteria", () => {
+      const text =
+        "Inclusion Criteria:\n- Age 18-65\n- Confirmed diagnosis\n- Signed informed consent";
+      const facts = extractor.extract(text);
+      const ic = facts.find((f) => f.factKey === "inclusion_criteria");
+      expect(ic).toBeDefined();
+      expect(ic!.value).toContain("Age 18-65");
+      expect(ic!.value).toContain("Confirmed diagnosis");
+      expect(ic!.value).toContain("Signed informed consent");
+    });
+
+    it("captures multi-line bullet lists for endpoints", () => {
+      const text =
+        "Secondary Endpoint: Time to recurrence\n- Quality of life score at Week 12\n- Adverse event frequency";
+      const facts = extractor.extract(text);
+      const eps = facts.filter((f) => f.factKey === "secondary_endpoint");
+      // First match captures the head + sub-bullets as one aggregated value.
+      expect(eps.length).toBeGreaterThanOrEqual(1);
+      const combined = eps.map((e) => e.value).join(" ");
+      expect(combined).toContain("Quality of life");
+      expect(combined).toContain("Adverse event");
+    });
   });
 
   describe("aggregation by canonical value", () => {

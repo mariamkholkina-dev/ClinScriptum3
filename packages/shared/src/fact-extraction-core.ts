@@ -71,8 +71,34 @@ async function runWithConcurrency<T>(
   return results;
 }
 
+/**
+ * Serialise content blocks back to plain text while preserving cues
+ * the regex/LLM extractors care about:
+ *   - `list` blocks get a "- " bullet prefix so multi-line list rules
+ *     (criteria/endpoints) can recognise the boundary;
+ *   - `table` blocks get a blank-line separator from surrounding
+ *     paragraphs.
+ */
+export function serializeContentBlocks(
+  blocks: Array<{ content: string; type?: string | null }>,
+): string {
+  const parts: string[] = [];
+  for (const b of blocks) {
+    const c = b.content ?? "";
+    if (!c) continue;
+    if (b.type === "list") {
+      parts.push(`- ${c}`);
+    } else if (b.type === "table") {
+      parts.push(`\n${c}\n`);
+    } else {
+      parts.push(c);
+    }
+  }
+  return parts.join("\n");
+}
+
 function buildExtractableSections(
-  sections: Array<{ id: string; title: string; standardSection: string | null; level: number; contentBlocks: Array<{ content: string }> }>,
+  sections: Array<{ id: string; title: string; standardSection: string | null; level: number; contentBlocks: Array<{ content: string; type?: string | null }> }>,
   prefixes: string[] = EXCLUDED_SECTION_PREFIXES,
 ): SectionForExtraction[] {
   return sections
@@ -82,7 +108,7 @@ function buildExtractableSections(
       title: s.title,
       standardSection: s.standardSection,
       level: s.level,
-      text: s.contentBlocks.map((b) => b.content).join("\n"),
+      text: serializeContentBlocks(s.contentBlocks),
     }))
     .filter((s) => s.text.length > 30);
 }
@@ -152,7 +178,7 @@ export async function runDeterministic(
     .filter((s) => !s.standardSection || !prefixes.some((p) => s.standardSection!.startsWith(p)))
     .map((s) => ({
       title: s.title,
-      content: s.contentBlocks.map((b) => b.content).join("\n"),
+      content: serializeContentBlocks(s.contentBlocks),
       isSynopsis: s.standardSection === "synopsis",
     }));
 

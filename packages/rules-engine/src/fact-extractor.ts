@@ -191,8 +191,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "primary_endpoint",
     patterns: [
-      "primary\\s+(?:endpoint|outcome|efficacy\\s+endpoint)[:\\s]+([^\\n]+)",
-      "(?:первичн\\w+\\s+конечн\\w+\\s+точк|основн\\w+\\s+(?:конечн\\w+\\s+точк|критери\\w+\\s+эффективност))\\w*[:\\s—–-]+([^\\n]+)",
+      "primary\\s+(?:endpoint|outcome|efficacy\\s+endpoint)[:\\s]+([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
+      "(?:первичн\\w+\\s+конечн\\w+\\s+точк|основн\\w+\\s+(?:конечн\\w+\\s+точк|критери\\w+\\s+эффективност))\\w*[:\\s—–-]+([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["synopsis", "body"],
@@ -201,8 +201,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "secondary_endpoint",
     patterns: [
-      "secondary\\s+(?:endpoint|outcome)[:\\s]+([^\\n]+)",
-      "(?:вторичн\\w+\\s+конечн\\w+\\s+точк|вторичн\\w+\\s+цел)\\w*[:\\s—–-]+([^\\n]+)",
+      "secondary\\s+(?:endpoint|outcome)[:\\s]+([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
+      "(?:вторичн\\w+\\s+конечн\\w+\\s+точк|вторичн\\w+\\s+цел)\\w*[:\\s—–-]+([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["body"],
@@ -211,8 +211,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "inclusion_criteria",
     patterns: [
-      "inclusion\\s+criteria[:\\s]*([^\\n]+)",
-      "(?:критери\\w+\\s+включени)\\s*[:\\s]*([^\\n]+)",
+      "inclusion\\s+criteria[:\\s]*([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
+      "(?:критери\\w+\\s+включени)\\s*[:\\s]*([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["body"],
@@ -221,8 +221,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "exclusion_criteria",
     patterns: [
-      "exclusion\\s+criteria[:\\s]*([^\\n]+)",
-      "(?:критери\\w+\\s+(?:не)?включени)\\s*[:\\s]*([^\\n]+)",
+      "exclusion\\s+criteria[:\\s]*([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
+      "(?:критери\\w+\\s+(?:не)?включени)\\s*[:\\s]*([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["body"],
