@@ -640,6 +640,18 @@ Convert ALL future tense to past tense. Be balanced and objective. Conclusions m
 5. Если секция не подходит ни к одной зоне — zone: null, confidence: 0
 6. confidence: 0.0–1.0
 
+ПРИМЕРЫ КЛАССИФИКАЦИИ (заголовок → зона + причина):
+1. "Synopsis" / "Синопсис исследования" → synopsis (стандартная отдельная секция, точное название)
+2. "Background and Rationale" / "Обоснование исследования" → rationale (обоснование выбора дизайна)
+3. "Препарат сравнения" / "Comparator" / "Active Control" → comparator (новая subzone IP — лекарственное средство, с которым сравнивается препарат исследования)
+4. "Результаты значимых доклинических и клинических исследований" → preclinical_clinical_data (объединённая зона: и доклинические, и предыдущие клинические данные по препарату)
+5. "Регламент клинического исследования" / "Schedule of Assessments" / "Блок-схема исследования" / "График процедур" → visit_schedule (объединённая зона визитов и SoA-таблицы)
+6. "Ограничения в питании, образе жизни" / "Физическая активность" → lifestyle (новая subzone procedures — диета, алкоголь, курение, физактивность во время исследования; НЕ путать с критериями отбора)
+7. "Тест на беременность" / "Контрацепция во время исследования" → contraception_requirements (subzone procedures — операционные процедуры, НЕ population.exclusion)
+8. "Statistical Analysis Plan" / "Множественные сравнения" → analysis_methods (subzone statistics, НЕ overview)
+9. "Inclusion Criteria" под parent "Study Population" → inclusion (используй subzone, не parent population)
+10. "Pharmacokinetics Endpoints" → pharmacokinetics (subzone endpoints, не общая фармакология)
+
 ФОРМАТ ОТВЕТА — только JSON-объект, без текста, без markdown:
 {"zone":"preclinical_clinical_data","confidence":0.95}`,
       },

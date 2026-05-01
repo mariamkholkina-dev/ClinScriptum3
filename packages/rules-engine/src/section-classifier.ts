@@ -57,6 +57,15 @@ const NOT_KEYWORD_PENALTY = 0.4;
 const MAX_CONFIDENCE = 0.99;
 const MAX_MULTI_MATCH_BONUS_COUNT = 2;
 
+// Parent-zone иерархический контекст (task 2.1).
+// Когда секция имеет document-parent в зоне X (по структуре документа),
+// и кандидат-правило — subzone X (parentZone === X) → даём бонус, чтобы
+// иерархически правильная subzone выиграла у конкурирующих "общих" правил.
+// Если кандидат — subzone ДРУГОЙ зоны (parentZone !== X) → штраф,
+// потому что вложенная секция логично должна оставаться в parent-зоне.
+const PARENT_ZONE_BONUS = 0.05;
+const PARENT_ZONE_PENALTY = 0.1;
+
 export class SectionClassifier {
   private rules: SectionMappingRule[];
 
@@ -64,7 +73,11 @@ export class SectionClassifier {
     this.rules = rules;
   }
 
-  classify(title: string, contentSnippet?: string): ClassificationResult {
+  classify(
+    title: string,
+    contentSnippet?: string,
+    parentZone?: string | null,
+  ): ClassificationResult {
     const titleLower = title.toLowerCase();
     const contentLower = (contentSnippet ?? "").toLowerCase();
     const haystack = contentLower ? `${titleLower}\n${contentLower}` : titleLower;
@@ -116,6 +129,16 @@ export class SectionClassifier {
       const negHit = rule.notKeywords?.some((p) => safeRegex(p)?.test(haystack)) ?? false;
       if (negHit) score = Math.max(0, score - NOT_KEYWORD_PENALTY);
 
+      // Hierarchical parent-zone context (task 2.1):
+      // влияет только на subzone-кандидатов, top-level zones не трогаем.
+      if (parentZone && rule.type === "subzone" && rule.parentZone) {
+        if (rule.parentZone === parentZone) {
+          score = Math.min(MAX_CONFIDENCE, score + PARENT_ZONE_BONUS);
+        } else {
+          score = Math.max(0, score - PARENT_ZONE_PENALTY);
+        }
+      }
+
       if (score > 0) candidates.push({ rule, score, method });
     }
 
@@ -142,6 +165,56 @@ export class SectionClassifier {
     sections: Array<{ title: string; content?: string }>,
   ): ClassificationResult[] {
     return sections.map((s) => this.classify(s.title, s.content));
+  }
+
+  /**
+   * Иерархическая классификация (task 2.1).
+   * Итерирует sections в document-order, поддерживая stack `{level, zone}`
+   * для определения document-parent-zone каждой секции. Передаёт parent-zone
+   * в classify(), который применяет bonus +0.05 если кандидат-subzone matches
+   * parent или penalty -0.1 если subzone другой зоны.
+   *
+   * Sections должны быть в порядке появления в документе (sorted by .order).
+   * Возвращает Map id → result.
+   */
+  classifyHierarchical(
+    sections: Array<{ id: string; title: string; level?: number | null; contentSnippet?: string }>,
+  ): Map<string, ClassificationResult> {
+    const out = new Map<string, ClassificationResult>();
+    const ruleByZone = new Map<string, SectionMappingRule>();
+    for (const rule of this.rules) {
+      ruleByZone.set(rule.standardSection, rule);
+    }
+    const stack: Array<{ level: number; zone: string | null }> = [];
+
+    for (const s of sections) {
+      const level = s.level ?? 0;
+
+      while (stack.length > 0 && stack[stack.length - 1].level >= level) {
+        stack.pop();
+      }
+      const documentParentZone = stack.length > 0 ? stack[stack.length - 1].zone : null;
+
+      const result = this.classify(s.title, s.contentSnippet, documentParentZone);
+      out.set(s.id, result);
+
+      // Push current section's effective document-zone onto stack — это используется
+      // как parent для глубже вложенных секций. Для top-level zone (type='zone')
+      // это сам standardSection. Для subzone — берём rule.parentZone (top-level зона
+      // логически продолжается вглубь).
+      let stackZone: string | null = null;
+      if (result.standardSection) {
+        const rule = ruleByZone.get(result.standardSection);
+        if (rule?.type === "zone") {
+          stackZone = result.standardSection;
+        } else if (rule?.parentZone) {
+          stackZone = rule.parentZone;
+        }
+      }
+      stack.push({ level, zone: stackZone });
+    }
+
+    return out;
   }
 }
 

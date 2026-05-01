@@ -232,12 +232,28 @@ export async function handleClassifySections(data: {
         : new RulesEngine();
       const classifier = engine.getSectionClassifier();
 
+      // Task 2.1: иерархическая классификация — учитываем document-parent-zone
+      // при выборе зоны. Sections загружаются sorted by .order, в loadSections —
+      // подходит для stack-based определения parent.
+      const sectionInputs = sections.map((section) => ({
+        id: section.id,
+        title: section.title,
+        level: section.level,
+        contentSnippet: section.contentBlocks
+          .map((b) => b.content)
+          .join("\n")
+          .slice(0, CONTENT_FOR_DETERMINISTIC_CHARS),
+      }));
+      const hierarchicalResults = classifier.classifyHierarchical(sectionInputs);
+
       const results: SectionClassifyRow[] = sections.map((section) => {
-        const fullContent = section.contentBlocks.map((b) => b.content).join("\n");
-        const contentSnippet = fullContent.slice(0, CONTENT_FOR_DETERMINISTIC_CHARS);
+        const result = hierarchicalResults.get(section.id);
         return {
           sectionId: section.id,
-          ...classifier.classify(section.title, contentSnippet),
+          sectionTitle: result?.sectionTitle ?? section.title,
+          standardSection: result?.standardSection ?? null,
+          confidence: result?.confidence ?? 0,
+          method: result?.method ?? "pattern",
         };
       });
 
@@ -296,11 +312,26 @@ export async function handleClassifySections(data: {
       const zoneLookup = resolved ? buildZoneLookup(resolved.rules) : new Map<string, string>();
       const parentChains = buildParentChains(sections);
 
-      const topLevelOutline = sections
-        .filter((s) => (s.level ?? 0) <= 1)
-        .map((s) => s.title)
-        .map((t, i) => `${i + 1}. ${t}`)
-        .join("\n");
+      // Task 2.2: окно ±3 соседей вокруг текущей секции, маркированных уже
+      // присвоенными zones из deterministic step. Даёт LLM sequence-context —
+      // если рядом safety-секции, более вероятно что текущая тоже в safety.
+      const idToIdx = new Map(sections.map((s, i) => [s.id, i]));
+      const NEIGHBOR_WINDOW = 3;
+      const buildEnrichedOutline = (currentId: string): string => {
+        const i = idToIdx.get(currentId);
+        if (i === undefined) return "";
+        const start = Math.max(0, i - NEIGHBOR_WINDOW);
+        const end = Math.min(sections.length, i + NEIGHBOR_WINDOW + 1);
+        return sections
+          .slice(start, end)
+          .map((s) => {
+            const marker = s.id === currentId ? "→" : " ";
+            const indent = "  ".repeat(Math.max(0, (s.level ?? 0) - 1));
+            const zoneTag = s.standardSection ? ` [${s.standardSection}]` : "";
+            return `${marker} ${indent}${s.title}${zoneTag}`;
+          })
+          .join("\n");
+      };
 
       const checkPromptTemplate =
         promptRules?.rules.find((r) => r.name === "section_classify:llm_check")?.promptTemplate ??
@@ -339,8 +370,8 @@ export async function handleClassifySections(data: {
         const userMessage = `ЗАГОЛОВОК: ${section.title}
 ПУТЬ В ИЕРАРХИИ: ${path}${algo}
 
-СТРУКТУРА ДОКУМЕНТА (заголовки верхнего уровня):
-${topLevelOutline}
+ОКРУЖЕНИЕ В ДОКУМЕНТЕ (соседние секции, → текущая, в скобках уже присвоенные зоны):
+${buildEnrichedOutline(section.id)}
 
 СОДЕРЖАНИЕ РАЗДЕЛА:
 ${content || "(пусто)"}`;
