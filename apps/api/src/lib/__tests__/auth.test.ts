@@ -27,6 +27,7 @@ vi.mock("../../config.js", () => ({
 }));
 
 import { prisma } from "@clinscriptum/db";
+import jwt from "jsonwebtoken";
 import {
   signAccessToken,
   verifyAccessToken,
@@ -85,23 +86,20 @@ describe("auth", () => {
       expect(() => verifyAccessToken(tampered)).toThrow();
     });
 
-    it("throws TokenExpiredError on expired JWT", async () => {
-      const jwt = (await import("jsonwebtoken")).default;
+    it("throws TokenExpiredError on expired JWT", () => {
       const expired = jwt.sign(payload as object, "test-secret-key-for-unit-tests", {
         expiresIn: "-1s",
       } as jwt.SignOptions);
       expect(() => verifyAccessToken(expired)).toThrow(/jwt expired|TokenExpiredError/);
     });
 
-    it("throws on token signed with a different secret (cross-tenant attack)", async () => {
-      const jwt = (await import("jsonwebtoken")).default;
+    it("throws on token signed with a different secret (cross-tenant attack)", () => {
       const foreign = jwt.sign(payload as object, "attacker-secret", { expiresIn: "15m" });
       expect(() => verifyAccessToken(foreign)).toThrow();
     });
 
-    it("throws on JWT with `none` algorithm (algorithm-confusion attack)", async () => {
-      const jwt = (await import("jsonwebtoken")).default;
-      // jsonwebtoken refuses to sign with `none` unless explicitly allowed; manually craft
+    it("throws on JWT with `none` algorithm (algorithm-confusion attack)", () => {
+      // Hand-crafted token: jsonwebtoken won't sign with `alg: none` directly.
       const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
       const body = Buffer.from(JSON.stringify({ ...payload, iat: Math.floor(Date.now() / 1000) })).toString("base64url");
       const noneToken = `${header}.${body}.`;

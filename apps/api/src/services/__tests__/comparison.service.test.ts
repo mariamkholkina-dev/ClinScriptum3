@@ -18,7 +18,12 @@ vi.mock("@clinscriptum/diff-engine", () => ({
 import { prisma } from "@clinscriptum/db";
 import { comparisonService } from "../comparison.service.js";
 import { DomainError } from "../errors.js";
-import { analyzeProtocolImpactOnICF, analyzeProtocolImpactOnIB } from "@clinscriptum/diff-engine";
+import {
+  analyzeProtocolImpactOnICF,
+  analyzeProtocolImpactOnIB,
+  diffSections,
+  diffFacts,
+} from "@clinscriptum/diff-engine";
 
 const mockVersion = prisma.documentVersion as unknown as {
   findUnique: ReturnType<typeof vi.fn>;
@@ -71,8 +76,20 @@ describe("comparisonService.compare", () => {
 
     const result = await comparisonService.compare(TENANT_A, OLD_ID, NEW_ID);
 
-    expect(result).toHaveProperty("factChanges");
-    expect(result).toHaveProperty("sectionDiffs");
+    expect(result.sectionDiffs).toEqual([]);
+    expect(result.factChanges).toEqual([]);
+
+    // diffSections receives flattened sections from both versions
+    expect(diffSections).toHaveBeenCalledTimes(1);
+    const [oldSecArg, newSecArg] = (diffSections as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(oldSecArg[0]).toMatchObject({ id: "s1", standardSection: "synopsis" });
+    expect(newSecArg[0]).toMatchObject({ id: "s1", standardSection: "synopsis" });
+
+    // diffFacts receives the {factKey, value} pairs
+    expect(diffFacts).toHaveBeenCalledWith(
+      [{ factKey: "phase", value: "II" }],
+      [{ factKey: "phase", value: "III" }],
+    );
   });
 
   it("throws NOT_FOUND when oldVersion is missing", async () => {

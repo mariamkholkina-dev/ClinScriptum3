@@ -153,7 +153,6 @@ describe("rateLimiter (Redis-backed)", () => {
     const limiter = rateLimiter(2);
     const next = vi.fn();
 
-    // Malformed JWT — base64-decoding the second segment will produce invalid JSON
     const malformedJwt = "header.notbase64-or-json.signature";
     const req = mockReq({
       ip: "10.0.0.99",
@@ -242,7 +241,6 @@ describe("rateLimiter (Redis-backed)", () => {
 
     await limiter(req, res as unknown as Response, next as NextFunction);
 
-    // fail-open: request continues, no 429
     expect(next).toHaveBeenCalledTimes(1);
     expect(res.statusCode).toBe(200);
   });
