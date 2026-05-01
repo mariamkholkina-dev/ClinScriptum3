@@ -66,6 +66,12 @@ Verified: `npm test --workspace=@clinscriptum/api` → 151/151 passed на test-
 - **Safety guard в `cleanupTestData()`** (`apps/api/src/__tests__/integration/helpers.ts`). Функция выполняет `TRUNCATE TABLE x CASCADE` для всех таблиц схемы `public`. Тесты используют общий `DATABASE_URL` (нет отдельной test-DB через `.env.test`) — каждый запуск `npm test` на dev стирал user-данные. Добавлен `assertSafeTestDatabase()` который требует, чтобы `DATABASE_URL` содержал `_test` в имени БД ИЛИ выставлен `ALLOW_DESTRUCTIVE_TEST_CLEANUP=1`. На dev (`clinscriptum3`) тесты теперь упадут с понятной ошибкой вместо wipe. На CI (`clinscriptum_test`, `.github/workflows/ci.yml:17,67`) guard пропускает по pattern. Долгосрочный TODO — отдельная dev test-DB + `.env.test` + override в `turbo.json`.
 - **Merge `procedures.schedule_of_assessments` → `design.visit_schedule`** (`taxonomy.yaml` + `apps/workers/scripts/migrate-taxonomy-keys.ts`). Pending decision из плана и memory зафиксирован: эти зоны слишком сильно пересекаются на реальных протоколах. Объединены в `design.visit_schedule` (title `«График визитов / процедур / SoA / расписание»`), все patterns/require_patterns/not_keywords из обеих зон объединены. В migration script добавлен mapping `procedures.schedule_of_assessments → design.visit_schedule` + bug fix в `countExpectedResultsRefs`: JSON может сериализоваться с пробелом после `:` или без — теперь проверяются оба варианта.
 
+### Phase 1 spr.1 fact-extraction roadmap — алгоритмические улучшения без LLM
+
+Первая фаза реворка этапа извлечения фактов (см. план `C:\Users\0\.claude\plans\dreamy-sauteeing-sutton.md`). Фокус — fundamental fixes без изменений LLM-промптов.
+
+- **morphology module (`packages/rules-engine/src/morphology.ts`)** — лёгкий стеммер для русского и английского без нативных зависимостей. API: `stem(token, lang)`, `tokenize(text)`, `stemPhrase(text)`, `expandCyrillicEndings(stem)`, `stemEquals(a, b)`. RU-список суффиксов покрывает основные нормальные/адъективные/инфинитивные окончания, исключая past-tense verb endings (overlap с noun stems типа "протокола"). EN — Porter-style suffix stripping включая `-ies/-ied` для согласованного стемминга `studies/studied/study`. 29 тестов на флексионные пары. Используется в Phase 1.2+ для canonicalize и в Phase 3 для anchor-retrieval.
+
 ## 2026-05-01
 
 ### PR-3 спринта качества классификации: Sprint 0 mitigation + UI fixes
