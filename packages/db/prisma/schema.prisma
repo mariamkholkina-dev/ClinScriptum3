@@ -251,6 +251,18 @@ model Fact {
   factCategory     String     @map("fact_category")
   description      String     @default("")
   value            String
+  /// Canonical normalised form of `value` (Phase 1 of fact-extraction roadmap).
+  /// Built by rules-engine `canonicalize(factKey, value)`; equality on this
+  /// field is what voting and contradiction detection compare.
+  canonicalValue          String?  @map("canonical_value")
+  /// `standardSection` of the section that produced the strongest source
+  /// occurrence. Free-form string to stay independent of section taxonomy
+  /// changes done in parallel work.
+  standardSectionCode     String?  @map("standard_section_code")
+  /// Number of distinct source occurrences contributing to this fact after
+  /// `aggregateByCanonical` voting. Defaults to 1 so that pre-Phase-1 rows
+  /// remain valid.
+  sourceCount             Int      @default(1) @map("source_count")
   manualValue      String?    @map("manual_value")
   confidence       Float      @default(0)
   factClass        FactClass  @map("fact_class")
