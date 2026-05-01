@@ -101,8 +101,16 @@ function buildParentChains(sections: CachedSection[]): Map<string, string[]> {
   return chains;
 }
 
-const MAX_SECTIONS_PER_BATCH = 25;
+// Уменьшено с 25 до 10 в рамках задачи 0.1: на batch=25 LLM QA-step
+// (DeepSeek-V32 с reasoning) стабильно падал с TypeError: fetch failed на
+// всех batch'ах (см. логи от 2026-05-01: 8/8 batch'ей failed, totalTokens=0).
+// Гипотеза: payload + reasoning превышают практический connection budget
+// провайдера. Меньший batch уменьшает шанс timeout/connect failure.
+const MAX_SECTIONS_PER_BATCH = 10;
 const MAX_RETRIES = 2;
+// Per-batch retry на TypeError: fetch failed.
+const QA_BATCH_RETRY_ATTEMPTS = 2;
+const QA_BATCH_RETRY_DELAY_MS = 5000;
 
 function batchByBudget(items: string[], budget: number): string[][] {
   const batches: string[][] = [];
@@ -517,24 +525,36 @@ ${content || "(пусто)"}`;
           const batchText = batch.join("\n");
           logger.info(`LLM QA classify batch ${batchIdx + 1}/${batches.length}`, { sections: batch.length });
 
-          try {
-            const response = await gateway.generate({
-              system: systemPrompt,
-              messages: [{ role: "user", content: batchText }],
-              maxTokens: llmConfig.maxTokens,
-              responseFormat: "json",
-            });
-
-            let parsed: unknown[] | null = null;
+          // Per-batch retry на TypeError: fetch failed (системный сбой DeepSeek-V32 endpoint).
+          // Раньше при первом fetch-failed batch уходил в parseError навсегда — все 8 batch'ей
+          // на типичном документе падали (см. logs от 2026-05-01). Retry с backoff покрывает
+          // транзиентные сетевые проблемы.
+          let lastErr: unknown = null;
+          for (let attempt = 1; attempt <= QA_BATCH_RETRY_ATTEMPTS; attempt++) {
             try {
-              parsed = parseLlmJsonArray(response.content);
-            } catch { /* skip */ }
+              const response = await gateway.generate({
+                system: systemPrompt,
+                messages: [{ role: "user", content: batchText }],
+                maxTokens: llmConfig.maxTokens,
+                responseFormat: "json",
+              });
 
-            return { content: response.content, parsed, tokens: response.usage.totalTokens };
-          } catch (err) {
-            logger.warn(`LLM QA classify batch ${batchIdx + 1} error`, { error: String(err) });
-            return { content: String(err), parsed: null, tokens: 0 };
+              let parsed: unknown[] | null = null;
+              try {
+                parsed = parseLlmJsonArray(response.content);
+              } catch { /* skip */ }
+
+              return { content: response.content, parsed, tokens: response.usage.totalTokens };
+            } catch (err) {
+              lastErr = err;
+              if (attempt < QA_BATCH_RETRY_ATTEMPTS) {
+                logger.warn(`LLM QA classify batch ${batchIdx + 1} error (attempt ${attempt}/${QA_BATCH_RETRY_ATTEMPTS}), retrying`, { error: String(err) });
+                await new Promise((r) => setTimeout(r, QA_BATCH_RETRY_DELAY_MS * attempt));
+              }
+            }
           }
+          logger.warn(`LLM QA classify batch ${batchIdx + 1} exhausted retries`, { error: String(lastErr) });
+          return { content: String(lastErr), parsed: null, tokens: 0 };
         }),
         LLM_CONCURRENCY,
       );

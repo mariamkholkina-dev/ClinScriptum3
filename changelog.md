@@ -2,6 +2,20 @@
 
 ## 2026-05-01
 
+### PR-3 спринта качества классификации: Sprint 0 mitigation + UI fixes
+
+Третий и финальный PR спринта. Закрывает 4 накопившиеся UX/инфра-задачи из `project_known_bugs.md` и плана.
+
+- **task 0.1 (mitigation)** — `LLM QA TypeError: fetch failed` для DeepSeek-V32. Без полной диагностики, defensive-fix:
+  - `MAX_SECTIONS_PER_BATCH` снижен с 25 до 10 — меньший payload снижает шанс connect/timeout failure на reasoning-модели.
+  - Добавлен per-batch retry в QA-step: `QA_BATCH_RETRY_ATTEMPTS=2` с экспоненциальным backoff (5s × attempt). Раньше при первом fetch-failed batch уходил в parseError навсегда — все 8 batch'ей на типичном документе падали (см. логи 2026-05-01). Retry покрывает транзиентные сетевые проблемы.
+  - Если после этого QA продолжает стабильно падать (одинаково 0 corrections на нескольких прогонах) — нужна полноценная диагностика (auth/endpoint/payload size). Пока не делаем — наблюдаем после реального применения.
+- **UX bug fix — Studies Phase field reset.** В `apps/web/.../studies/page.tsx:11-21` `createMutation.onSuccess` сбрасывал все поля кроме `newPhase` (classic copy-paste bug). Добавлен `setNewPhase("");`. Теперь после создания нового study форма полностью очищается.
+- **UI bug fix — Bulk «Подтвердить» при «Выделить все» в parsing-viewer.** В `apps/rule-admin/.../ParsingTreeViewer.tsx`:
+  - `onSelectAll` использовал `visibleSections` (отфильтрованный/видимый список); при включённом фильтре или collapsed parents выделялось подмножество. Заменено на `rawSections` — все секции документа.
+  - В `bulkUpdate` добавлен guard `if (selectedIds.size === 0) return;` — иначе mutation отправлял пустой массив и backend молча отрабатывал 0 строк, симптом «ничего не происходит».
+- **UX — tooltip полного заголовка в parsing-viewer и classification-viewer.** Добавлен `title={section.title || "(без названия)"}` на truncated cell с заголовком секции. Решает проблему когда эксперт-разметчик не может прочитать длинный обрезанный заголовок без клика.
+
 ### PR-2 спринта качества классификации: handler classify-sections + точная eval-метрика
 
 Второй из 3-х PR. Оптимизирует workers handler и приводит метрику evaluation к per-section уровню.

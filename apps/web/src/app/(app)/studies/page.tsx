@@ -17,6 +17,7 @@ export default function StudiesPage() {
       setNewDrug("");
       setNewTherapeuticArea("");
       setNewProtocolTitle("");
+      setNewPhase("");
     },
   });
 

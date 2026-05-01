@@ -845,7 +845,10 @@ function SectionTreeRow({
         </span>
 
         {/* Title */}
-        <span className="flex-1 min-w-0 truncate text-sm text-gray-900 font-medium">
+        <span
+          className="flex-1 min-w-0 truncate text-sm text-gray-900 font-medium"
+          title={section.title || "(без названия)"}
+        >
           {section.title || "(без названия)"}
         </span>
 
