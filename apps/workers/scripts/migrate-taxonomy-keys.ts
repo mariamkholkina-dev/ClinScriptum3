@@ -30,6 +30,8 @@ const prisma = new PrismaClient();
 const KEY_MIGRATIONS: Array<{ from: string; to: string }> = [
   { from: "ip.preclinical_data", to: "ip.preclinical_clinical_data" },
   { from: "population.contraception_requirements", to: "procedures.contraception_requirements" },
+  // 2026-05-02: merged into design.visit_schedule
+  { from: "procedures.schedule_of_assessments", to: "design.visit_schedule" },
 ];
 
 interface MigrationStats {
@@ -48,9 +50,13 @@ async function countSectionRefs(field: "standardSection" | "algoSection" | "llmS
 }
 
 async function countExpectedResultsRefs(key: string): Promise<number> {
+  // JSON может сериализоваться с пробелом после ":" ("standardSection": "value")
+  // или без ("standardSection":"value"). Проверяем оба варианта.
   const rows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(
-    `SELECT COUNT(*) AS count FROM golden_sample_stage_statuses WHERE expected_results::text LIKE $1`,
+    `SELECT COUNT(*) AS count FROM golden_sample_stage_statuses
+     WHERE expected_results::text LIKE $1 OR expected_results::text LIKE $2`,
     `%"standardSection":"${key}"%`,
+    `%"standardSection": "${key}"%`,
   );
   return Number(rows[0]?.count ?? 0);
 }
@@ -133,15 +139,18 @@ async function apply(): Promise<MigrationStats[]> {
       stats.push({ table: "sections", field: "classification_comment", fromKey: from, toKey: to, matched: cUpdated });
 
       // 5. golden_sample_stage_statuses.expected_results — JSONB, заменяем
-      // конкретное вхождение `"standardSection":"<from>"` на `"standardSection":"<to>"`.
-      // Это безопасно потому что мы знаем точный формат сериализации Prisma JSON.
+      // оба варианта формата: с пробелом и без. REPLACE применяется ко всему
+      // тексту JSON — последовательно для каждого варианта.
       const erUpdated = await tx.$executeRawUnsafe(
         `UPDATE golden_sample_stage_statuses
-         SET expected_results = REPLACE(expected_results::text, $1, $2)::jsonb
-         WHERE expected_results::text LIKE $3`,
+         SET expected_results = REPLACE(REPLACE(expected_results::text, $1, $2), $3, $4)::jsonb
+         WHERE expected_results::text LIKE $5 OR expected_results::text LIKE $6`,
         `"standardSection":"${from}"`,
         `"standardSection":"${to}"`,
+        `"standardSection": "${from}"`,
+        `"standardSection": "${to}"`,
         `%"standardSection":"${from}"%`,
+        `%"standardSection": "${from}"%`,
       );
       stats.push({ table: "golden_sample_stage_statuses", field: "expected_results", fromKey: from, toKey: to, matched: erUpdated });
     }
