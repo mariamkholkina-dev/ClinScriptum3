@@ -2,6 +2,35 @@
 
 ## 2026-05-01
 
+### PR-1 спринта качества классификации: гейты в classifier + правки таксономии
+
+Первый из 3-х PR по плану `docs/section-classification-quality-plan.md`. Восстанавливает FP-min логику таксономии и приводит ключи зон в порядок.
+
+**`packages/rules-engine` — task 1.1: require_patterns / not_keywords gates + calibrated confidence**
+
+- `SectionMappingRule` расширен полями `requirePatterns?`, `notKeywords?`, `type? ("zone" | "subzone")`, `parentZone?`. До этого поля были в `taxonomy.yaml`, но `rule-adapter.toSectionMappingRules` их не читал — вся логика жёстких гейтов и негативных штрафов из таксономии (явно прописанная для `synopsis`, `definitions`, `statistics` и др.) фактически не работала.
+- `rule-adapter.toSectionMappingRules` теперь пробрасывает все 4 поля из `cfg`.
+- `SectionClassifier.classify` переписан с **first-match** на **scoring**:
+  - `requirePatterns` — hard gate: правило исключается из кандидатов, если ни один не matches title+content.
+  - exact-match calibrated confidence: `0.6 + 0.3 * (matchLen/titleLen) + 0.05 * matchCount`, capped at `0.99`. Multi-pattern в одном правиле даёт бонус.
+  - content-only match даёт фиксированную `0.65`.
+  - `notKeywords` — штраф `−0.4` к финальной confidence, если совпадает в title или content.
+  - выбирается кандидат с max score; tie-break по порядку правил.
+- Тесты `__tests__/section-classifier.test.ts`: +13 кейсов на gate fail/pass, gate в content, штраф, проигрыш конкуренту при penalty, multi-match bonus, longest match wins, content < title confidence, Russian `\b` boundary с requirePatterns + notKeywords, calibration ranges. Существующие assert'ы на `confidence === 0.95` адаптированы на ranges (теперь это диапазон, не фиксированное значение).
+
+**`taxonomy.yaml` — 4 правки (все из очереди в `project_known_bugs.md`)**
+
+- `ip.preclinical_data` → `ip.preclinical_clinical_data`. Title: «Доклинические данные» → «Результаты значимых доклинических и клинических исследований». Расширены `require_patterns`/`patterns` чтобы покрывать и доклинику, и клинические данные (clinical experience/data/trials, результаты значимых клинических исследований). Раньше зона путалась с `efficacy_assessments` потому что узкое имя «доклинические» отсекало клинические results.
+- `population.contraception_requirements` → `procedures.contraception_requirements`. Контрацепция/беременность — это операционные процедуры, а не критерий отбора population. Добавлен `not_keywords` для разграничения с `(in|ex)clusion criteria`.
+- `procedures.lifestyle` (NEW): «Образ жизни / физическая активность» — диета, курение, алкоголь, физическая нагрузка во время исследования. Раньше эти секции попадали в parent `procedures` или ошибочно в `population.exclusion`. Жёсткий гейт + `not_keywords` против inclusion/exclusion и safety AE.
+- `ip.comparator` (NEW): «Препарат сравнения» — `require_patterns: comparator | препарат сравнения | active control`. `not_keywords` против AE и prior comparator use.
+
+**`apps/workers/scripts/migrate-taxonomy-keys.ts` (NEW)**
+
+Скрипт миграции уже размеченных данных под изменённые ключи. Покрывает `sections.{standard_section, algo_section, llm_section, classification_comment}` + `golden_sample_stage_statuses.expected_results` (JSONB в части `sections[*].standardSection`). Dry-run по умолчанию, `--apply` выполняет в одной транзакции с post-apply verification (count старых ключей должен быть 0). В текущей dev-БД dry-run = 0 строк (старые ключи не использовались экспертами при разметке 4 golden samples), скрипт нужен для prod-миграции и будущих rename-операций.
+
+После re-seed: 80 → 82 правила в `RuleSetVersion v1` (`+ip.comparator`, `+procedures.lifestyle`, перемещение `contraception_requirements`; rename — не меняет count).
+
 ### План улучшений классификации секций + первый baseline
 
 Зафиксирован план комплексной доработки этапа `classify_sections` после аудита pipeline и инфраструктура для baseline-замеров на golden-наборах tenant Golden Set.

@@ -18,9 +18,20 @@ export function toSectionMappingRules(dbRules: DbRule[]): SectionMappingRule[] {
       const patterns = Array.isArray(cfg.patterns)
         ? (cfg.patterns as string[])
         : [r.pattern];
+      const requirePatterns = Array.isArray(cfg.requirePatterns)
+        ? (cfg.requirePatterns as string[])
+        : undefined;
+      const notKeywords = Array.isArray(cfg.notKeywords)
+        ? (cfg.notKeywords as string[])
+        : undefined;
+      const type = cfg.type === "zone" || cfg.type === "subzone" ? cfg.type : undefined;
       return {
         standardSection: r.pattern,
         patterns,
+        requirePatterns,
+        notKeywords,
+        type,
+        parentZone: typeof cfg.parentZone === "string" ? cfg.parentZone : undefined,
         level: typeof cfg.level === "number" ? cfg.level : undefined,
         isRequired: cfg.isRequired === true,
         category: (cfg.category as "protocol" | "administrative" | "appendix") ?? "protocol",
