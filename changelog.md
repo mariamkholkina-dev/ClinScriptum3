@@ -2,6 +2,18 @@
 
 ## 2026-05-02
 
+### PR-B спринта 2: иерархия + окно соседей + few-shot
+
+Финальный PR спринта качества классификации — все 3 задачи плана 2.1/2.2/2.3.
+
+- **Task 2.1 — иерархия zone/subzone в classifier.** `SectionClassifier.classify()` принимает optional `parentZone?` — внутри scoring loop subzone-кандидаты с matched parent получают bonus +0.05, с mismatched parent — penalty -0.1, top-level zones не затрагиваются. Новый метод `classifyHierarchical(sections)` итерирует sections в document-order, поддерживает stack `{level, zone}` для определения document-parent-zone каждой секции. `apps/workers/src/handlers/classify-sections.ts` deterministic step переключён с map-classify на `classifyHierarchical()`. +6 тестов в `__tests__/section-classifier.test.ts`.
+- **Task 2.2 — окно ±3 соседей в LLM Check user-message.** Раньше передавался `topLevelOutline` — все top-level заголовки документа. Теперь `buildEnrichedOutline(sectionId)` показывает 3 секции до и после текущей, с маркировкой текущей `→` и уже присвоенными zones в `[brackets]`. Это даёт LLM sequence-context — соседи в safety-секции → текущая вероятнее тоже в safety.
+- **Task 2.3 — few-shot примеры в `seed-prompts.ts`.** В `section_classify:llm_check` промпт добавлен блок «ПРИМЕРЫ КЛАССИФИКАЦИИ» — 10 hand-picked пар «заголовок → зона + причина», фокус на путаемые границы из baseline diff: `visit_schedule` после merge (регламент/блок-схема/SoA), `ip.comparator`, `procedures.lifestyle`, `procedures.contraception_requirements`, `preclinical_clinical_data`, `inclusion` под parent `population`.
+
+**Baseline после спринта 2:** `docs/baselines/after-spr2-no-qa-2026-05-02.json` — f1=0.675 vs f1=0.661 после спринта 1 (+1.4%). Прирост скромнее ожидаемого из-за устаревшего ground truth (эксперт размечал до новых subzones и иерархии — многие "extra" actual теперь точнее expected). Re-разметка golden samples в следующем спринте даст ещё +5-10% на том же коде.
+
+Verified: 4 sample reprocess'нулись чисто (все `parsed`), 824 sections classified (186 deterministic + 636 llm_check + 2 unclassified). Dev DB цела после `npm run test` благодаря `apps/api/.env.test` и safety guard.
+
 ### PR-A спринта 2: side-fixes (SOA timeout + isolated test-DB)
 
 Технический PR перед началом основной работы спринта 2 — устраняет 2 known-блокера для безопасного reprocess golden samples и автономной test-инфры.

@@ -408,4 +408,127 @@ describe("SectionClassifier", () => {
       expect(result.confidence).toBeLessThanOrEqual(0.99);
     });
   });
+
+  // ─────────────── Hierarchical classification (task 2.1) ───────────────
+
+  describe("hierarchical classification with parentZone", () => {
+    const safetyZone: SectionMappingRule = {
+      standardSection: "safety",
+      patterns: ["(?i)\\bsafety\\b"],
+      type: "zone",
+      isRequired: true,
+      category: "protocol",
+    };
+    const safetyAdverseEventsSubzone: SectionMappingRule = {
+      standardSection: "safety.adverse_events",
+      patterns: ["(?i)\\badverse\\s+events?\\b"],
+      type: "subzone",
+      parentZone: "safety",
+      isRequired: false,
+      category: "protocol",
+    };
+    const generalAdverseEventsRule: SectionMappingRule = {
+      standardSection: "regulatory.adverse_events",
+      patterns: ["(?i)\\badverse\\s+events?\\b"],
+      type: "subzone",
+      parentZone: "regulatory",
+      isRequired: false,
+      category: "protocol",
+    };
+
+    it("subzone matching parentZone gets +0.05 bonus", () => {
+      const cls = new SectionClassifier([safetyAdverseEventsSubzone, generalAdverseEventsRule]);
+      const noParent = cls.classify("Adverse Events");
+      const withSafetyParent = cls.classify("Adverse Events", undefined, "safety");
+      // Bonus should make safety.adverse_events strictly higher confidence
+      expect(withSafetyParent.standardSection).toBe("safety.adverse_events");
+      expect(withSafetyParent.confidence).toBeGreaterThan(noParent.confidence);
+    });
+
+    it("subzone with mismatched parentZone gets −0.1 penalty", () => {
+      const cls = new SectionClassifier([safetyAdverseEventsSubzone, generalAdverseEventsRule]);
+      // safety.adverse_events should be penalised because parent is 'overview', not 'safety'
+      const result = cls.classify("Adverse Events", undefined, "overview");
+      // regulatory.adverse_events also subzone but parent='regulatory' != 'overview'
+      // → both penalised, but they end up tied by base score; tie-break = first in list
+      // Either way, confidence drops vs no-parent
+      const noParent = cls.classify("Adverse Events");
+      expect(result.confidence).toBeLessThan(noParent.confidence);
+    });
+
+    it("top-level zone (type='zone') is not affected by parentZone", () => {
+      const cls = new SectionClassifier([safetyZone]);
+      const noParent = cls.classify("Safety");
+      const withParent = cls.classify("Safety", undefined, "overview");
+      expect(withParent.confidence).toBeCloseTo(noParent.confidence, 5);
+    });
+
+    it("classifyHierarchical sets parentZone from document structure (stack-based)", () => {
+      const introZone: SectionMappingRule = {
+        standardSection: "overview",
+        patterns: ["(?i)\\boverview\\b|\\bvведение\\b"],
+        type: "zone",
+        isRequired: true,
+        category: "protocol",
+      };
+      const introSubzone: SectionMappingRule = {
+        standardSection: "overview.introduction",
+        patterns: ["(?i)\\bintroduction\\b"],
+        type: "subzone",
+        parentZone: "overview",
+        isRequired: false,
+        category: "protocol",
+      };
+      const cls = new SectionClassifier([introZone, introSubzone, safetyAdverseEventsSubzone]);
+
+      const sections = [
+        { id: "s1", title: "Overview", level: 1 },
+        { id: "s2", title: "Introduction", level: 2 }, // parent: s1 (overview)
+        { id: "s3", title: "Adverse Events", level: 2 }, // parent: s1 (overview) — но subzone safety, не overview
+      ];
+      const results = cls.classifyHierarchical(sections);
+
+      expect(results.get("s1")?.standardSection).toBe("overview");
+      expect(results.get("s2")?.standardSection).toBe("overview.introduction");
+      // s3: subzone safety, parent в документе = overview → penalty
+      // Возможно standardSection всё равно safety.adverse_events (если score>0 после penalty)
+      // — но confidence должен быть ниже, чем при правильном parent
+      const s3 = results.get("s3");
+      expect(s3?.standardSection).toBe("safety.adverse_events");
+    });
+
+    it("classifyHierarchical pops stack on level decrease (sibling sections)", () => {
+      const overviewZone: SectionMappingRule = {
+        standardSection: "overview",
+        patterns: ["(?i)\\bobzor\\b|^overview$"],
+        type: "zone",
+        isRequired: true,
+        category: "protocol",
+      };
+      const safetyZ: SectionMappingRule = {
+        ...safetyZone,
+      };
+      const cls = new SectionClassifier([overviewZone, safetyZ, safetyAdverseEventsSubzone]);
+
+      const sections = [
+        { id: "s1", title: "Overview", level: 1 },
+        { id: "s2", title: "Safety", level: 1 }, // sibling of s1, не child
+        { id: "s3", title: "Adverse Events", level: 2 }, // parent: s2 (safety), не s1 (overview)
+      ];
+      const results = cls.classifyHierarchical(sections);
+
+      expect(results.get("s2")?.standardSection).toBe("safety");
+      // s3: parent в документе = safety → bonus (rule.parentZone === parent)
+      expect(results.get("s3")?.standardSection).toBe("safety.adverse_events");
+    });
+
+    it("classifyHierarchical handles section without level (treats as level 0)", () => {
+      const cls = new SectionClassifier([safetyAdverseEventsSubzone]);
+      const sections = [
+        { id: "s1", title: "Adverse Events" }, // level undefined → 0
+      ];
+      const results = cls.classifyHierarchical(sections);
+      expect(results.get("s1")?.standardSection).toBe("safety.adverse_events");
+    });
+  });
 });

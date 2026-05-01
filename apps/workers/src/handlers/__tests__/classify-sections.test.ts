@@ -18,14 +18,27 @@ vi.mock("@clinscriptum/rules-engine", () => {
     confidence: 0.95,
     method: "keyword",
   });
+  // Hierarchical classification (task 2.1): mock returns Map<id, ClassificationResult>
+  // by calling classifyMock with parentZone=null for each section.
+  const classifyHierarchicalMock = vi.fn((sections: Array<{ id: string; title: string; contentSnippet?: string }>) => {
+    const out = new Map<string, ReturnType<typeof classifyMock>>();
+    for (const s of sections) {
+      out.set(s.id, classifyMock(s.title, s.contentSnippet, null));
+    }
+    return out;
+  });
   return {
     RulesEngine: class MockRulesEngine {
       getSectionClassifier() {
-        return { classify: classifyMock };
+        return {
+          classify: classifyMock,
+          classifyHierarchical: classifyHierarchicalMock,
+        };
       }
     },
     toSectionMappingRules: vi.fn().mockReturnValue([]),
     __classifyMock: classifyMock,
+    __classifyHierarchicalMock: classifyHierarchicalMock,
   };
 });
 
