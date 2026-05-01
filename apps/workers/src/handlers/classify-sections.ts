@@ -124,6 +124,52 @@ function batchByBudget(items: string[], budget: number): string[][] {
 
 const LLM_CONCURRENCY = 3;
 const CONTENT_MAX_CHARS = 2000;
+const CONTENT_FOR_DETERMINISTIC_CHARS = 1000;
+const HIGH_CONFIDENCE_SKIP = 0.85;
+
+// Fallback-промпты на случай если БД (RuleSet section_classification_qa)
+// не содержит section_classify:llm_check / section_classify:qa правил.
+// В нормальном workflow промпты редактируются в rule-admin UI и грузятся
+// через loadRulesForType — эти константы — safety net для свежих/тестовых
+// инсталляций. Шаблон содержит {{catalog}} плейсхолдер.
+
+const DEFAULT_LLM_CHECK_PROMPT = `Ты — эксперт по структуре документов клинических исследований (протокол, ICF, IB, CSR).
+
+ЗАДАЧА: Классифицируй секцию документа, присвоив ей стандартную зону из каталога ниже.
+
+ПРИОРИТЕТ ИСТОЧНИКОВ ИНФОРМАЦИИ:
+1. ЗАГОЛОВОК секции + ПУТЬ родительских заголовков — главный источник. В большинстве случаев заголовка и его позиции в иерархии достаточно для уверенной классификации.
+2. СТРУКТУРА ДОКУМЕНТА (список всех заголовков) — помогает определить контекст и тип документа.
+3. СОДЕРЖАНИЕ РАЗДЕЛА — используй ТОЛЬКО если заголовок неоднозначен и не позволяет уверенно определить зону (confidence < 0.7 по заголовку). Не позволяй содержанию перевесить очевидный заголовок.
+
+КАТАЛОГ ЗОН (выбирай ТОЛЬКО из этого списка):
+{{catalog}}
+
+ПРАВИЛА:
+1. Используй zone key ТОЧНО как он написан в каталоге. НЕ добавляй к нему имя родительской зоны — поле «parent» в каталоге это метаданные, а не часть ключа. Например, если в каталоге написано «preclinical_data (subzone, parent: ip)», верни "preclinical_data", а НЕ "ip.preclinical_data"
+2. Если секция является подзоной — используй ключ подзоны, а не родительской зоны
+3. Учитывай иерархию: путь родительских заголовков и общую структуру документа
+4. Если алгоритм уже предложил зону — проверь: если согласен, верни ту же; если нет — верни правильную
+5. Если секция не подходит ни к одной зоне — zone: null, confidence: 0
+6. confidence: 0.0–1.0
+
+ФОРМАТ ОТВЕТА — только JSON-объект, без текста, без markdown:
+{"zone":"preclinical_data","confidence":0.95}`;
+
+const DEFAULT_LLM_QA_PROMPT = `Ты — QA-ревьюер структуры документа клинического исследования.
+Проверь корректность присвоенных зон. Для секций с ошибочной зоной предложи исправление.
+
+КАТАЛОГ ЗОН:
+{{catalog}}
+
+ПРАВИЛА:
+- Проверь, что присвоенная зона соответствует заголовку и месту секции в иерархии документа
+- Если зона правильная — не включай секцию в ответ
+- Если зона неправильная — укажи правильную зону строго из каталога выше
+- Если секция не подходит ни к одной зоне — correct_zone: null
+
+ФОРМАТ ОТВЕТА — только JSON-массив (без markdown). Если все зоны верны — пустой массив []:
+[{"idx":1,"current_zone":"overview","correct_zone":"introduction","confidence":0.9,"reason":"..."}]`;
 
 function parseLlmJsonArray(raw: string): unknown[] | null {
   const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
@@ -179,7 +225,8 @@ export async function handleClassifySections(data: {
       const classifier = engine.getSectionClassifier();
 
       const results: SectionClassifyRow[] = sections.map((section) => {
-        const contentSnippet = section.contentBlocks[0]?.content ?? "";
+        const fullContent = section.contentBlocks.map((b) => b.content).join("\n");
+        const contentSnippet = fullContent.slice(0, CONTENT_FOR_DETERMINISTIC_CHARS);
         return {
           sectionId: section.id,
           ...classifier.classify(section.title, contentSnippet),
@@ -233,7 +280,10 @@ export async function handleClassifySections(data: {
         return { data: { message: "No sections found", updated: 0 }, needsNextStep: true };
       }
 
-      const resolved = await loadRulesForType(ctx.bundleId, "section_classification");
+      const [resolved, promptRules] = await Promise.all([
+        loadRulesForType(ctx.bundleId, "section_classification"),
+        loadRulesForType(ctx.bundleId, "section_classification_qa"),
+      ]);
       const catalog = resolved ? buildZoneCatalog(resolved.rules) : "";
       const zoneLookup = resolved ? buildZoneLookup(resolved.rules) : new Map<string, string>();
       const parentChains = buildParentChains(sections);
@@ -244,28 +294,10 @@ export async function handleClassifySections(data: {
         .map((t, i) => `${i + 1}. ${t}`)
         .join("\n");
 
-      const systemPrompt = `Ты — эксперт по структуре документов клинических исследований (протокол, ICF, IB, CSR).
-
-ЗАДАЧА: Классифицируй секцию документа, присвоив ей стандартную зону из каталога ниже.
-
-ПРИОРИТЕТ ИСТОЧНИКОВ ИНФОРМАЦИИ:
-1. ЗАГОЛОВОК секции + ПУТЬ родительских заголовков — главный источник. В большинстве случаев заголовка и его позиции в иерархии достаточно для уверенной классификации.
-2. СТРУКТУРА ДОКУМЕНТА (список всех заголовков) — помогает определить контекст и тип документа.
-3. СОДЕРЖАНИЕ РАЗДЕЛА — используй ТОЛЬКО если заголовок неоднозначен и не позволяет уверенно определить зону (confidence < 0.7 по заголовку). Не позволяй содержанию перевесить очевидный заголовок.
-
-КАТАЛОГ ЗОН (выбирай ТОЛЬКО из этого списка):
-${catalog}
-
-ПРАВИЛА:
-1. Используй zone key ТОЧНО как он написан в каталоге. НЕ добавляй к нему имя родительской зоны — поле «parent» в каталоге это метаданные, а не часть ключа. Например, если в каталоге написано «preclinical_data (subzone, parent: ip)», верни "preclinical_data", а НЕ "ip.preclinical_data"
-2. Если секция является подзоной — используй ключ подзоны, а не родительской зоны
-3. Учитывай иерархию: путь родительских заголовков и общую структуру документа
-4. Если алгоритм уже предложил зону — проверь: если согласен, верни ту же; если нет — верни правильную
-5. Если секция не подходит ни к одной зоне — zone: null, confidence: 0
-6. confidence: 0.0–1.0
-
-ФОРМАТ ОТВЕТА — только JSON-объект, без текста, без markdown:
-{"zone":"preclinical_data","confidence":0.95}`;
+      const checkPromptTemplate =
+        promptRules?.rules.find((r) => r.name === "section_classify:llm_check")?.promptTemplate ??
+        DEFAULT_LLM_CHECK_PROMPT;
+      const systemPrompt = checkPromptTemplate.replace("{{catalog}}", catalog);
 
       const gateway = new LLMGateway({
         provider: llmConfig.provider as LLMProvider,
@@ -369,20 +401,38 @@ ${content || "(пусто)"}`;
         }
       };
 
+      const sectionsToVerify = sections.filter(
+        (s) => !s.algoSection || (s.algoConfidence ?? 0) < HIGH_CONFIDENCE_SKIP,
+      );
+      const skippedHighConfidence = sections.length - sectionsToVerify.length;
+
+      logger.info("LLM Check filtering", {
+        total: sections.length,
+        toVerify: sectionsToVerify.length,
+        skippedHighConfidence,
+        threshold: HIGH_CONFIDENCE_SKIP,
+      });
+
       await runWithConcurrency(
-        sections.map((s) => () => classifyOne(s)),
+        sectionsToVerify.map((s) => () => classifyOne(s)),
         LLM_CONCURRENCY,
       );
 
       invalidateSectionsCache(ctx);
 
       logger.info("LLM section classification complete", {
-        total: sections.length, updated, totalTokens,
+        total: sections.length,
+        verifiedByLlm: sectionsToVerify.length,
+        skippedHighConfidence,
+        updated,
+        totalTokens,
       });
 
       return {
         data: {
           total: sections.length,
+          verifiedByLlm: sectionsToVerify.length,
+          skippedHighConfidence,
           updated,
           totalTokens,
           skippedNoZone: skippedNoZoneDetails.length,
@@ -416,7 +466,10 @@ ${content || "(пусто)"}`;
         return { data: { message: "No classified sections to verify", corrections: 0 }, needsNextStep: true };
       }
 
-      const resolved = await loadRulesForType(ctx.bundleId, "section_classification");
+      const [resolved, promptRules] = await Promise.all([
+        loadRulesForType(ctx.bundleId, "section_classification"),
+        loadRulesForType(ctx.bundleId, "section_classification_qa"),
+      ]);
       const catalog = resolved ? buildZoneCatalog(resolved.rules) : "";
       const zoneLookup = resolved ? buildZoneLookup(resolved.rules) : new Map<string, string>();
       const inputBudget = getInputBudgetChars(llmConfig);
@@ -425,20 +478,10 @@ ${content || "(пусто)"}`;
       const indexToId = new Map<number, string>();
       sections.forEach((s, i) => indexToId.set(i + 1, s.id));
 
-      const systemPrompt = `Ты — QA-ревьюер структуры документа клинического исследования.
-Проверь корректность присвоенных зон. Для секций с ошибочной зоной предложи исправление.
-
-КАТАЛОГ ЗОН:
-${catalog}
-
-ПРАВИЛА:
-- Проверь, что присвоенная зона соответствует заголовку и месту секции в иерархии документа
-- Если зона правильная — не включай секцию в ответ
-- Если зона неправильная — укажи правильную зону строго из каталога выше
-- Если секция не подходит ни к одной зоне — correct_zone: null
-
-ФОРМАТ ОТВЕТА — только JSON-массив (без markdown). Если все зоны верны — пустой массив []:
-[{"idx":1,"current_zone":"overview","correct_zone":"introduction","confidence":0.9,"reason":"..."}]`;
+      const qaPromptTemplate =
+        promptRules?.rules.find((r) => r.name === "section_classify:qa")?.promptTemplate ??
+        DEFAULT_LLM_QA_PROMPT;
+      const systemPrompt = qaPromptTemplate.replace("{{catalog}}", catalog);
 
       const sectionEntries = sections.map((s, i) => {
         const breadcrumb = parentChains.get(s.id);

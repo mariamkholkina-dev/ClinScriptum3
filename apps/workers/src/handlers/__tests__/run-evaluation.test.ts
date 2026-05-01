@@ -104,7 +104,7 @@ describe("handleRunEvaluation", () => {
       makeSample("s1", [
         {
           stage: "classification",
-          expected: { sections: [{ standardSection: "synopsis" }] },
+          expected: { sections: [{ title: "S", standardSection: "synopsis" }] },
         },
       ]),
     ]);
@@ -128,7 +128,7 @@ describe("handleRunEvaluation", () => {
       makeSample("s1", [
         {
           stage: "classification",
-          expected: { sections: [{ standardSection: "synopsis" }] },
+          expected: { sections: [{ title: "Synopsis", standardSection: "synopsis" }] },
         },
       ]),
     ]);
@@ -161,10 +161,10 @@ describe("handleRunEvaluation", () => {
     runFindUnique.mockResolvedValueOnce(makeRun());
     goldenFindMany.mockResolvedValueOnce([
       makeSample("s1", [
-        { stage: "classification", expected: { sections: [{ standardSection: "synopsis" }] } },
+        { stage: "classification", expected: { sections: [{ title: "x", standardSection: "synopsis" }] } },
       ]),
       makeSample("s2", [
-        { stage: "classification", expected: { sections: [{ standardSection: "objectives" }] } },
+        { stage: "classification", expected: { sections: [{ title: "x", standardSection: "objectives" }] } },
       ]),
     ]);
     sectionFindMany
