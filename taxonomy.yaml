@@ -298,15 +298,42 @@ ip:
         - "(?i)\\bразрешенн\\w*\\b|\\bpermit\\w*\\b"
         - "(?i)\\brescue\\b|\\bспасательн\\w*\\s+терап\\w*\\b"
 
-    preclinical_data:
-      title_ru: Доклинические данные
+    preclinical_clinical_data:
+      title_ru: Результаты значимых доклинических и клинических исследований
+      # Гейт расширен: покрывает и доклинику (animal/in vivo/tox), и клинические данные
+      # (предыдущие исследования препарата у человека). Раньше ключ был preclinical_data —
+      # классификатор путал клинические results с efficacy_assessments. См.
+      # project_known_bugs.md от 2026-05-01.
       require_patterns:
         - "(?i)\\b(доклинич\\w*|preclinical|in\\s+vivo|in\\s+vitro|tox\\w*|токсиколог\\w*)\\b"
+        - "(?i)\\b(клиническ\\w*\\s+(данн\\w*|исследован\\w*|опыт\\w*)|clinical\\s+(data|experience|trials?))\\b"
+        - "(?i)\\bрезультат\\w*\\s+(значим\\w*\\s+)?(доклинич\\w*|клиническ\\w*)\\b"
       patterns:
         - "(?i)\\bдоклинич\\w*\\b|\\bpreclinical\\b"
         - "(?i)\\bтоксиколог\\w*\\b|\\btox\\w*\\b"
         - "(?i)\\bфармаколог\\w*\\b|\\bpharmacolog\\w*\\b"
         - "(?i)\\bживотн\\w*\\b|\\banimal\\b"
+        - "(?i)\\bклиническ\\w*\\s+(данн\\w*|исследован\\w*|опыт\\w*)\\b"
+        - "(?i)\\bclinical\\s+(data|experience|trials?)\\b"
+        - "(?i)\\bрезультат\\w*\\s+(значим\\w*\\s+)?(доклинич\\w*|клиническ\\w*)\\b"
+
+    comparator:
+      title_ru: Препарат сравнения
+      # Жёсткий гейт чтобы не пересекаться с treatments (study drug),
+      # population.exclusion (prior comparator use) и safety (comparator AE).
+      require_patterns:
+        - "(?i)\\b(препарат\\w*|средств\\w*|продукт\\w*)\\s+сравнен\\w*\\b"
+        - "(?i)\\bcomparator\\b"
+        - "(?i)\\bactive\\s+control\\b"
+      patterns:
+        - "(?i)\\b(препарат\\w*|средств\\w*|продукт\\w*)\\s+сравнен\\w*\\b"
+        - "(?i)\\bcomparator\\b"
+        - "(?i)\\bactive\\s+control\\b"
+        - "(?i)\\breference\\s+product\\b|\\bпрепарат\\w*\\s+референс\\w*\\b"
+        - "(?i)\\bplacebo\\s+comparator\\b"
+      not_keywords:
+        - "(?i)\\bнежелательн\\w*\\s+явлен\\w*\\b|\\badverse\\s+events?\\b"
+        - "(?i)\\b(prior|предшествующ\\w*|ранее)\\s+(comparator|препарат\\w*\\s+сравнен\\w*)\\b"
 
     contraindications:
       title_ru: Противопоказания
@@ -393,16 +420,6 @@ population:
         - "(?i)\\bопекун\\w*\\b"
         - "(?i)\\bvulnerable\\b"
 
-    contraception_requirements:
-      title_ru: Контрацепция / беременность
-      require_patterns:
-        - "(?i)\\b(контрацепц\\w*|беременност\\w*|pregnan\\w*)\\b"
-      patterns:
-        - "(?i)\\bконтрацепц\\w*\\b"
-        - "(?i)\\bбеременност\\w*\\b"
-        - "(?i)\\bpregnan\\w*\\b"
-        - "(?i)\\bтест\\s+на\\s+беременност\\w*\\b"
-
 # -------------------------------
 # PROCEDURES
 # -------------------------------
@@ -421,6 +438,48 @@ procedures:
     - "(?i)\\bконечн\\w*\\s+точк\\w*\\b"
     - "(?i)\\bадминистративн\\w*\\b"
   children:
+    contraception_requirements:
+      title_ru: Контрацепция / беременность
+      # Перенесено из population.children в 2026-05-01: это операционные
+      # процедуры протокола (тесты на беременность, требования к контрацепции
+      # во время исследования), а не критерий отбора population. См.
+      # project_known_bugs.md от 2026-05-01.
+      require_patterns:
+        - "(?i)\\b(контрацепц\\w*|беременност\\w*|pregnan\\w*)\\b"
+      patterns:
+        - "(?i)\\bконтрацепц\\w*\\b"
+        - "(?i)\\bбеременност\\w*\\b"
+        - "(?i)\\bpregnan\\w*\\b"
+        - "(?i)\\bтест\\s+на\\s+беременност\\w*\\b"
+      not_keywords:
+        # Не путать с критериями невключения (population.exclusion) которые
+        # упоминают беременность как exclusion criterion.
+        - "(?i)\\bкритери\\w*\\s+(не\\s*)?включен\\w*\\b|\\b(in|ex)clusion\\s+criteria\\b"
+
+    lifestyle:
+      title_ru: Образ жизни / физическая активность
+      # Новая subzone: ограничения по диете, курению, алкоголю, физактивности
+      # на время исследования. Раньше попадало в parent procedures или
+      # population.exclusion. Гейт жёсткий чтобы не путаться с safety.
+      require_patterns:
+        - "(?i)\\bобраз\\s+жизн\\w*\\b"
+        - "(?i)\\bфизическ\\w*\\s+(активност\\w*|нагрузк\\w*|упражнен\\w*)\\b"
+        - "(?i)\\blifestyle\\s+(modifications?|recommendations?|restrictions?)\\b"
+        - "(?i)\\bphysical\\s+activity\\b"
+        - "(?i)\\b(диет\\w*|питан\\w*|food|alcohol|алкогол\\w*|курени\\w*|smoking)\\s+(ограничен\\w*|restrictions?|recommendations?)\\b"
+      patterns:
+        - "(?i)\\bобраз\\s+жизн\\w*\\b"
+        - "(?i)\\bфизическ\\w*\\s+(активност\\w*|нагрузк\\w*|упражнен\\w*)\\b"
+        - "(?i)\\blifestyle\\b"
+        - "(?i)\\bphysical\\s+activity\\b"
+        - "(?i)\\bдиет\\w*\\s+ограничен\\w*\\b|\\bdietary\\s+restrictions?\\b"
+        - "(?i)\\b(алкогол\\w*|курени\\w*)\\s+ограничен\\w*\\b"
+        - "(?i)\\b(alcohol|smoking|tobacco)\\s+restrictions?\\b"
+      not_keywords:
+        # Не критерии отбора и не safety
+        - "(?i)\\bкритери\\w*\\s+(не\\s*)?включен\\w*\\b|\\b(in|ex)clusion\\s+criteria\\b"
+        - "(?i)\\bнежелательн\\w*\\s+явлен\\w*\\b|\\badverse\\s+events?\\b"
+
     schedule_of_assessments:
       title_ru: График процедур / SoA / расписание визитов
       # Статистика: 156 протоколов, 194 SoA-таблицы, 97% — procedure_matrix.
