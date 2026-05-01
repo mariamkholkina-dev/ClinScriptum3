@@ -43,6 +43,20 @@ function safeRegex(pattern: string): RegExp | null {
   }
 }
 
+interface CandidateScore {
+  rule: SectionMappingRule;
+  score: number;
+  method: "exact" | "content";
+}
+
+const TITLE_EXACT_BASE = 0.6;
+const TITLE_FRACTION_WEIGHT = 0.3;
+const MULTI_MATCH_BONUS = 0.05;
+const CONTENT_ONLY_CONFIDENCE = 0.65;
+const NOT_KEYWORD_PENALTY = 0.4;
+const MAX_CONFIDENCE = 0.99;
+const MAX_MULTI_MATCH_BONUS_COUNT = 2;
+
 export class SectionClassifier {
   private rules: SectionMappingRule[];
 
@@ -51,43 +65,81 @@ export class SectionClassifier {
   }
 
   classify(title: string, contentSnippet?: string): ClassificationResult {
-    const normalizedTitle = title.toLowerCase().trim();
+    const titleLower = title.toLowerCase();
+    const contentLower = (contentSnippet ?? "").toLowerCase();
+    const haystack = contentLower ? `${titleLower}\n${contentLower}` : titleLower;
+
+    const candidates: CandidateScore[] = [];
 
     for (const rule of this.rules) {
+      if (rule.requirePatterns?.length) {
+        const gateOk = rule.requirePatterns.some((p) => safeRegex(p)?.test(haystack));
+        if (!gateOk) continue;
+      }
+
+      let titleMatchLen = 0;
+      let titleMatchCount = 0;
+      let hasContentMatch = false;
+
       for (const pattern of rule.patterns) {
         const re = safeRegex(pattern);
         if (!re) continue;
-
-        if (re.test(normalizedTitle)) {
-          return {
-            sectionTitle: title,
-            standardSection: rule.standardSection,
-            confidence: 0.95,
-            method: "exact",
-          };
+        const tm = titleLower.match(re);
+        if (tm && tm[0].length > 0) {
+          titleMatchLen += tm[0].length;
+          titleMatchCount += 1;
+          continue;
         }
-
-        if (contentSnippet && re.test(contentSnippet)) {
-          return {
-            sectionTitle: title,
-            standardSection: rule.standardSection,
-            confidence: 0.7,
-            method: "content",
-          };
+        if (contentLower && re.test(contentLower)) {
+          hasContentMatch = true;
         }
       }
+
+      let score: number;
+      let method: "exact" | "content";
+
+      if (titleMatchCount > 0) {
+        method = "exact";
+        const fraction = Math.min(titleMatchLen / Math.max(titleLower.length, 1), 1);
+        const bonusCount = Math.min(titleMatchCount, MAX_MULTI_MATCH_BONUS_COUNT);
+        score = Math.min(
+          MAX_CONFIDENCE,
+          TITLE_EXACT_BASE + TITLE_FRACTION_WEIGHT * fraction + MULTI_MATCH_BONUS * bonusCount,
+        );
+      } else if (hasContentMatch) {
+        method = "content";
+        score = CONTENT_ONLY_CONFIDENCE;
+      } else {
+        continue;
+      }
+
+      const negHit = rule.notKeywords?.some((p) => safeRegex(p)?.test(haystack)) ?? false;
+      if (negHit) score = Math.max(0, score - NOT_KEYWORD_PENALTY);
+
+      if (score > 0) candidates.push({ rule, score, method });
     }
 
+    if (candidates.length === 0) {
+      return {
+        sectionTitle: title,
+        standardSection: null,
+        confidence: 0,
+        method: "pattern",
+      };
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
     return {
       sectionTitle: title,
-      standardSection: null,
-      confidence: 0,
-      method: "pattern",
+      standardSection: best.rule.standardSection,
+      confidence: best.score,
+      method: best.method,
     };
   }
 
   classifyAll(
-    sections: Array<{ title: string; content?: string }>
+    sections: Array<{ title: string; content?: string }>,
   ): ClassificationResult[] {
     return sections.map((s) => this.classify(s.title, s.content));
   }
