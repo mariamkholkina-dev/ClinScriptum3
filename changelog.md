@@ -2,6 +2,23 @@
 
 ## 2026-05-02
 
+### PR-A спринта 2: side-fixes (SOA timeout + isolated test-DB)
+
+Технический PR перед началом основной работы спринта 2 — устраняет 2 known-блокера для безопасного reprocess golden samples и автономной test-инфры.
+
+- **SOA Prisma transaction timeout** (`packages/shared/src/soa-detection-core.ts:580-637`). На больших матрицах (200+ cells) per-cell `tx.soaCell.create` в loop упирался в дефолтный 5s `$transaction` timeout — STP-08-25 reprocess стабильно падал с `Transaction not found, refers to an old closed transaction`. Фикс: bulk-вставка через `tx.soaCell.createMany` (одна SQL-команда вместо N) + явный `{ timeout: 60_000, maxWait: 10_000 }` как defense-in-depth.
+- **Изолированная test-DB.** Прежде integration tests из `apps/api/src/__tests__/integration/` запускались на dev DB `clinscriptum3` через общий `DATABASE_URL` — `cleanupTestData()` стирал все user-данные. Решение:
+  - Создана отдельная DB `clinscriptum3_test` (миграции применены).
+  - `apps/api/.env.test` (committed): `DATABASE_URL=postgresql://...clinscriptum3_test`, `JWT_SECRET=test-secret-do-not-use-in-prod`, `NODE_ENV=test`.
+  - `apps/api/vitest.setup.ts` (new): minimal inline-loader `.env.test` (без зависимости от `dotenv`), не перезаписывает уже-выставленные env-vars (CI workflow получает свой `DATABASE_URL=clinscriptum_test` без конфликта).
+  - `apps/api/vitest.config.ts`: `setupFiles: [vitest.setup.ts]`.
+  - Документация в `apps/api/CLAUDE.md` — first-time setup инструкция.
+  - Safety guard `assertSafeTestDatabase()` (из hotfix #12) остаётся как defense-in-depth.
+
+Verified: `npm test --workspace=@clinscriptum/api` → 151/151 passed на test-DB; dev DB `clinscriptum3` неприкосновенна (2 tenants, 4 golden samples сохранены).
+
+## 2026-05-02
+
 ### Hotfix: защита cleanupTestData + merge SoA → visit_schedule
 
 Два связанных фикса по результатам инцидента data-loss и анализа baseline спринта качества классификации.
