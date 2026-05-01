@@ -126,27 +126,49 @@ describe("FactExtractor", () => {
     });
   });
 
-  describe("multipleValues behavior", () => {
-    it("returns only first match for single-value rules", () => {
+  describe("aggregation by canonical value", () => {
+    it("keeps distinct values for single-value rules as separate aggregated facts", () => {
+      // Phase 1.2 semantics: contradicting protocol numbers stay visible
+      // so contradiction-detector and downstream LLM QA can arbitrate.
       const text =
         "Protocol Number: AAA-111\nSome text\nProtocol Number: BBB-222";
       const facts = extractor.extract(text);
       const pns = facts.filter((f) => f.factKey === "protocol_number");
-      expect(pns).toHaveLength(1);
-      expect(pns[0].value).toBe("AAA-111");
+      expect(pns).toHaveLength(2);
+      const canonicals = pns.map((p) => p.canonical).sort();
+      expect(canonicals).toEqual(["AAA-111", "BBB-222"]);
     });
 
-    it("returns multiple matches for multipleValues rules", () => {
+    it("returns multiple matches for multipleValues-style rules", () => {
       const text =
         "Primary Endpoint: Change in HbA1c\nPrimary Endpoint: Weight loss at Week 12";
       const facts = extractor.extract(text);
       const eps = facts.filter((f) => f.factKey === "primary_endpoint");
       expect(eps.length).toBeGreaterThanOrEqual(2);
     });
+
+    it("collapses duplicate canonical values across repeated mentions", () => {
+      const text = "Protocol Number: AAA-111\nSome text\nProtocol Number: AAA-111";
+      const facts = extractor.extract(text);
+      const pns = facts.filter((f) => f.factKey === "protocol_number");
+      expect(pns).toHaveLength(1);
+      expect(pns[0].sourceCount).toBe(2);
+    });
+
+    it("boosts confidence when synopsis and body confirm the same value", () => {
+      const facts = extractor.extractFromSections([
+        { title: "Synopsis", content: "Sponsor: Acme Corp", isSynopsis: true },
+        { title: "Body", content: "Sponsor: Acme Corp", isSynopsis: false },
+      ]);
+      const sponsor = facts.find((f) => f.factKey === "sponsor");
+      expect(sponsor).toBeDefined();
+      expect(sponsor!.sourceCount).toBe(2);
+      expect(sponsor!.confidence).toBeGreaterThan(0.7);
+    });
   });
 
   describe("deduplication", () => {
-    it("removes duplicate factKey:value pairs", () => {
+    it("collapses identical sponsor mentions to one aggregated fact", () => {
       const text =
         "Sponsor: Acme Corp\nSome text in between.\nSponsor: Acme Corp";
       const facts = extractor.extract(text);

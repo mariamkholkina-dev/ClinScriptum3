@@ -1,4 +1,5 @@
 import type { ExtractedFact } from "./fact-extractor.js";
+import { canonicalize } from "./canonicalize.js";
 
 export interface Contradiction {
   factKey: string;
@@ -8,6 +9,9 @@ export interface Contradiction {
 /**
  * URS-026: If the same fact is found in multiple places with
  * differing values, flag it as an intra-document contradiction.
+ *
+ * Comparison is done on the canonical form so that "30 пациентов",
+ * "N=30", and "30 patients" do not falsely trigger as different.
  */
 export function detectContradictions(facts: ExtractedFact[]): Contradiction[] {
   const grouped = new Map<string, ExtractedFact[]>();
@@ -21,8 +25,10 @@ export function detectContradictions(facts: ExtractedFact[]): Contradiction[] {
   const contradictions: Contradiction[] = [];
 
   for (const [factKey, entries] of grouped) {
-    const uniqueValues = new Set(entries.map((e) => normalizeValue(e.value)));
-    if (uniqueValues.size > 1) {
+    const uniqueCanonicals = new Set(
+      entries.map((e) => canonicalize(e.factKey, e.value).canonical),
+    );
+    if (uniqueCanonicals.size > 1) {
       contradictions.push({
         factKey,
         values: entries.map((e) => ({ value: e.value, source: e.source })),
@@ -31,8 +37,4 @@ export function detectContradictions(facts: ExtractedFact[]): Contradiction[] {
   }
 
   return contradictions;
-}
-
-function normalizeValue(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
