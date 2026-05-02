@@ -970,6 +970,7 @@ model EvaluationRun {
   totalSamples   Int     @default(0) @map("total_samples")
   passedSamples  Int     @default(0) @map("passed_samples")
   failedSamples  Int     @default(0) @map("failed_samples")
+  factCoverage   Float?  @map("fact_coverage")
 
   comparedToRunId String? @map("compared_to_run_id") @db.Uuid
   delta           Json?   @db.JsonB
@@ -1023,6 +1024,8 @@ model EvaluationResult {
   f1         Float?
   latencyMs  Int?     @map("latency_ms")
   tokenCost  Float?   @map("token_cost")
+
+  coverageByFactKey Json? @map("coverage_by_fact_key") @db.JsonB
 
   evaluationRun EvaluationRun @relation(fields: [evaluationRunId], references: [id], onDelete: Cascade)
   goldenSample  GoldenSample  @relation(fields: [goldenSampleId], references: [id], onDelete: Cascade)

@@ -81,6 +81,15 @@ Verified: `npm test --workspace=@clinscriptum/api` → 151/151 passed на test-
 - **Расширение модели `Fact`** — миграция `20260502000000_add_fact_canonical_value`. Новые колонки: `canonical_value` (TEXT), `standard_section_code` (TEXT), `source_count` (INTEGER NOT NULL DEFAULT 1). `canonicalValue` хранит нормализованную форму из `canonicalize(factKey, value)`, по нему сравнивается равенство в voting и contradiction detection; `standardSectionCode` декуплирован от section-таксономии (свободная строка) — устойчив к параллельной работе по классификации секций; `sourceCount` отражает результат `aggregateByCanonical`. Все nullable / default — обратно-совместимо для старых строк.
 - **`runDeterministic` пишет canonical/standardSection/sourceCount** (`packages/shared/src/fact-extraction-core.ts`). Раньше Fact-строки создавались с `confidence: 1.0` независимо от `aggregateByCanonical`-результата; теперь пишется реальный `confidence` из агрегата (зависит от количества и типа источников), а также `canonicalValue` лучшего варианта, суммарный `sourceCount` по всем canonical-группам одного `factKey` и `standardSectionCode` секции лучшего источника. `variants` разворачиваются по сорсам внутри каждой агрегированной группы, чтобы downstream пользователь видел все источники.
 
+### Phase 0 spr.0 fact-extraction roadmap — observability infrastructure
+
+Базовая инфраструктура для измерения качества извлечения фактов до начала любых алгоритмических изменений Phase 2+.
+
+- **`RequestContext` расширен** (`packages/shared/src/context.ts`) полями `processingRunId?`, `docVersionId?`, `sectionId?` — при логировании эти поля автоматически попадают в JSON-вывод через `logger.ts`, что облегчает корреляцию логов pipeline-запусков.
+- **Per-factKey coverage metric** — миграция `20260502120000_add_fact_coverage_metrics`. Новые колонки: `evaluation_runs.fact_coverage` (DOUBLE PRECISION) и `evaluation_results.coverage_by_fact_key` (JSONB). Формат `coverage_by_fact_key`: `{ factKey: { expected, extracted, matched } }`.
+- **`run-evaluation` handler** (`apps/workers/src/handlers/run-evaluation.ts`) считает `computeFactCoverage(expected, actual)` для stage `extraction` — сопоставляет ожидаемые и извлечённые `factKey` + lowercase value, возвращает `{ expected, extracted, matched }` per ключу. Записывает в `EvaluationResult.coverageByFactKey`. Aggregation по run: `factCoverage = matchedTotal / expectedTotal` пишется в `EvaluationRun.factCoverage`.
+- **`recordExtractionMetric`** (`apps/workers/src/lib/metrics.ts`) — новая функция логирующая `fact_extraction_metric` с полями `phase` (`deterministic|llm_check|llm_qa`), `factKey?`, `sectionId?`, `parseError?`, `tokens?`, `durationMs?`, `matched?`. Точка вызова появится по мере wiring'а в Phase 3 (targeted LLM) и Phase 5 (calibration).
+
 ## 2026-05-01
 
 ### PR-3 спринта качества классификации: Sprint 0 mitigation + UI fixes

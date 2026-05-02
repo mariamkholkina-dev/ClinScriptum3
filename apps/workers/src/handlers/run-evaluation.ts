@@ -62,6 +62,8 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
     let passedResults = 0;
     let failedResults = 0;
     const stageAggregation: Record<string, { precisions: number[]; recalls: number[]; f1s: number[]; passed: number; total: number }> = {};
+    let factExpectedTotal = 0;
+    let factMatchedTotal = 0;
 
     for (const sample of samplesWithApproved) {
       for (const stageStatus of sample.stageStatuses) {
@@ -84,6 +86,15 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
           const { precision, recall, f1, diff } = compareResults(expected, actual);
           const status = f1 !== null && f1 >= 0.8 ? "pass" : "fail";
 
+          const coverageByFactKey =
+            stage === "extraction" ? computeFactCoverage(expected, actual) : null;
+          if (coverageByFactKey) {
+            for (const v of Object.values(coverageByFactKey)) {
+              factExpectedTotal += v.expected;
+              factMatchedTotal += v.matched;
+            }
+          }
+
           await prisma.evaluationResult.create({
             data: {
               evaluationRunId: run.id,
@@ -97,6 +108,7 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
               recall,
               f1,
               latencyMs: Date.now() - stageStart,
+              ...(coverageByFactKey ? { coverageByFactKey: coverageByFactKey as object } : {}),
             },
           });
 
@@ -158,6 +170,9 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
 
     const durationMs = Date.now() - startTime;
 
+    const factCoverage =
+      factExpectedTotal > 0 ? factMatchedTotal / factExpectedTotal : null;
+
     await prisma.evaluationRun.update({
       where: { id: run.id },
       data: {
@@ -168,6 +183,7 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
         passedSamples: passedResults,
         failedSamples: failedResults,
         completedAt: new Date(),
+        ...(factCoverage !== null ? { factCoverage } : {}),
         ...(delta ? { delta: delta as object } : {}),
       },
     });
@@ -293,6 +309,47 @@ function compareResults(
       extra: [...actualKeys].filter((k) => !expectedKeys.has(k)),
     },
   };
+}
+
+interface FactCoverageEntry {
+  expected: number;
+  extracted: number;
+  matched: number;
+}
+
+export function computeFactCoverage(
+  expected: Record<string, unknown>,
+  actual: Record<string, unknown>,
+): Record<string, FactCoverageEntry> {
+  const collect = (data: Record<string, unknown>): Map<string, Set<string>> => {
+    const map = new Map<string, Set<string>>();
+    const facts = data.facts;
+    if (!Array.isArray(facts)) return map;
+    for (const item of facts) {
+      if (typeof item !== "object" || item === null) continue;
+      const obj = item as Record<string, unknown>;
+      const factKey = obj.factKey != null ? String(obj.factKey) : null;
+      if (!factKey) continue;
+      const value = obj.value != null ? String(obj.value).trim().toLowerCase() : "";
+      const set = map.get(factKey) ?? new Set<string>();
+      set.add(value);
+      map.set(factKey, set);
+    }
+    return map;
+  };
+
+  const exp = collect(expected);
+  const act = collect(actual);
+  const allKeys = new Set<string>([...exp.keys(), ...act.keys()]);
+  const out: Record<string, FactCoverageEntry> = {};
+  for (const key of allKeys) {
+    const e = exp.get(key) ?? new Set();
+    const a = act.get(key) ?? new Set();
+    let matched = 0;
+    for (const v of e) if (a.has(v)) matched++;
+    out[key] = { expected: e.size, extracted: a.size, matched };
+  }
+  return out;
 }
 
 function extractKeys(data: Record<string, unknown>): Set<string> {
