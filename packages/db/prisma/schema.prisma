@@ -447,11 +447,14 @@ model SoaTable {
   status        SoaStatus @default(detected)
   headerData    Json      @map("header_data") @db.JsonB
   rawMatrix     Json      @map("raw_matrix") @db.JsonB
+  /// @deprecated removed in Sprint 5; use relation `footnotes` (SoaFootnote[]) instead.
   footnotes     Json      @default("[]") @db.JsonB
   createdAt     DateTime  @default(now()) @map("created_at")
 
-  docVersion DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
-  cells      SoaCell[]
+  docVersion       DocumentVersion     @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+  cells            SoaCell[]
+  soaFootnotes     SoaFootnote[]
+  footnoteAnchors  SoaFootnoteAnchor[]
 
   @@index([docVersionId])
   @@map("soa_tables")
@@ -468,9 +471,11 @@ model SoaCell {
   normalizedValue String  @default("") @map("normalized_value")
   manualValue     String? @map("manual_value")
   confidence      Float   @default(1.0)
+  /// @deprecated removed in Sprint 5; use relation `footnoteAnchors` (SoaFootnoteAnchor[]) instead.
   footnoteRefs    Json    @default("[]") @db.JsonB @map("footnote_refs")
 
-  soaTable SoaTable @relation(fields: [soaTableId], references: [id], onDelete: Cascade)
+  soaTable        SoaTable            @relation(fields: [soaTableId], references: [id], onDelete: Cascade)
+  footnoteAnchors SoaFootnoteAnchor[]
 
   @@unique([soaTableId, rowIndex, colIndex])
   @@index([soaTableId])
@@ -481,6 +486,56 @@ enum SoaStatus {
   detected
   validated
   not_soa
+}
+
+enum SoaFootnoteSource {
+  detected
+  manual
+}
+
+enum SoaFootnoteAnchorTarget {
+  cell
+  row
+  col
+}
+
+model SoaFootnote {
+  id          String            @id @default(uuid()) @db.Uuid
+  soaTableId  String            @map("soa_table_id") @db.Uuid
+  marker      String
+  markerOrder Int               @map("marker_order")
+  text        String            @default("")
+  source      SoaFootnoteSource @default(detected)
+  createdAt   DateTime          @default(now()) @map("created_at")
+
+  soaTable SoaTable            @relation(fields: [soaTableId], references: [id], onDelete: Cascade)
+  anchors  SoaFootnoteAnchor[]
+
+  @@unique([soaTableId, marker])
+  @@index([soaTableId])
+  @@map("soa_footnotes")
+}
+
+model SoaFootnoteAnchor {
+  id         String                  @id @default(uuid()) @db.Uuid
+  footnoteId String                  @map("footnote_id") @db.Uuid
+  soaTableId String                  @map("soa_table_id") @db.Uuid
+  targetType SoaFootnoteAnchorTarget @map("target_type")
+  cellId     String?                 @map("cell_id") @db.Uuid
+  rowIndex   Int?                    @map("row_index")
+  colIndex   Int?                    @map("col_index")
+  confidence Float                   @default(1.0)
+  source     SoaFootnoteSource       @default(detected)
+
+  footnote SoaFootnote @relation(fields: [footnoteId], references: [id], onDelete: Cascade)
+  soaTable SoaTable    @relation(fields: [soaTableId], references: [id], onDelete: Cascade)
+  cell     SoaCell?    @relation(fields: [cellId], references: [id], onDelete: Cascade)
+
+  @@unique([footnoteId, targetType, cellId, rowIndex, colIndex])
+  @@index([footnoteId])
+  @@index([soaTableId, targetType])
+  @@index([cellId])
+  @@map("soa_footnote_anchors")
 }
 
 // ─── Rule Set Bundles ────────────────────────────────────────

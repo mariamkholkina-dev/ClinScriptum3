@@ -2,6 +2,20 @@
 
 ## 2026-05-02
 
+### Спринт 1 SoA footnotes (commit 1/7): нормализованная модель сносок — schema + migration
+
+Заменяем грубое хранение SoA-сносок (`SoaTable.footnotes: Json string[]` + `SoaCell.footnoteRefs: Json number[]`) на нормализованную M:N-модель с привязкой к ячейке/строке/столбцу. Старые поля помечены `/// @deprecated removed in Sprint 5` и пока остаются для backward-compat shim.
+
+`packages/db/prisma/schema.prisma`:
+- Добавлены два enum: `SoaFootnoteSource` (`detected | manual`), `SoaFootnoteAnchorTarget` (`cell | row | col`).
+- Добавлена модель `SoaFootnote` — текст сноски с произвольным маркером (`*`, `†`, `1`, `2`, `2a`…) и порядковым номером для устойчивой сортировки. `@@unique([soaTableId, marker])` защищает от дублей.
+- Добавлена модель `SoaFootnoteAnchor` — якорь сноски на одну из трёх целей: `cell` (через FK `cellId`), `row` (по `rowIndex`), `col` (по `colIndex`). Composite `@@unique([footnoteId, targetType, cellId, rowIndex, colIndex])` + индексы по `footnoteId`, `(soaTableId, targetType)`, `cellId`. Все FK с `ON DELETE CASCADE`.
+- Обратные relations добавлены в `SoaTable.soaFootnotes`/`footnoteAnchors` и `SoaCell.footnoteAnchors`.
+
+Миграция: `packages/db/prisma/migrations/20260502205347_add_soa_footnotes/` (2 enum, 2 таблицы, 5 индексов, 4 FK).
+
+Дальнейшие коммиты спринта (см. `~/.claude/plans/spicy-tinkering-pearl.md`): извлечение inline-маркеров из HTML mammoth, persist в новые таблицы, API endpoints, переработка `FootnotesPanel` в rule-admin, read-only список в apps/web, deprecation legacy.
+
 ### Fix taxonomy: legacy zone-keys заменены везде в production коде
 
 Прошёл по всему коду и заменил **старые** zone keys на актуальные:
