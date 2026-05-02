@@ -2,6 +2,16 @@
 
 ## 2026-05-02
 
+### Sprint 3 — Performance + robust parsing (LLM Check)
+
+`apps/workers/src/handlers/classify-sections.ts`, `packages/db/src/seed-prompts.ts`, `apps/workers/src/handlers/__tests__/classify-sections.test.ts`.
+
+**3.1 — Batch-режим в LLM Check.** Раньше Step 2 делал 1 LLM-вызов на каждую секцию (~200 запросов на протокол). Теперь — batches по `LLM_CHECK_BATCH_SIZE=20` с per-batch retry (`LLM_CHECK_BATCH_RETRY_ATTEMPTS=2`). Промпт обновлён под формат `[idx] Title | путь | алгоритм:zone | preview` → ответ JSON-array `[{idx,zone,confidence}]`. Если в массиве пропущен idx — соответствующая секция остаётся на deterministic-зоне с warn-логом. ~10× меньше LLM-запросов и токенов overhead'а.
+
+**3.2 — Robust JSON parser.** `extractBalanced(s, open, close)` — balanced-bracket parser с поддержкой quoted-strings и escapes. Заменил greedy regex `\[[\s\S]*\]` который ломался на reasoning-ответах вида «пример: [1,2,3], результат: [{...}]» (matched от первого `[` до последнего `]`). Новый flow: 1) `JSON.parse(cleaned)` целиком (fast-path), 2) `extractBalanced` для array, 3) для object с `sections`/`results`/`corrections` внутри. +8 unit-тестов.
+
+**3.3 — Снять двойной retry.** Удалена константа `MAX_RETRIES` и per-section retry-loop в LLM Check. Полагаемся на orchestrator step-retry (`lib/step-retry.ts`, 3 попытки exp. backoff для `llm_check`/`llm_qa`) + per-batch retry на TypeError fetch failed. Раньше было 3 уровня retry (per-section × per-orchestrator-attempt × per-pipeline-attempt) — overcorrelated и медленно при failures.
+
 ### Rule-admin: quick-fix + jump-to-row в Diff overlay классификации
 
 `apps/rule-admin/.../ClassificationTreeViewer.tsx`. На странице Эталонные наборы → этап «Классификация» → панель Diff с эталоном (открывается по кнопке) каждая строка теперь имеет:

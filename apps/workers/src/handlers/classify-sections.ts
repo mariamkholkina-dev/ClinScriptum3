@@ -107,10 +107,21 @@ function buildParentChains(sections: CachedSection[]): Map<string, string[]> {
 // Гипотеза: payload + reasoning превышают практический connection budget
 // провайдера. Меньший batch уменьшает шанс timeout/connect failure.
 const MAX_SECTIONS_PER_BATCH = 10;
-const MAX_RETRIES = 2;
+// Sprint 3.3: per-section retry удалён в LLM Check (заменён batch-retry в
+// 3.1) и в QA уже используется per-batch retry. На уровне step-retry
+// orchestrator (lib/step-retry.ts) — exponential backoff 3 попытки для
+// llm_check и llm_qa уровней. Дублирующий per-section retry убран.
 // Per-batch retry на TypeError: fetch failed.
 const QA_BATCH_RETRY_ATTEMPTS = 2;
 const QA_BATCH_RETRY_DELAY_MS = 5000;
+
+// Sprint 3.1: batch-режим LLM Check (Step 2). Отдельно от QA's
+// MAX_SECTIONS_PER_BATCH=10 — у Check проще промпт (не reasoning-tier QA),
+// можно крупнее. 20 секций × ~150 chars каждая ≈ 3K input + ответ ≈ 1.3K
+// → влезает в default 8K context window любого LLM.
+const LLM_CHECK_BATCH_SIZE = 20;
+const LLM_CHECK_BATCH_RETRY_ATTEMPTS = 2;
+const LLM_CHECK_BATCH_RETRY_DELAY_MS = 3000;
 
 function batchByBudget(items: string[], budget: number): string[][] {
   const batches: string[][] = [];
@@ -143,7 +154,7 @@ const HIGH_CONFIDENCE_SKIP = 0.85;
 
 const DEFAULT_LLM_CHECK_PROMPT = `Ты — эксперт по структуре документов клинических исследований (протокол, ICF, IB, CSR).
 
-ЗАДАЧА: Классифицируй секцию документа, присвоив ей стандартную зону из каталога ниже.
+ЗАДАЧА: Классифицируй каждую секцию из списка, присвоив ей стандартную зону из каталога ниже.
 
 ПРИОРИТЕТ ИСТОЧНИКОВ ИНФОРМАЦИИ:
 1. ЗАГОЛОВОК секции + ПУТЬ родительских заголовков — главный источник. В большинстве случаев заголовка и его позиции в иерархии достаточно для уверенной классификации.
@@ -154,15 +165,15 @@ const DEFAULT_LLM_CHECK_PROMPT = `Ты — эксперт по структур�
 {{catalog}}
 
 ПРАВИЛА:
-1. Используй zone key ТОЧНО как он написан в каталоге. НЕ добавляй к нему имя родительской зоны — поле «parent» в каталоге это метаданные, а не часть ключа. Например, если в каталоге написано «preclinical_data (subzone, parent: ip)», верни "preclinical_data", а НЕ "ip.preclinical_data"
-2. Если секция является подзоной — используй ключ подзоны, а не родительской зоны
-3. Учитывай иерархию: путь родительских заголовков и общую структуру документа
-4. Если алгоритм уже предложил зону — проверь: если согласен, верни ту же; если нет — верни правильную
-5. Если секция не подходит ни к одной зоне — zone: null, confidence: 0
-6. confidence: 0.0–1.0
+1. Используй zone key ТОЧНО как он написан в каталоге. НЕ добавляй к нему имя родительской зоны.
+2. Если секция является подзоной — используй ключ подзоны, а не родительской зоны.
+3. Учитывай иерархию: путь родительских заголовков и общую структуру документа.
+4. Если алгоритм уже предложил зону — проверь: если согласен, верни ту же; если нет — верни правильную.
+5. Если секция не подходит ни к одной зоне — zone:null, confidence:0.
+6. confidence: 0.0–1.0.
 
-ФОРМАТ ОТВЕТА — только JSON-объект, без текста, без markdown:
-{"zone":"preclinical_data","confidence":0.95}`;
+ФОРМАТ ОТВЕТА — JSON-массив, по одному объекту на каждую секцию, в ТОМ ЖЕ ПОРЯДКЕ что в input:
+[{"idx":1,"zone":"synopsis","confidence":0.95},{"idx":2,"zone":"rationale","confidence":0.85}]`;
 
 const DEFAULT_LLM_QA_PROMPT = `Ты — QA-ревьюер структуры документа клинического исследования.
 Проверь корректность присвоенных зон. Для секций с ошибочной зоной предложи исправление.
@@ -179,6 +190,39 @@ const DEFAULT_LLM_QA_PROMPT = `Ты — QA-ревьюер структуры д�
 ФОРМАТ ОТВЕТА — только JSON-массив (без markdown). Если все зоны верны — пустой массив []:
 [{"idx":1,"current_zone":"overview","correct_zone":"introduction","confidence":0.9,"reason":"..."}]`;
 
+/**
+ * Balanced-bracket parser. Возвращает первый balanced range [start..end]
+ * для скобок open/close с поддержкой strings и escapes — игнорирует скобки
+ * внутри "..." кавычек.
+ *
+ * Раньше использовался greedy regex `\[[\s\S]*\]` — он matched от первого
+ * `[` до последнего `]` в строке, что ломалось на reasoning-ответах вида
+ * "пример: [1,2,3], результат: [{...}]" (matched всё, JSON.parse не валиден).
+ */
+function extractBalanced(s: string, open: string, close: string): string | null {
+  const start = s.indexOf(open);
+  if (start === -1) return null;
+  let depth = 0;
+  let inStr = false;
+  let escaped = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (inStr) {
+      if (c === "\\") escaped = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === open) depth++;
+    else if (c === close) {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 function parseLlmJsonArray(raw: string): unknown[] | null {
   const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 
@@ -186,19 +230,41 @@ function parseLlmJsonArray(raw: string): unknown[] | null {
     return null;
   }
 
-  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-  if (arrayMatch) {
-    return JSON.parse(arrayMatch[0]);
+  // 1) Пробуем JSON.parse(cleaned) целиком (если LLM вернул чистый JSON без
+  //    обёртки — это самый быстрый и точный путь).
+  try {
+    const direct = JSON.parse(cleaned);
+    if (Array.isArray(direct)) return direct;
+    if (direct && typeof direct === "object") {
+      const obj = direct as Record<string, unknown>;
+      if (Array.isArray(obj.sections)) return obj.sections;
+      if (Array.isArray(obj.results)) return obj.results;
+      if (Array.isArray(obj.corrections)) return obj.corrections;
+      return [obj];
+    }
+  } catch { /* fall through */ }
+
+  // 2) Balanced-bracket для массива.
+  const arrStr = extractBalanced(cleaned, "[", "]");
+  if (arrStr) {
+    try {
+      const parsed = JSON.parse(arrStr);
+      if (Array.isArray(parsed)) return parsed;
+    } catch { /* fall through */ }
   }
 
-  const objMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!objMatch) return null;
-
-  const obj = JSON.parse(objMatch[0]);
-  return Array.isArray(obj.sections) ? obj.sections
-    : Array.isArray(obj.results) ? obj.results
-    : Array.isArray(obj.corrections) ? obj.corrections
-    : [obj];
+  // 3) Balanced-bracket для объекта (с массивом внутри как sections/results/corrections).
+  const objStr = extractBalanced(cleaned, "{", "}");
+  if (!objStr) return null;
+  try {
+    const obj = JSON.parse(objStr) as Record<string, unknown>;
+    if (Array.isArray(obj.sections)) return obj.sections;
+    if (Array.isArray(obj.results)) return obj.results;
+    if (Array.isArray(obj.corrections)) return obj.corrections;
+    return [obj];
+  } catch {
+    return null;
+  }
 }
 
 function parseLlmJsonObject(raw: string): Record<string, unknown> | null {
@@ -206,14 +272,30 @@ function parseLlmJsonObject(raw: string): Record<string, unknown> | null {
   if (/не могу обсуждать|давайте поговорим|не могу помочь с этим/i.test(cleaned)) {
     return null;
   }
-  const objMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!objMatch) return null;
+  // 1) Прямой parse целиком — fast path для чистого JSON.
   try {
-    return JSON.parse(objMatch[0]);
+    const direct = JSON.parse(cleaned);
+    if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+      return direct as Record<string, unknown>;
+    }
+  } catch { /* fall through */ }
+
+  // 2) Balanced-bracket для объекта.
+  const objStr = extractBalanced(cleaned, "{", "}");
+  if (!objStr) return null;
+  try {
+    const parsed = JSON.parse(objStr);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
   } catch {
     return null;
   }
 }
+
+// Экспортируем для unit-тестов.
+export const __testing = { extractBalanced, parseLlmJsonArray, parseLlmJsonObject };
 
 export async function handleClassifySections(data: {
   processingRunId: string;
@@ -356,86 +438,121 @@ export async function handleClassifySections(data: {
       const skippedNoZoneDetails: Array<{ title: string; sectionId: string; rawZone: string | null; rawConfidence: unknown }> = [];
       const skippedInvalidZoneDetails: Array<{ title: string; sectionId: string; zone: string }> = [];
 
-      const classifyOne = async (section: CachedSection): Promise<void> => {
-        const breadcrumb = parentChains.get(section.id);
-        const path = breadcrumb?.length
-          ? breadcrumb.join(" → ") + " → " + section.title
-          : section.title;
-        const contentParts = section.contentBlocks.map((b) => b.content).join("\n");
-        const content = contentParts.slice(0, CONTENT_MAX_CHARS);
-        const algo = section.algoSection
-          ? `\nАЛГОРИТМ ПРЕДЛОЖИЛ: ${section.algoSection} (${Math.round((section.algoConfidence ?? 0) * 100)}%)`
-          : "";
+      // Sprint 3.1: batch LLM Check. Раньше — 1 LLM-вызов на секцию (≈200 для
+      // протокола), теперь — batch по LLM_CHECK_BATCH_SIZE секций, ~10x reduction
+      // в количестве запросов и токенах overhead'а (system prompt не повторяется).
+      // Per-batch retry (на TypeError fetch failed, JSON parse) с exponential
+      // backoff. Если batch возвращает массив с пропуском idx — секция остаётся
+      // на deterministic-зоне, лог warn.
+      const classifyBatch = async (batch: CachedSection[]): Promise<void> => {
+        const idxToSection = new Map<number, CachedSection>();
+        const inputLines: string[] = [];
+        batch.forEach((section, i) => {
+          const idx = i + 1;
+          idxToSection.set(idx, section);
+          const breadcrumb = parentChains.get(section.id);
+          const path = breadcrumb?.length ? breadcrumb.join(" → ") : "(корень)";
+          const contentParts = section.contentBlocks.map((b) => b.content).join(" ");
+          const preview = contentParts.slice(0, 200).replace(/\s+/g, " ").trim();
+          const algo = section.algoSection
+            ? ` | алгоритм:${section.algoSection} (${Math.round((section.algoConfidence ?? 0) * 100)}%)`
+            : "";
+          inputLines.push(
+            `[${idx}] ${section.title} | путь:${path}${algo}${preview ? ` | preview:${preview}` : ""}`,
+          );
+        });
 
-        const userMessage = `ЗАГОЛОВОК: ${section.title}
-ПУТЬ В ИЕРАРХИИ: ${path}${algo}
+        const userMessage = `СПИСОК СЕКЦИЙ ДЛЯ КЛАССИФИКАЦИИ (${batch.length} шт):
+${inputLines.join("\n")}`;
 
-ОКРУЖЕНИЕ В ДОКУМЕНТЕ (соседние секции, → текущая, в скобках уже присвоенные зоны):
-${buildEnrichedOutline(section.id)}
-
-СОДЕРЖАНИЕ РАЗДЕЛА:
-${content || "(пусто)"}`;
-
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        let parsed: unknown[] | null = null;
+        for (let attempt = 0; attempt <= LLM_CHECK_BATCH_RETRY_ATTEMPTS; attempt++) {
           try {
             if (attempt > 0) {
               retries++;
-              await new Promise((r) => setTimeout(r, 2000 * attempt));
+              await new Promise((r) => setTimeout(r, LLM_CHECK_BATCH_RETRY_DELAY_MS * attempt));
             }
-
             const response = await gateway.generate({
               system: systemPrompt,
               messages: [{ role: "user", content: userMessage }],
-              maxTokens: 512,
+              maxTokens: 64 * batch.length + 256,
               responseFormat: "json",
             });
-
             totalTokens += response.usage.totalTokens;
-
-            const parsed = parseLlmJsonObject(response.content);
-            if (!parsed) {
-              if (attempt === MAX_RETRIES) {
-                parseErrorDetails.push({ title: section.title, sectionId: section.id, reason: `json_parse: ${response.content.slice(0, 150)}` });
-                logger.warn("LLM classify parse error", {
-                  sectionId: section.id, title: section.title,
-                  preview: response.content.slice(0, 200),
+            parsed = parseLlmJsonArray(response.content);
+            if (parsed) break;
+            if (attempt === LLM_CHECK_BATCH_RETRY_ATTEMPTS) {
+              for (const s of batch) {
+                parseErrorDetails.push({
+                  title: s.title,
+                  sectionId: s.id,
+                  reason: `batch_parse: ${response.content.slice(0, 100)}`,
                 });
               }
-              continue;
+              logger.warn("LLM classify batch parse failed", {
+                batchSize: batch.length,
+                preview: response.content.slice(0, 200),
+              });
             }
-
-            const zone = (parsed.zone as string | null) ?? (parsed.zone_key as string | null) ?? null;
-            const conf = typeof parsed.confidence === "number" ? parsed.confidence
-              : parseFloat(String(parsed.confidence ?? ""));
-
-            if (!zone || isNaN(conf)) {
-              skippedNoZoneDetails.push({ title: section.title, sectionId: section.id, rawZone: zone, rawConfidence: parsed.confidence ?? null });
-              return;
-            }
-
-            const resolvedZone = zoneLookup.size > 0 ? resolveZoneKey(zone, zoneLookup) : zone;
-            if (!resolvedZone) {
-              skippedInvalidZoneDetails.push({ title: section.title, sectionId: section.id, zone });
-              return;
-            }
-
-            await prisma.section.update({
-              where: { id: section.id },
-              data: {
-                llmSection: resolvedZone,
-                llmConfidence: conf,
-                standardSection: resolvedZone,
-                confidence: conf,
-                classifiedBy: "llm_check",
-              },
-            });
-            updated++;
-            return;
           } catch (err) {
-            if (attempt === MAX_RETRIES) {
-              parseErrorDetails.push({ title: section.title, sectionId: section.id, reason: String(err).slice(0, 200) });
-              logger.warn("LLM classify section error", { sectionId: section.id, error: String(err) });
+            if (attempt === LLM_CHECK_BATCH_RETRY_ATTEMPTS) {
+              for (const s of batch) {
+                parseErrorDetails.push({ title: s.title, sectionId: s.id, reason: String(err).slice(0, 200) });
+              }
+              logger.warn("LLM classify batch error", { batchSize: batch.length, error: String(err) });
             }
+          }
+        }
+
+        if (!parsed) return;
+
+        const seenIdx = new Set<number>();
+        for (const item of parsed) {
+          if (!item || typeof item !== "object") continue;
+          const obj = item as Record<string, unknown>;
+          const idx = typeof obj.idx === "number" ? obj.idx
+            : parseInt(String(obj.idx ?? ""), 10);
+          if (isNaN(idx)) continue;
+          const section = idxToSection.get(idx);
+          if (!section) continue;
+          seenIdx.add(idx);
+
+          const zone = (obj.zone as string | null) ?? (obj.zone_key as string | null) ?? null;
+          const conf = typeof obj.confidence === "number" ? obj.confidence
+            : parseFloat(String(obj.confidence ?? ""));
+
+          if (!zone || isNaN(conf)) {
+            skippedNoZoneDetails.push({ title: section.title, sectionId: section.id, rawZone: zone, rawConfidence: obj.confidence ?? null });
+            continue;
+          }
+
+          const resolvedZone = zoneLookup.size > 0 ? resolveZoneKey(zone, zoneLookup) : zone;
+          if (!resolvedZone) {
+            skippedInvalidZoneDetails.push({ title: section.title, sectionId: section.id, zone });
+            continue;
+          }
+
+          await prisma.section.update({
+            where: { id: section.id },
+            data: {
+              llmSection: resolvedZone,
+              llmConfidence: conf,
+              standardSection: resolvedZone,
+              confidence: conf,
+              classifiedBy: "llm_check",
+            },
+          });
+          updated++;
+        }
+
+        for (const [idx, section] of idxToSection) {
+          if (!seenIdx.has(idx)) {
+            logger.warn("LLM classify batch missed section", { idx, sectionId: section.id, title: section.title });
+            parseErrorDetails.push({
+              title: section.title,
+              sectionId: section.id,
+              reason: `batch_missed_idx:${idx}`,
+            });
           }
         }
       };
@@ -452,8 +569,19 @@ ${content || "(пусто)"}`;
         threshold: HIGH_CONFIDENCE_SKIP,
       });
 
+      // Разбиваем на batches и обрабатываем параллельно с concurrency LLM_CONCURRENCY.
+      const batches: CachedSection[][] = [];
+      for (let i = 0; i < sectionsToVerify.length; i += LLM_CHECK_BATCH_SIZE) {
+        batches.push(sectionsToVerify.slice(i, i + LLM_CHECK_BATCH_SIZE));
+      }
+      logger.info("LLM Check batched", {
+        sectionsToVerify: sectionsToVerify.length,
+        batches: batches.length,
+        batchSize: LLM_CHECK_BATCH_SIZE,
+      });
+
       await runWithConcurrency(
-        sectionsToVerify.map((s) => () => classifyOne(s)),
+        batches.map((b) => () => classifyBatch(b)),
         LLM_CONCURRENCY,
       );
 
