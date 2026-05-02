@@ -312,10 +312,308 @@ export async function runDeterministic(
 
 /* ═══════════════ Level 2: LLM Check (per-section discovery) ═══════════════ */
 
+/**
+ * Phase 3 fact-extraction roadmap: targeted LLM extraction.
+ *
+ * Instead of the broad per-section discovery prompt used by
+ * `runLlmCheck`, this pass iterates the fact registry and for each
+ * factKey finds the most relevant sections via BM25 (using
+ * `fact_anchors` RuleSet keywords as the query). For each top
+ * section, it issues a narrow "extract {factKey} or null" prompt.
+ *
+ * After the first pass, a gap-fill pass retries any factKey that
+ * came back empty, with a slightly higher temperature and a
+ * stricter "if not present, return null" instruction.
+ *
+ * Toggle via env `LLM_CHECK_MODE=targeted|broad` (broad = legacy).
+ */
+export async function runLlmCheckTargeted(
+  ctx: FactExtractionContext,
+  log: Logger,
+): Promise<FactExtractionResult> {
+  const llmConfig = await getEffectiveLlmConfig("fact_extraction_targeted", ctx.tenantId);
+  if (!llmConfig.apiKey) {
+    return { data: { message: "LLM API key not configured" } };
+  }
+
+  const sections = await prisma.section.findMany({
+    where: { docVersionId: ctx.docVersionId },
+    include: { contentBlocks: { orderBy: { order: "asc" } } },
+    orderBy: { order: "asc" },
+  });
+
+  const extractable = buildExtractableSections(
+    sections,
+    ctx.excludedSectionPrefixes ?? EXCLUDED_SECTION_PREFIXES,
+  );
+  if (extractable.length === 0) {
+    return { data: { message: "No extractable sections", extracted: 0 } };
+  }
+
+  const resolved = await loadRulesForType(ctx.bundleId, "fact_extraction");
+  const registryRules = (resolved?.rules ?? []).filter(
+    (r) => r.pattern !== "system_prompt",
+  );
+  if (registryRules.length === 0) {
+    return { data: { message: "No fact registry configured", extracted: 0 } };
+  }
+
+  const anchorsResolved = await loadRulesForType(ctx.bundleId, "fact_anchors");
+  const anchorByFactKey = new Map<string, { ru: string[]; en: string[] }>();
+  for (const r of anchorsResolved?.rules ?? []) {
+    const cfg = (r.config ?? {}) as { factKey?: string; keywords?: { ru?: string[]; en?: string[] } };
+    if (!cfg.factKey || !cfg.keywords) continue;
+    anchorByFactKey.set(cfg.factKey, {
+      ru: cfg.keywords.ru ?? [],
+      en: cfg.keywords.en ?? [],
+    });
+  }
+
+  const { Bm25Index } = await import("@clinscriptum/rules-engine");
+  const bm25 = new Bm25Index();
+  for (const s of extractable) bm25.add(s.id, `${s.title}\n${s.text}`);
+
+  const gateway = new LLMGateway({
+    provider: llmConfig.provider as LLMProvider,
+    model: llmConfig.model,
+    apiKey: llmConfig.apiKey,
+    baseUrl: llmConfig.baseUrl || undefined,
+    temperature: llmConfig.temperature,
+    thinkingEnabled: ctx.llmThinkingEnabled,
+    reasoningMode: llmConfig.reasoningMode,
+    timeoutMs: llmConfig.timeoutMs,
+  });
+
+  let totalTokens = 0;
+  let parseErrors = 0;
+  const recovered: string[] = [];
+  const allRaw: ExtractedFact[] = [];
+  const sectionById = new Map<string, SectionForExtraction>();
+  for (const s of extractable) sectionById.set(s.id, s);
+
+  const askForFact = async (
+    factKey: string,
+    section: SectionForExtraction,
+    temperature: number,
+  ): Promise<{ value: string | null; confidence: number; sourceText: string }> => {
+    const sys = `Ты — эксперт по клиническим протоколам. Извлеки одно значение по запросу.
+
+ПРАВИЛА:
+1. Если в тексте нет искомого факта, верни {"value": null, "confidence": 0, "source_text": ""}.
+2. value — конкретное значение, не пересказ.
+3. source_text — точная цитата (до 200 символов).
+4. confidence: 0.0–1.0.
+
+ФОРМАТ ОТВЕТА — только JSON: {"value":"...","confidence":0.9,"source_text":"..."}`;
+    const user = `НАЙДИ ФАКТ: ${factKey}
+
+РАЗДЕЛ: ${section.title}
+
+${section.text}`;
+    try {
+      const response = await gateway.generate({
+        system: sys,
+        messages: [{ role: "user", content: user }],
+        maxTokens: llmConfig.maxTokens,
+        responseFormat: "json",
+        temperature,
+      });
+      totalTokens += response.usage.totalTokens;
+      const cleaned = response.content
+        .replace(/<think>[\s\S]*?<\/think>/g, "")
+        .trim();
+      const m = cleaned.match(/\{[\s\S]*\}/);
+      if (!m) {
+        parseErrors++;
+        return { value: null, confidence: 0, sourceText: "" };
+      }
+      const parsed = JSON.parse(m[0]) as {
+        value?: string | null;
+        confidence?: number;
+        source_text?: string;
+      };
+      if (!parsed.value || !String(parsed.value).trim()) {
+        return { value: null, confidence: 0, sourceText: "" };
+      }
+      return {
+        value: String(parsed.value).trim().slice(0, 240),
+        confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.7,
+        sourceText: String(parsed.source_text ?? "").slice(0, 240),
+      };
+    } catch (err) {
+      parseErrors++;
+      log.warn("[facts:targeted] LLM error", {
+        factKey,
+        sectionId: section.id,
+        error: (err as Error).message,
+      });
+      return { value: null, confidence: 0, sourceText: "" };
+    }
+  };
+
+  // First pass: BM25 → top-3 sections per factKey, single targeted call each.
+  for (const rule of registryRules) {
+    const factKey = rule.pattern;
+    const cfg = (rule.config ?? {}) as { category?: string };
+    const category = cfg.category ?? "general";
+    const factClass: ExtractedFact["factClass"] =
+      category === "phase_specific" ? "phase_specific" : "general";
+
+    const anchors = anchorByFactKey.get(factKey);
+    const queryTerms = anchors
+      ? [...anchors.ru, ...anchors.en].join(" ")
+      : factKey.replace(/_/g, " ");
+    const hits = bm25.topK(queryTerms, 3);
+    for (const hit of hits) {
+      const section = sectionById.get(hit.docId);
+      if (!section) continue;
+      const out = await askForFact(factKey, section, llmConfig.temperature);
+      if (!out.value) continue;
+      allRaw.push({
+        factKey,
+        value: out.value,
+        factClass,
+        source: {
+          sectionTitle: section.title,
+          textSnippet: out.sourceText || section.text.slice(0, 240),
+          method: "llm",
+        },
+      });
+    }
+  }
+
+  // Gap-fill: any factKey not yet found, retry with T=0.3 against top-1
+  // section. The narrower temperature signals to the model that the
+  // answer is either present verbatim or absent.
+  const foundKeys = new Set(allRaw.map((f) => f.factKey));
+  for (const rule of registryRules) {
+    const factKey = rule.pattern;
+    if (foundKeys.has(factKey)) continue;
+    const anchors = anchorByFactKey.get(factKey);
+    const queryTerms = anchors
+      ? [...anchors.ru, ...anchors.en].join(" ")
+      : factKey.replace(/_/g, " ");
+    const hits = bm25.topK(queryTerms, 1);
+    if (hits.length === 0) continue;
+    const section = sectionById.get(hits[0].docId);
+    if (!section) continue;
+    const out = await askForFact(factKey, section, 0.3);
+    if (!out.value) continue;
+    const cfg = (rule.config ?? {}) as { category?: string };
+    const factClass: ExtractedFact["factClass"] =
+      cfg.category === "phase_specific" ? "phase_specific" : "general";
+    allRaw.push({
+      factKey,
+      value: out.value,
+      factClass,
+      source: {
+        sectionTitle: section.title,
+        textSnippet: out.sourceText || section.text.slice(0, 240),
+        method: "llm",
+      },
+    });
+    recovered.push(factKey);
+  }
+
+  const aggregated = aggregateByCanonical(allRaw);
+
+  // Persist as Fact rows; merge with existing deterministic rows by factKey.
+  const existingFacts = await prisma.fact.findMany({ where: { docVersionId: ctx.docVersionId } });
+  const existingByKey = new Map<string, typeof existingFacts[0]>();
+  for (const f of existingFacts) existingByKey.set(f.factKey, f);
+
+  const groupedByKey = new Map<string, AggregatedFact[]>();
+  for (const a of aggregated) {
+    const arr = groupedByKey.get(a.factKey) ?? [];
+    arr.push(a);
+    groupedByKey.set(a.factKey, arr);
+  }
+
+  let updatedCount = 0;
+  let newCount = 0;
+  for (const [factKey, facts] of groupedByKey) {
+    const best = facts.reduce((a, b) => (b.confidence > a.confidence ? b : a), facts[0]);
+    const variants: FactVariant[] = facts.flatMap((f) =>
+      f.sources.map((src) => ({
+        value: f.value,
+        confidence: f.confidence,
+        level: "llm_check" as const,
+        sourceText: src.textSnippet ?? "",
+        sectionTitle: src.sectionTitle ?? "",
+      })),
+    );
+    const existing = existingByKey.get(factKey);
+    if (existing) {
+      const existingVariants = Array.isArray(existing.variants)
+        ? (existing.variants as unknown as FactVariant[])
+        : [];
+      await prisma.fact.update({
+        where: { id: existing.id },
+        data: {
+          llmValue: best.value,
+          llmConfidence: best.confidence,
+          value: best.value,
+          confidence: best.confidence,
+          variants: [...existingVariants, ...variants] as any,
+        },
+      });
+      updatedCount++;
+    } else {
+      await prisma.fact.create({
+        data: {
+          docVersionId: ctx.docVersionId,
+          factKey,
+          factCategory: "general",
+          value: best.value,
+          canonicalValue: best.canonical,
+          sourceCount: facts.reduce((sum, f) => sum + f.sourceCount, 0),
+          confidence: best.confidence,
+          factClass: best.factClass,
+          sources: facts.flatMap((f) => f.sources) as any,
+          hasContradiction: false,
+          status: "extracted",
+          llmValue: best.value,
+          llmConfidence: best.confidence,
+          variants: variants as any,
+        },
+      });
+      newCount++;
+    }
+  }
+
+  log.info("[facts:targeted] Complete", {
+    factKeys: registryRules.length,
+    extracted: allRaw.length,
+    updated: updatedCount,
+    new: newCount,
+    gapFilled: recovered.length,
+    parseErrors,
+    tokens: totalTokens,
+  });
+
+  return {
+    data: {
+      mode: "targeted",
+      factKeys: registryRules.length,
+      extracted: allRaw.length,
+      updated: updatedCount,
+      newFacts: newCount,
+      gapFilled: recovered.length,
+      gapFilledKeys: recovered,
+      parseErrors,
+      totalTokens,
+    },
+    llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
+  };
+}
+
 export async function runLlmCheck(
   ctx: FactExtractionContext,
   log: Logger,
 ): Promise<FactExtractionResult> {
+  if ((process.env.LLM_CHECK_MODE ?? "broad").toLowerCase() === "targeted") {
+    return runLlmCheckTargeted(ctx, log);
+  }
   const llmConfig = await getEffectiveLlmConfig("fact_extraction", ctx.tenantId);
   if (!llmConfig.apiKey) {
     return { data: { message: "LLM API key not configured" } };

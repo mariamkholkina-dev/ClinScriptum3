@@ -7,6 +7,7 @@ export { detectContradictions } from "./contradiction-detector.js";
 export { extractFromTable, extractRawFromTable } from "./table-extractor.js";
 export type { TableAst } from "./table-extractor.js";
 export { factKeyForHeader, normalizeHeader } from "./dictionaries/tableHeaderSynonyms.js";
+export { Bm25Index, type Bm25Hit } from "./retrieval/bm25.js";
 export type { RuleSetConfig, SectionMappingRule, FactExtractionRule } from "./types.js";
 export type { ClassificationResult } from "./section-classifier.js";
 export type { ExtractedFact } from "./fact-extractor.js";

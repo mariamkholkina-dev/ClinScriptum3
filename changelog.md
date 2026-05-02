@@ -101,6 +101,22 @@ Verified: `npm test --workspace=@clinscriptum/api` → 151/151 passed на test-
 - **`renderTableMarkdown` (`packages/shared/src/utils/markdown.ts`)** — утиль рендера AST в pipe-Markdown с экранированием `|`. Готовится к подмешиванию в LLM-промпты Phase 4 (где table-блок надо подавать модели как разметку, а не CSV).
 - **13 новых тестов** для tableHeaderSynonyms + extractRawFromTable + extractFromTable. Все 291 тестов rules-engine зелёные.
 
+### Phase 3 spr.3 fact-extraction roadmap — anchor retrieval + targeted LLM
+
+Уход от «discovery по всему документу» к таргетным узким вопросам по каждому ключу из реестра. Снижает токен-стоимость и parseErrors при росте recall.
+
+- **`Bm25Index` (`packages/rules-engine/src/retrieval/bm25.ts`)** — чистый JS BM25 (~140 строк, без нативных зависимостей). Параметры по умолчанию k1=1.5, b=0.75. Использует `morphology.stemPhrase` + `tokenize` для препроцессинга (русские/английские словоформы collapse). API: `add(docId, text)`, `topK(query, k)`, `score(docId, queryTerms)`. 8 тестов на ранжирование, длину, морфологию, dedupe-by-id.
+- **`fact_anchors` RuleSet seed (`packages/db/src/seed-fact-anchors.ts`)** — 12 anchor-rule'ов (по одному на factKey: `study_title`, `protocol_number`, `sponsor`, `study_phase`, `indication`, `study_drug`, `sample_size`, `study_duration`, `primary_endpoint`, `secondary_endpoint`, `inclusion_criteria`, `exclusion_criteria`). Конфиг каждого правила: `{ factKey, keywords: { ru[], en[] }, weight }`. Глобальный (tenantId=null). Запускается через `seedFactAnchors(prisma)` из `@clinscriptum/db`.
+- **`runLlmCheckTargeted` (`packages/shared/src/fact-extraction-core.ts`)** — новая Level-2 функция. Алгоритм:
+  1. Собирает extractable-секции, строит BM25-индекс.
+  2. Для каждого `factKey` из реестра: query из anchor-keywords (ru+en) → BM25.topK(3) → 3 узких LLM-вызова "извлеки `<factKey>` или верни null" с `temperature` из task config (`fact_extraction_targeted`).
+  3. Gap-fill второй проход: factKey'и, по которым ничего не нашлось, ретраются с T=0.3 на top-1 секции — стабильнее закрывает «есть/нет в тексте» дилемму.
+  4. Все raw matches проходят `aggregateByCanonical`, мерджатся в Fact-строки (update existing если deterministic уже создал, иначе create новые).
+- **Feature flag `LLM_CHECK_MODE`** — `targeted` переключает `runLlmCheck` на `runLlmCheckTargeted`, `broad` (default) сохраняет legacy-поведение для канареечного раскатывания.
+- **Task `fact_extraction_targeted`** в `llm-config-resolver.ts` — `maxTokens=1024` (узкие ответы), `maxInputTokens=8000` (одна секция максимум), переопределяемо через env / DB tenant config.
+- **`chunkWithOverlap` (`packages/shared/src/utils/chunking.ts`)** — sliding-window утиль (size=8000, overlap=1000 по умолчанию) с предпочтением break'а на whitespace в последних 10% окна. Готовится к подмешиванию в `runLlmCheckTargeted` для over-budget секций. 6 тестов.
+- **35 новых тестов** (BM25 + chunking). Все 326 тестов rules-engine зелёные.
+
 ## 2026-05-01
 
 ### PR-3 спринта качества классификации: Sprint 0 mitigation + UI fixes
