@@ -99,14 +99,14 @@ describe("SectionClassifier", () => {
       expect(result.standardSection).toBe("ethics");
     });
 
-    it("classifies 'Schedule of Assessments' as schedule_of_assessments", () => {
+    it("classifies 'Schedule of Assessments' as visit_schedule", () => {
       const result = classifier.classify("Schedule of Assessments");
-      expect(result.standardSection).toBe("schedule_of_assessments");
+      expect(result.standardSection).toBe("visit_schedule");
     });
 
-    it("classifies 'SOA' as schedule_of_assessments", () => {
+    it("classifies 'SOA' as visit_schedule", () => {
       const result = classifier.classify("SOA");
-      expect(result.standardSection).toBe("schedule_of_assessments");
+      expect(result.standardSection).toBe("visit_schedule");
     });
 
     it("classifies 'References' as references", () => {

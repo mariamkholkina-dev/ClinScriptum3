@@ -41,26 +41,26 @@ const ZONE_AFFINITY_MAP: [string, string][] = [
   ["synopsis", "efficacy_assessments"],
   ["synopsis", "safety_assessments"],
   ["synopsis", "statistics"],
-  ["synopsis", "schedule_of_assessments"],
+  ["synopsis", "visit_schedule"],
   // Objectives ↔ endpoints / statistics
   ["study_objectives", "efficacy_assessments"],
   ["study_objectives", "statistics"],
   // Endpoints ↔ statistics / SoA
   ["efficacy_assessments", "statistics"],
-  ["efficacy_assessments", "schedule_of_assessments"],
+  ["efficacy_assessments", "visit_schedule"],
   // Design ↔ SoA / population
-  ["study_design", "schedule_of_assessments"],
+  ["study_design", "visit_schedule"],
   ["study_design", "study_population"],
   ["study_design", "appendices"],
   // Safety ↔ treatments / SoA / population / ethics
   ["safety_assessments", "treatments"],
-  ["safety_assessments", "schedule_of_assessments"],
+  ["safety_assessments", "visit_schedule"],
   ["safety_assessments", "study_population"],
   ["safety_assessments", "ethics"],
   // Population ↔ statistics
   ["study_population", "statistics"],
   // Treatments ↔ SoA
-  ["treatments", "schedule_of_assessments"],
+  ["treatments", "visit_schedule"],
 ];
 
 function detectCrossCheckPairs(
