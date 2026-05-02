@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-05-03
+
+### Спринт 1 SoA footnotes (commit 2/7): inline-маркеры и определения сносок — pure-функции
+
+`packages/doc-parser/src/cell-markers.ts` (новый модуль). Три pure-функции, без зависимости от mammoth/Prisma — чисто работают со строками HTML:
+
+- **`extractCellMarkers(rawCellHtml)`** — возвращает `{cleanText, markers[]}`. Извлекает маркеры из:
+  - `<sup>...</sup>` (любой токен внутри, поддержка через запятую `<sup>1,2</sup>`);
+  - Unicode-надстрочных `¹²³⁰⁴⁵⁶⁷⁸⁹` (карта U+00B9 / U+00B2 / U+00B3 + U+2070..U+2079);
+  - символов `*†‡§¶#` в любом месте текста;
+  - чисел в скобках `(1)..(N)` где N≤30;
+  - HTML-entities (`&dagger;` → `†` и т.п.);
+  - стандалонной цифры в ячейке (`1`, `1.`) — вся ячейка трактуется как footnote-only.
+  Цифры в обычном тексте без контекста (`Day 1`) маркером **не считаются** — это ключевая эвристика.
+
+- **`extractFootnoteDefinitions(htmlBlockAfterTable)`** — парсит блок «Примечание:» под таблицей. Поддержка разделителей `):.\-–—\s+` (включая en-dash `–` U+2013 и em-dash `—` U+2014, что критично для русских протоколов: `* — по показаниям`, `1 – до введения...`). Whitelist маркеров — только `*†‡§¶#` или `1..30`; глоссарий аббревиатур (`ТЗ – телефонный звонок`, `MFI-20 (...) - ...`) автоматически отсеивается. Дубликаты маркера в одном блоке — берётся первый, второй пропускается с `console.warn`.
+
+- **`linkAnchorsToFootnotes(pendingAnchors, definitions)`** — резолвит маркеры якорей в итоговые `SoaFootnote`-объекты. Определения идут первыми (preserve order), маркеры якорей без определения добавляются потом как «orphan» c `text=""`.
+
+`packages/doc-parser/src/index.ts` — re-export новых функций и типов.
+
+Тесты: `packages/doc-parser/src/__tests__/cell-markers.test.ts` — 36 тестов (19 для extractCellMarkers, 12 для extractFootnoteDefinitions, 5 для linkAnchorsToFootnotes), включая Unicode, HTML-entities, дубликаты, em-dash, фильтр глоссария. Все 132 теста doc-parser зелёные.
+
 ## 2026-05-02
 
 ### Спринт 1 SoA footnotes (commit 1/7): нормализованная модель сносок — schema + migration
