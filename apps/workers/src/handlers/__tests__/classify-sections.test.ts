@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@clinscriptum/db", () => ({
   prisma: {
     section: { update: vi.fn() },
+    classificationFewShot: { findMany: vi.fn().mockResolvedValue([]) },
   },
   loadRulesForType: vi.fn(),
   snapshotRules: vi.fn().mockReturnValue({}),

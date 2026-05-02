@@ -16,9 +16,10 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users   User[]
-  studies Study[]
-  config  TenantConfig?
+  users                  User[]
+  studies                Study[]
+  config                 TenantConfig?
+  classificationFewShots ClassificationFewShot[]
 
   @@map("tenants")
 }
@@ -64,6 +65,7 @@ model User {
   correctionRecommendations CorrectionRecommendation[] @relation("RecommendationReviewer")
   approvalRequests          ApprovalRequest[]          @relation("ApprovalRequester")
   approvalReviews           ApprovalRequest[]          @relation("ApprovalReviewer")
+  classificationFewShots    ClassificationFewShot[]    @relation("ClassificationFewShotCreator")
 
   @@index([tenantId])
   @@map("users")
@@ -1201,4 +1203,43 @@ enum ApprovalStatus {
   pending
   approved
   rejected
+}
+
+// Sprint 5.1: utверждённые экспертом примеры классификации.
+// Используются как few-shot inject в LLM Check (Sprint 5.2) — top-K похожих
+// (по standardSection или эмбеддингу) подмешиваются в систем-промпт.
+//
+// Создаются обычно из реального quick-fix flow в diff overlay: «принять как
+// эталонный пример» → запись с title/parentPath/zone сохраняется. Также
+// можно вручную создать через UI /few-shots в rule-admin.
+model ClassificationFewShot {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  // Заголовок секции — главный матчинг ключ для similarity.
+  title           String
+  // Иерархический контекст: путь parent-titles от корня до этой секции.
+  // Помогает LLM различать дубликаты titles в разных частях документа.
+  parentPath      String?  @map("parent_path")
+  // Опциональный preview содержимого (до 500 chars) — расширяет контекст.
+  contentPreview  String?  @map("content_preview")
+  // Правильная zone (canonical key из taxonomy).
+  standardSection String   @map("standard_section")
+  // Объяснение почему именно эта zone — добавляется в промпт «по причине».
+  reason          String?
+  // Soft-delete: false → не подмешивается в промпт, но история сохраняется.
+  isActive        Boolean  @default(true) @map("is_active")
+
+  // Опциональная связь с исходной секцией (для traceability).
+  sourceSectionId String?  @map("source_section_id") @db.Uuid
+
+  createdById     String   @map("created_by_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User   @relation("ClassificationFewShotCreator", fields: [createdById], references: [id])
+
+  @@index([tenantId, isActive])
+  @@index([tenantId, standardSection])
+  @@map("classification_few_shots")
 }

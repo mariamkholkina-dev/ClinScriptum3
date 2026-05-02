@@ -38,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Сравнение LLM", href: "/llm-comparison", icon: <GitCompare size={20} /> },
   { label: "Расхождения", href: "/disagreements", icon: <AlertTriangle size={20} /> },
   { label: "Корректировки", href: "/corrections", icon: <PenLine size={20} /> },
+  { label: "Эталонные примеры", href: "/few-shots", icon: <BookOpen size={20} /> },
   { label: "Правила и промпты", href: "/rules", icon: <BookOpen size={20} /> },
   { label: "Аудит обработок", href: "/audit", icon: <ClipboardList size={20} /> },
   { label: "Бандлы конфигурации", href: "/bundles", icon: <Package size={20} /> },

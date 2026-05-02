@@ -103,6 +103,47 @@ E2E-тест для нового UI не добавлен в этом комми
 
 Тесты: `packages/doc-parser/src/__tests__/cell-markers.test.ts` — 36 тестов (19 для extractCellMarkers, 12 для extractFootnoteDefinitions, 5 для linkAnchorsToFootnotes), включая Unicode, HTML-entities, дубликаты, em-dash, фильтр глоссария. Все 132 теста doc-parser зелёные.
 
+### Sprint 5.2 + 5.3 — few-shot inject в LLM Check + eval-метрика
+
+`apps/workers/src/handlers/classify-sections.ts`, `apps/workers/src/handlers/run-evaluation.ts`, `apps/workers/src/handlers/__tests__/{classify-sections,run-evaluation}.test.ts`.
+
+**5.2 — Few-shot inject в LLM Check.** Перед каждым batch LLM Check загружаются активные `ClassificationFewShot` tenant'а (top-`FEWSHOT_MAX_PER_PROMPT=100` по `createdAt desc`) и добавляются в систем-промпт блоком «ДОПОЛНИТЕЛЬНЫЕ ПРИМЕРЫ ОТ ЭКСПЕРТА (имеют приоритет)»:
+
+```
+1. "Препарат сравнения" (путь: 5. Изучаемый препарат) → ip.comparator — отдельная subzone
+2. "Шкалы и опросники" → appendix.scales_and_questionnaires — в приложениях
+...
+```
+
+Если store пуст — блок пустой, поведение идентично pre-Sprint 5. Hardcoded few-shot из seed-prompts.ts оставлены как baseline.
+
+**5.3 — Eval-метрика few-shot observability.** `run-evaluation` handler после расчёта `metrics` загружает active few-shots tenant'а и добавляет в `metrics.fewShots`:
+```json
+{
+  "activeCount": 14,
+  "zonesCovered": 9,
+  "byZone": { "ip.comparator": 3, "procedures.lifestyle": 2, ... }
+}
+```
+Помогает понять покрытие zones примерами при interpretation baseline diff'ов.
+
+### Sprint 5.1 + 5.4 — хранение эталонных примеров классификации + UI
+
+`packages/db/prisma/schema.prisma` (model `ClassificationFewShot` + миграция `20260503000000_add_classification_few_shots`), `apps/api/src/services/few-shot.service.ts`, `apps/api/src/routers/few-shot.ts`, `apps/rule-admin/src/app/(app)/few-shots/page.tsx`.
+
+**5.1 — Storage:**
+- Новая Prisma model `ClassificationFewShot` (tenant-isolated): `title`, `parentPath?`, `contentPreview?`, `standardSection`, `reason?`, `isActive`, `sourceSectionId?`, `createdById`. Indexes на `(tenant_id, is_active)` и `(tenant_id, standard_section)` для быстрого top-K lookup.
+- `fewShotService` с CRUD методами: `create`, `list` (с курсорной пагинацией), `get` (tenant-isolation guard), `update`, `delete`, `listActive` (для будущего LLM Check inject в Sprint 5.2).
+- tRPC router `fewShot` с endpoints `list/get/create/update/delete` под `qualityProcedure` (требует rule_admin/rule_approver/tenant_admin).
+
+**5.4 — UI `/few-shots`:**
+- Страница в rule-admin (`/few-shots`) — CRUD управление примерами. Фильтры по zone и активности.
+- Inline-редактор в модалке: title, parentPath, standardSection (group-select по zone/subzone), reason, contentPreview (≤500 chars), isActive flag.
+- Список с breadcrumb (parentPath), zone в моноширинном шрифте, причиной курсивом, превью контента в две строки.
+- Toggle активности per-item кнопкой (без открытия редактора). Hard-delete с подтверждением.
+
+Sprint 5.2 (подмешивание few-shot в LLM Check) и 5.3 (eval-метрика) пойдут отдельным PR-B после merge.
+
 ## 2026-05-02
 
 ### Спринт 1 SoA footnotes (commit 1/7): нормализованная модель сносок — schema + migration

@@ -25,6 +25,7 @@ vi.mock("@clinscriptum/db", () => ({
     goldenSample: { findMany: goldenFindMany },
     section: { findMany: sectionFindMany },
     fact: { findMany: factFindMany },
+    classificationFewShot: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

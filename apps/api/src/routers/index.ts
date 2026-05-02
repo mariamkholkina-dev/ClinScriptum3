@@ -16,6 +16,7 @@ import { goldenDatasetRouter } from "./golden-dataset.js";
 import { evaluationRouter } from "./evaluation.js";
 import { qualityRouter } from "./quality.js";
 import { bundleRouter } from "./bundle.js";
+import { fewShotRouter } from "./few-shot.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -35,6 +36,7 @@ export const appRouter = router({
   evaluation: evaluationRouter,
   quality: qualityRouter,
   bundle: bundleRouter,
+  fewShot: fewShotRouter,
 });
 
 export type AppRouter = typeof appRouter;
