@@ -1311,6 +1311,18 @@ export default function ClassificationTreeViewer({
     focusedRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [focusedIdx]);
 
+  // Синхронизация focusedIdx с activeSectionId. Используется кнопкой "Перейти"
+  // в DiffOverlay: setActiveSectionId(id) сам по себе не двигает focusedIdx,
+  // и scrollIntoView выше зависит от focusedIdx. Этот effect ловит изменение
+  // activeSectionId и переустанавливает focusedIdx → scroll triggered.
+  useEffect(() => {
+    if (!activeSectionId) return;
+    const idx = visibleSections.findIndex((s) => s.id === activeSectionId);
+    if (idx >= 0 && idx !== focusedIdx) {
+      setFocusedIdx(idx);
+    }
+  }, [activeSectionId, visibleSections, focusedIdx]);
+
   /* ── Loading ── */
   if (q.isLoading) {
     return (
