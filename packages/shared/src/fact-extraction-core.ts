@@ -9,10 +9,11 @@
  */
 
 import { prisma, loadRulesForType, snapshotRules, getEffectiveLlmConfig, toConfigSnapshot, getInputBudgetChars } from "@clinscriptum/db";
-import { RulesEngine, detectContradictions, toFactExtractionRules, extractRawFromTable, aggregateByCanonical } from "@clinscriptum/rules-engine";
+import { RulesEngine, detectContradictions, toFactExtractionRules, extractRawFromTable, aggregateByCanonical, canonicalize } from "@clinscriptum/rules-engine";
 import type { ExtractedFact, AggregatedFact, TableAst } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
+import { parseLlmJson, findJsonSpan, TargetedFactSchema } from "./utils/llm-json.js";
 
 export const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "ip.preclinical_clinical_data"];
 export const LOW_CONFIDENCE_THRESHOLD = 0.6;
@@ -141,20 +142,24 @@ function groupRelatedSections(
 function parseLlmJsonArray(raw: string): unknown[] | null {
   const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   if (/не могу обсуждать|давайте поговорим|не могу помочь с этим/i.test(cleaned)) return null;
-  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-  if (arrayMatch) {
-    try { return JSON.parse(arrayMatch[0]); } catch { /* fall through */ }
-  }
-  const objMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (!objMatch) return null;
+  // Phase 4: balanced bracket scan (instead of greedy regex) handles
+  // nested JSON inside source_text properly.
+  const span = findJsonSpan(cleaned);
+  if (!span) return null;
   try {
-    const obj = JSON.parse(objMatch[0]);
-    if (Array.isArray(obj.facts)) return obj.facts;
-    if (Array.isArray(obj.new_facts)) return obj.new_facts;
-    if (Array.isArray(obj.results)) return obj.results;
-    if (obj.fact_key) return [obj];
+    const parsed = JSON.parse(span);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      if (Array.isArray(obj.facts)) return obj.facts;
+      if (Array.isArray(obj.new_facts)) return obj.new_facts;
+      if (Array.isArray(obj.results)) return obj.results;
+      if (obj.fact_key) return [obj];
+    }
     return null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -419,26 +424,24 @@ ${section.text}`;
         temperature,
       });
       totalTokens += response.usage.totalTokens;
-      const cleaned = response.content
-        .replace(/<think>[\s\S]*?<\/think>/g, "")
-        .trim();
-      const m = cleaned.match(/\{[\s\S]*\}/);
-      if (!m) {
+      const result = parseLlmJson(response.content, TargetedFactSchema);
+      if (!result.ok) {
         parseErrors++;
+        log.warn("[facts:targeted] Parse error", {
+          factKey,
+          sectionId: section.id,
+          error: result.error,
+        });
         return { value: null, confidence: 0, sourceText: "" };
       }
-      const parsed = JSON.parse(m[0]) as {
-        value?: string | null;
-        confidence?: number;
-        source_text?: string;
-      };
-      if (!parsed.value || !String(parsed.value).trim()) {
+      const data = result.data;
+      if (!data.value || !data.value.trim()) {
         return { value: null, confidence: 0, sourceText: "" };
       }
       return {
-        value: String(parsed.value).trim().slice(0, 240),
-        confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.7,
-        sourceText: String(parsed.source_text ?? "").slice(0, 240),
+        value: data.value.trim().slice(0, 240),
+        confidence: data.confidence ?? 0,
+        sourceText: (data.source_text ?? "").slice(0, 240),
       };
     } catch (err) {
       parseErrors++;
@@ -449,6 +452,50 @@ ${section.text}`;
       });
       return { value: null, confidence: 0, sourceText: "" };
     }
+  };
+
+  const CRITICAL_KEYS = new Set(
+    (process.env.LLM_FACT_CRITICAL_KEYS ?? "study_drug,sample_size,primary_endpoint,study_phase")
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean),
+  );
+  const SELF_CONSISTENCY_THRESHOLD = 0.7;
+
+  /** Self-consistency: 3 calls at T=0.3, majority vote by canonical form. */
+  const askForFactWithConsistency = async (
+    factKey: string,
+    section: SectionForExtraction,
+  ): Promise<ReturnType<typeof askForFact>> => {
+    const single = await askForFact(factKey, section, llmConfig.temperature);
+    if (!single.value || single.confidence >= SELF_CONSISTENCY_THRESHOLD) return single;
+    if (!CRITICAL_KEYS.has(factKey)) return single;
+    const samples = [single];
+    for (let i = 0; i < 2; i++) {
+      const s = await askForFact(factKey, section, 0.3);
+      if (s.value) samples.push(s);
+    }
+    if (samples.length < 2) return single;
+    const counts = new Map<string, { sample: typeof single; count: number }>();
+    for (const s of samples) {
+      if (!s.value) continue;
+      const { canonical } = canonicalize(factKey, s.value);
+      const entry = counts.get(canonical) ?? { sample: s, count: 0 };
+      entry.count++;
+      counts.set(canonical, entry);
+    }
+    let bestCanonical: string | null = null;
+    let bestCount = 0;
+    for (const [c, e] of counts) {
+      if (e.count > bestCount) {
+        bestCount = e.count;
+        bestCanonical = c;
+      }
+    }
+    if (!bestCanonical) return single;
+    const winner = counts.get(bestCanonical)!.sample;
+    const boost = Math.min(0.95, winner.confidence + 0.1 * (bestCount - 1));
+    return { ...winner, confidence: boost };
   };
 
   // First pass: BM25 → top-3 sections per factKey, single targeted call each.
@@ -467,7 +514,7 @@ ${section.text}`;
     for (const hit of hits) {
       const section = sectionById.get(hit.docId);
       if (!section) continue;
-      const out = await askForFact(factKey, section, llmConfig.temperature);
+      const out = await askForFactWithConsistency(factKey, section);
       if (!out.value) continue;
       allRaw.push({
         factKey,
@@ -902,9 +949,26 @@ export async function runLlmQa(
 
   const qaInputBudget = getInputBudgetChars(llmConfig);
 
+  // Phase 4: scope context to only sections that produced one of the
+  // facts under review. Falls back to the legacy whole-doc snippet if
+  // no variant carries a sectionId (older facts).
+  const referencedSectionIds = new Set<string>();
+  for (const f of toCheck) {
+    const variants = Array.isArray(f.variants) ? (f.variants as unknown as FactVariant[]) : [];
+    for (const v of variants) {
+      if (v.sectionId) referencedSectionIds.add(v.sectionId);
+    }
+  }
+
   const qaPrefixes = ctx.excludedSectionPrefixes ?? EXCLUDED_SECTION_PREFIXES;
-  const docSnippet = sections
-    .filter((s) => !s.standardSection || !qaPrefixes.some((p) => s.standardSection!.startsWith(p)))
+  const filteredSections = sections.filter(
+    (s) => !s.standardSection || !qaPrefixes.some((p) => s.standardSection!.startsWith(p)),
+  );
+  const scopedSections =
+    referencedSectionIds.size > 0
+      ? filteredSections.filter((s) => referencedSectionIds.has(s.id))
+      : filteredSections;
+  const docSnippet = scopedSections
     .map((s) => `[${s.title}]\n${s.contentBlocks.map((b) => b.content).join("\n")}`)
     .join("\n")
     .slice(0, qaInputBudget);

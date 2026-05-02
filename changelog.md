@@ -117,6 +117,17 @@ Verified: `npm test --workspace=@clinscriptum/api` → 151/151 passed на test-
 - **`chunkWithOverlap` (`packages/shared/src/utils/chunking.ts`)** — sliding-window утиль (size=8000, overlap=1000 по умолчанию) с предпочтением break'а на whitespace в последних 10% окна. Готовится к подмешиванию в `runLlmCheckTargeted` для over-budget секций. 6 тестов.
 - **35 новых тестов** (BM25 + chunking). Все 326 тестов rules-engine зелёные.
 
+### Phase 4 spr.4 fact-extraction roadmap — LLM prompt quality
+
+Устраняем хрупкость LLM-вызовов: жёсткая валидация, осознание неопределённости через self-consistency, фокусированный QA-контекст.
+
+- **`parseLlmJson` + Zod (`packages/shared/src/utils/llm-json.ts`)** — стек-сканер балансированных скобок (`findJsonSpan`) заменяет greedy `[\s\S]*]`-regex, корректно обрабатывая JSON со вложенными `[`/`{` внутри `source_text`. Парсер возвращает `{ ok: true, data } | { ok: false, error }` с детализацией ZodError. Готовые схемы: `FactExtractionItemSchema`, `FactExtractionArraySchema`, `TargetedFactSchema`. Strip'ит `<think>` блоки и detect'ит refusal-паттерны (`не могу обсуждать`...).
+- **`parseLlmJsonArray` использует `findJsonSpan`** — старый regex-based extractor в `runLlmCheck` теперь идёт через стек-сканер; падения на JSON со вложенными скобками внутри строк (характерно для `source_text` с цитатами эндпойнтов) ушли.
+- **`runLlmCheckTargeted` валидирует через Zod** — каждая ответ-JSON-payload проходит `TargetedFactSchema`, в случае mismatch'а пишется warning с детализацией zod-ошибки в `processingRun.metadata`.
+- **Self-consistency для critical keys** — для `study_drug`, `sample_size`, `primary_endpoint`, `study_phase` (override через env `LLM_FACT_CRITICAL_KEYS`): если single-shot confidence `< 0.7`, делаются 2 дополнительных вызова с `T=0.3`, majority по `canonicalize`. Confidence boostится на `0.1·(votes-1)`, capped в 0.95.
+- **QA scope per-section** — `runLlmQa` теперь собирает `referencedSectionIds` из `variants[].sectionId` всех проверяемых фактов, и грузит в context только эти секции (вместо `docSnippet.slice(0, qaInputBudget)` по всему документу). Если ни один variant не имеет `sectionId` (legacy data) — fallback на whole-doc.
+- **16 новых тестов** для llm-json (findJsonSpan + parseLlmJson). Все 347 тестов rules-engine зелёные.
+
 ## 2026-05-01
 
 ### PR-3 спринта качества классификации: Sprint 0 mitigation + UI fixes

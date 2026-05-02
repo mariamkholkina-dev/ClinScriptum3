@@ -11,3 +11,13 @@ export * from "./types/processing-events.js";
 export { asyncContext, getRequestContext, getCorrelationId, type RequestContext } from "./context.js";
 export { renderTableMarkdown, type TableAstLike } from "./utils/markdown.js";
 export { chunkWithOverlap, type ChunkOptions } from "./utils/chunking.js";
+export {
+  parseLlmJson,
+  findJsonSpan,
+  FactExtractionItemSchema,
+  FactExtractionArraySchema,
+  TargetedFactSchema,
+  type ParseResult,
+  type FactExtractionItem,
+  type TargetedFact,
+} from "./utils/llm-json.js";
