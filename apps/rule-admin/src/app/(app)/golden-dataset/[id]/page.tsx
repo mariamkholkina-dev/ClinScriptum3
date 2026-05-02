@@ -1022,7 +1022,19 @@ function LlmConfigPanel({ versionId, stageKey }: { versionId: string; stageKey: 
   );
 }
 
-function StageDataViewer({ stageKey, versionIds, expectedResults }: { stageKey: string; versionIds: string[]; expectedResults?: unknown }) {
+function StageDataViewer({
+  stageKey,
+  versionIds,
+  expectedResults,
+  goldenSampleId,
+  currentStatus,
+}: {
+  stageKey: string;
+  versionIds: string[];
+  expectedResults?: unknown;
+  goldenSampleId: string;
+  currentStatus: string;
+}) {
   if (versionIds.length === 0) {
     return <EmptyMsg text="Добавьте документы, чтобы увидеть результаты обработки." />;
   }
@@ -1032,7 +1044,15 @@ function StageDataViewer({ stageKey, versionIds, expectedResults }: { stageKey: 
     case "parsing":
       return <ParsingTreeViewer versionId={vid} expectedResults={expectedResults} />;
     case "classification":
-      return <ClassificationTreeViewer versionId={vid} expectedResults={expectedResults} />;
+      return (
+        <ClassificationTreeViewer
+          versionId={vid}
+          expectedResults={expectedResults}
+          goldenSampleId={goldenSampleId}
+          stageKey={stageKey}
+          stageStatus={currentStatus}
+        />
+      );
     case "extraction":
       return <ExtractionViewer versionId={vid} expectedResults={expectedResults} />;
     case "soa":
@@ -1421,7 +1441,13 @@ function StagePanel({
       {/* Actual Processing Results */}
       <div>
         <h4 className="mb-3 text-sm font-semibold text-gray-700">Результаты обработки</h4>
-        <StageDataViewer stageKey={stageKey} versionIds={documentVersionIds} expectedResults={stageStatus?.expectedResults} />
+        <StageDataViewer
+          stageKey={stageKey}
+          versionIds={documentVersionIds}
+          expectedResults={stageStatus?.expectedResults}
+          goldenSampleId={goldenSampleId}
+          currentStatus={currentStatus}
+        />
       </div>
 
       {/* LLM Config Info */}

@@ -168,8 +168,18 @@ interface DiffOverlayProps {
   sections: Section[];
   /** Опции taxonomy для inline-select правки. */
   taxonomyOptions: Array<{ value: string; label: string; type: string }>;
-  /** Мутация: применить standardSection к секции (validated). */
-  onQuickFix: (sectionId: string, newStandardSection: string | null) => void;
+  /**
+   * Quick-fix мутация. Логика по типу:
+   *   - wrong_section: обновить Section.standardSection + upsert в expected_results
+   *   - extra: добавить запись в expected_results (опционально изменить standardSection)
+   *   - missing: удалить запись из expected_results (sectionId=null, newZone=null)
+   */
+  onQuickFix: (params: {
+    diffType: DiffEntry["type"];
+    sectionId: string | null;
+    sectionTitle: string;
+    newZone: string | null;
+  }) => void;
   /** Прыжок к строке в основной структуре: фокус + scroll. */
   onJumpToSection: (sectionId: string) => void;
   /** Идёт ли мутация — для disable кнопок. */
@@ -190,7 +200,10 @@ function ClassificationDiffOverlay({
     return m;
   }, [sections]);
 
-  // Локальный state per-row select — initial value = expected (если есть) или actual.
+  // Локальный state per-row select — initial value по типу:
+  //   wrong_section: expected.standardSection (предложение эксперта)
+  //   extra: actual.standardSection (предлагаем принять как есть)
+  //   missing: expected.standardSection (что эксперт изначально ожидал)
   const [pendingZones, setPendingZones] = useState<Map<string, string>>(new Map());
 
   if (entries.length === 0) {
@@ -207,6 +220,20 @@ function ClassificationDiffOverlay({
 
   const getRowKey = (e: DiffEntry, idx: number) => `${e.type}:${e.sectionTitle}:${idx}`;
 
+  // Дефолтное предложение для select — то что эксперту скорее всего захочется применить.
+  const getSuggestedZone = (e: DiffEntry, matched: Section | undefined): string => {
+    if (e.type === "wrong_section") return e.expected?.standardSection ?? matched?.standardSection ?? "";
+    if (e.type === "extra") return e.actual?.standardSection ?? matched?.standardSection ?? "";
+    /* missing */ return e.expected?.standardSection ?? "";
+  };
+
+  // Подпись и tooltip кнопки «Применить» зависят от типа entry.
+  const getApplyLabel = (e: DiffEntry): { label: string; title: string } => {
+    if (e.type === "wrong_section") return { label: "Применить", title: "Обновить Section.standardSection и эталон" };
+    if (e.type === "extra") return { label: "Принять в эталон", title: "Добавить эту секцию в expected_results JSON" };
+    /* missing */ return { label: "Удалить из эталона", title: "Удалить запись из expected_results JSON" };
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex gap-3 text-xs font-medium">
@@ -219,12 +246,12 @@ function ClassificationDiffOverlay({
         {entries.map((e, i) => {
           const rowKey = getRowKey(e, i);
           const matchedSection = titleToSection.get(e.sectionTitle.trim().toLowerCase());
-          // Default suggestion: expected zone (если есть). Inline editor существует только
-          // когда есть actual section — иначе нечего править.
-          const suggestedZone =
-            e.expected?.standardSection ?? matchedSection?.standardSection ?? "";
+          const suggestedZone = getSuggestedZone(e, matchedSection);
           const currentValue = pendingZones.get(rowKey) ?? suggestedZone;
-          const canQuickFix = !!matchedSection;
+          const applyMeta = getApplyLabel(e);
+          // Для missing select-editor не нужен (нечего выбирать — мы удаляем запись из эталона).
+          // Для extra/wrong_section — select предлагает варианты, кнопка всегда активна.
+          const showSelect = e.type !== "missing";
 
           return (
             <div
@@ -260,16 +287,16 @@ function ClassificationDiffOverlay({
                   )}
                   {e.type === "extra" && e.actual && (
                     <div className="mt-0.5 text-gray-500">
-                      получено «{e.actual.standardSection ?? "—"}»
+                      получено «{e.actual.standardSection ?? "—"}» (нет в эталоне)
                     </div>
                   )}
                   {e.type === "missing" && e.expected && (
                     <div className="mt-0.5 text-gray-500">
-                      ожидалось «{e.expected.standardSection ?? "—"}»
+                      ожидалось «{e.expected.standardSection ?? "—"}» (нет в документе)
                     </div>
                   )}
                 </div>
-                {canQuickFix && (
+                {matchedSection && (
                   <button
                     type="button"
                     onClick={() => onJumpToSection(matchedSection.id)}
@@ -281,8 +308,8 @@ function ClassificationDiffOverlay({
                 )}
               </div>
 
-              {canQuickFix && (
-                <div className="mt-2 flex items-center gap-1.5">
+              <div className="mt-2 flex items-center gap-1.5">
+                {showSelect && (
                   <select
                     value={currentValue}
                     onChange={(ev) => {
@@ -303,22 +330,26 @@ function ClassificationDiffOverlay({
                       </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newZone = currentValue === "" ? null : currentValue;
-                      // Sanity: skip no-op
-                      if (newZone === matchedSection.standardSection) return;
-                      onQuickFix(matchedSection.id, newZone);
-                    }}
-                    disabled={fixPending || currentValue === (matchedSection.standardSection ?? "")}
-                    className="shrink-0 rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-                    title="Применить к секции (validated)"
-                  >
-                    Применить
-                  </button>
-                </div>
-              )}
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    onQuickFix({
+                      diffType: e.type,
+                      sectionId: matchedSection?.id ?? null,
+                      sectionTitle: e.sectionTitle,
+                      newZone: e.type === "missing" ? null : (currentValue === "" ? null : currentValue),
+                    })
+                  }
+                  disabled={fixPending}
+                  className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium text-white disabled:opacity-50 ${
+                    e.type === "missing" ? "bg-red-600 hover:bg-red-700" : "bg-brand-600 hover:bg-brand-700"
+                  }`}
+                  title={applyMeta.title}
+                >
+                  {applyMeta.label}
+                </button>
+              </div>
             </div>
           );
         })}
@@ -1071,9 +1102,17 @@ function SectionTreeRow({
 export default function ClassificationTreeViewer({
   versionId,
   expectedResults,
+  goldenSampleId,
+  stageKey = "classification",
+  stageStatus = "draft",
 }: {
   versionId: string;
   expectedResults?: unknown;
+  /** Опционально (раньше viewer использовался без golden-sample context) — нужен для quick-fix
+      обновления expected_results JSON. Если не передан — quick-fix меняет только Section. */
+  goldenSampleId?: string;
+  stageKey?: string;
+  stageStatus?: string;
 }) {
   const q = trpc.document.getVersion.useQuery(
     { versionId },
@@ -1183,6 +1222,88 @@ export default function ClassificationTreeViewer({
       });
     },
     [updateClassification],
+  );
+
+  // Мутация обновления expected_results JSON (для extra/missing в diff overlay).
+  // Используется когда нужно добавить/изменить/удалить запись секции в эталоне,
+  // а не только её standardSection в БД.
+  const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
+    onSuccess: () => {
+      // Перепроверяем sample целиком чтобы page.tsx state и StagePanel synced
+      if (goldenSampleId) {
+        utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
+      }
+    },
+  });
+
+  // Quick-fix для строки diff overlay. Принимает sectionId (если есть в БД),
+  // sectionTitle и newZone. Логика по типу entry:
+  //  - extra: section в БД, нет в expected → upsert в expected.sections[*]
+  //  - wrong_section: есть в обоих, разные zone → updateClassification (Section)
+  //                   + upsert в expected (чтобы не появился extra)
+  //  - missing: нет в БД, есть в expected → удалить из expected
+  const handleQuickFix = useCallback(
+    (params: {
+      diffType: DiffEntry["type"];
+      sectionId: string | null;
+      sectionTitle: string;
+      newZone: string | null;
+    }) => {
+      const { diffType, sectionId, sectionTitle, newZone } = params;
+
+      // 1) Update Section.standardSection (если есть section и тип — wrong_section/extra)
+      if (sectionId && diffType !== "missing" && newZone !== null) {
+        updateClassification.mutate({
+          sectionId,
+          standardSection: newZone,
+          classificationStatus: "validated",
+        });
+      }
+
+      // 2) Update expected_results JSON (если есть golden-sample context)
+      if (!goldenSampleId) return;
+
+      const current = (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
+      const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
+      const titleLower = sectionTitle.trim().toLowerCase();
+      const existingIdx = sectionsArr.findIndex(
+        (s) => String(s.title ?? "").trim().toLowerCase() === titleLower,
+      );
+
+      let nextSections: Array<Record<string, unknown>>;
+      if (diffType === "missing" && existingIdx >= 0) {
+        // Эксперт согласен, что эта секция не должна быть в эталоне → удаляем
+        nextSections = sectionsArr.filter((_, i) => i !== existingIdx);
+      } else if (existingIdx >= 0) {
+        // Update existing entry
+        nextSections = sectionsArr.map((s, i) =>
+          i === existingIdx
+            ? { ...s, title: sectionTitle, standardSection: newZone }
+            : s,
+        );
+      } else {
+        // Insert new
+        nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
+      }
+
+      updateExpected.mutate({
+        goldenSampleId,
+        stage: stageKey,
+        status: (stageStatus === "not_set" ? "draft" : stageStatus) as
+          | "draft"
+          | "in_review"
+          | "approved",
+        expectedResults: { ...current, sections: nextSections },
+      });
+    },
+    [
+      updateClassification,
+      updateExpected,
+      expectedResults,
+      goldenSampleId,
+      stageKey,
+      stageStatus,
+    ],
   );
 
   // Toggle helpers
@@ -1383,9 +1504,7 @@ export default function ClassificationTreeViewer({
           entries={diffEntries}
           sections={rawSections}
           taxonomyOptions={taxonomyOptions}
-          onQuickFix={(sectionId, newStandardSection) =>
-            handleSaveClassification(sectionId, newStandardSection)
-          }
+          onQuickFix={(params) => handleQuickFix(params)}
           onJumpToSection={(sectionId) => {
             // 1. Снимаем фильтры — иначе целевая строка может быть отфильтрована
             //    и focusedRowRef не обнаружит её для scrollIntoView.
@@ -1397,7 +1516,7 @@ export default function ClassificationTreeViewer({
             // 4. Фокусируемся на tree-контейнер для keyboard nav.
             requestAnimationFrame(() => containerRef.current?.focus());
           }}
-          fixPending={updateClassification.isPending}
+          fixPending={updateClassification.isPending || updateExpected.isPending}
         />
       )}
 
