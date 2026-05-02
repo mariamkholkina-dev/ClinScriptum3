@@ -226,6 +226,7 @@ model ContentBlock {
   rawHtml      String?          @map("raw_html")
   order        Int
   sourceAnchor Json             @map("source_anchor") @db.JsonB
+  tableAst     Json?            @map("table_ast") @db.JsonB
 
   section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
 
@@ -550,6 +551,9 @@ enum RuleSetType {
   correction_recommend
   soa_identification
   audit
+  fact_section_priors
+  fact_anchors
+  confidence_calibration
 }
 
 model RuleSetVersion {

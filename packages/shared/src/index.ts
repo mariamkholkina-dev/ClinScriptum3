@@ -9,3 +9,4 @@ export * from "./types/section.js";
 export * from "./types/auth.js";
 export * from "./types/processing-events.js";
 export { asyncContext, getRequestContext, getCorrelationId, type RequestContext } from "./context.js";
+export { renderTableMarkdown, type TableAstLike } from "./utils/markdown.js";

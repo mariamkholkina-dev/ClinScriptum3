@@ -9,7 +9,8 @@
  */
 
 import { prisma, loadRulesForType, snapshotRules, getEffectiveLlmConfig, toConfigSnapshot, getInputBudgetChars } from "@clinscriptum/db";
-import { RulesEngine, detectContradictions, toFactExtractionRules } from "@clinscriptum/rules-engine";
+import { RulesEngine, detectContradictions, toFactExtractionRules, extractRawFromTable, aggregateByCanonical } from "@clinscriptum/rules-engine";
+import type { ExtractedFact, AggregatedFact, TableAst } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 
@@ -156,6 +157,42 @@ function parseLlmJsonArray(raw: string): unknown[] | null {
   } catch { return null; }
 }
 
+/**
+ * Phase 2: load `fact_section_priors` rules. Each rule.config is
+ * `{ factKey, expectedSections: string[] }`. The map is `factKey →
+ * Set<standardSection>`. If not configured, returns null and callers
+ * skip filtering.
+ */
+async function loadFactSectionPriors(
+  bundleId: string | null,
+): Promise<Map<string, Set<string>> | null> {
+  const resolved = await loadRulesForType(bundleId, "fact_section_priors");
+  if (!resolved || resolved.rules.length === 0) return null;
+  const map = new Map<string, Set<string>>();
+  for (const r of resolved.rules) {
+    const cfg = (r.config ?? {}) as { factKey?: string; expectedSections?: string[] };
+    if (!cfg.factKey || !Array.isArray(cfg.expectedSections)) continue;
+    map.set(cfg.factKey, new Set(cfg.expectedSections));
+  }
+  return map.size > 0 ? map : null;
+}
+
+function factMatchesSectionPriors(
+  fact: ExtractedFact,
+  priors: Map<string, Set<string>>,
+  titleToStandard: Map<string, string>,
+): boolean {
+  const allowed = priors.get(fact.factKey);
+  if (!allowed) return true; // no prior → don't restrict
+  const title = fact.source.sectionTitle ?? "";
+  const std = titleToStandard.get(title);
+  if (!std) return true; // unclassified section → allow (don't punish missing classification)
+  for (const expected of allowed) {
+    if (std === expected || std.startsWith(`${expected}.`)) return true;
+  }
+  return false;
+}
+
 /* ═══════════════ Level 1: Deterministic ═══════════════ */
 
 export async function runDeterministic(
@@ -187,7 +224,31 @@ export async function runDeterministic(
     isSynopsis: s.standardSection === "synopsis",
   }));
 
-  const extracted = extractor.extractFromSections(sectionData);
+  // Phase 1+2: collect raw matches from regex AND from any persisted
+  // table AST, then aggregate them through the same canonical-voting
+  // pipeline so synopsis/body/table mentions of the same fact get
+  // their confidence stacked.
+  const rawCombined: ExtractedFact[] = [];
+  const synopsisSection = sectionData.find((s) => s.isSynopsis);
+  if (synopsisSection) {
+    rawCombined.push(...extractor.extractRaw(synopsisSection.content, synopsisSection.title));
+  }
+  for (const s of sectionData) {
+    if (s.isSynopsis) continue;
+    rawCombined.push(...extractor.extractRaw(s.content, s.title));
+  }
+  for (const s of eligibleSections) {
+    for (const cb of s.contentBlocks) {
+      const ast = (cb as { tableAst?: unknown }).tableAst as TableAst | null | undefined;
+      if (!ast || !Array.isArray(ast.rows)) continue;
+      rawCombined.push(...extractRawFromTable(ast, s.title));
+    }
+  }
+  const sectionPriors = await loadFactSectionPriors(ctx.bundleId);
+  const filtered = sectionPriors
+    ? rawCombined.filter((f) => factMatchesSectionPriors(f, sectionPriors, titleToStandard))
+    : rawCombined;
+  const extracted: AggregatedFact[] = aggregateByCanonical(filtered);
   const contradictions = detectContradictions(extracted);
 
   const groupedByKey = new Map<string, typeof extracted>();

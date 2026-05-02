@@ -87,6 +87,7 @@ async function saveSectionsBatch(
       rawHtml: cb.rawHtml,
       order: j,
       sourceAnchor: cb.sourceAnchor ?? {},
+      ...(cb.tableAst ? { tableAst: cb.tableAst } : {}),
     }));
 
     if (blocks.length > 0) {

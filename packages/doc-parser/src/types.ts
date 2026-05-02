@@ -23,6 +23,13 @@ export interface ParsedContentBlock {
   rawHtml?: string;
   order: number;
   sourceAnchor: SourceAnchor;
+  tableAst?: TableAst;
+}
+
+export interface TableAst {
+  headers: string[];
+  rows: string[][];
+  footnotes: string[];
 }
 
 export type ContentBlockType = "paragraph" | "table" | "table_cell" | "footnote" | "list" | "image";

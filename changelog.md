@@ -90,6 +90,17 @@ Verified: `npm test --workspace=@clinscriptum/api` → 151/151 passed на test-
 - **`run-evaluation` handler** (`apps/workers/src/handlers/run-evaluation.ts`) считает `computeFactCoverage(expected, actual)` для stage `extraction` — сопоставляет ожидаемые и извлечённые `factKey` + lowercase value, возвращает `{ expected, extracted, matched }` per ключу. Записывает в `EvaluationResult.coverageByFactKey`. Aggregation по run: `factCoverage = matchedTotal / expectedTotal` пишется в `EvaluationRun.factCoverage`.
 - **`recordExtractionMetric`** (`apps/workers/src/lib/metrics.ts`) — новая функция логирующая `fact_extraction_metric` с полями `phase` (`deterministic|llm_check|llm_qa`), `factKey?`, `sectionId?`, `parseError?`, `tokens?`, `durationMs?`, `matched?`. Точка вызова появится по мере wiring'а в Phase 3 (targeted LLM) и Phase 5 (calibration).
 
+### Phase 2 spr.2 fact-extraction roadmap — table AST + section priors
+
+Самый крупный недополученный recall — таблицы синопсиса со sponsor / sample_size / phase / drug — извлекались плохо, потому что парсер коллапсировал tableAst в строку `"h1 | h2\nv1 | v2"` и regex'ы не могли её разобрать.
+
+- **`ContentBlock.tableAst` (Json)** — миграция `20260502130000_add_content_block_table_ast`. Парсер теперь сохраняет `{ headers, rows, footnotes }` для каждого `type='table'` блока. `parseDocx` (`packages/doc-parser/src/parser.ts:49-58`) добавляет `tableAst` к `ParsedContentBlock`. Worker handler `parse-document.ts:83-90` пишет это поле через `createMany`. `content` остаётся как fallback для legacy-читателей.
+- **`extractFromTable` (`packages/rules-engine/src/table-extractor.ts`)** — новый extractor для двухстолбцовых key/value-таблиц. Поддерживает обе ориентации (заголовок слева/справа). Использует словарь `tableHeaderSynonyms.ts` (12 factKey × ru+en синонимы), normalising header'ы через `morphology.stemPhrase` чтобы «Спонсор:», «спонсор» и «sponsor» давали один и тот же matched key. Возвращает `ExtractedFact[]` совместимый с regex-выводом, что позволяет одной командой `aggregateByCanonical` склеить regex + table источники одного факта.
+- **Интеграция в `runDeterministic`** (`packages/shared/src/fact-extraction-core.ts`) — теперь сначала собираются raw-matches из regex (`extractor.extractRaw`) и из всех `tableAst`-блоков всех eligible-секций, затем единая агрегация. Synopsis-источник работает как раньше — synonym из table-блока synopsis получает synonym-weight 2x в voting'е.
+- **`fact_section_priors` RuleSet type** — миграция `20260502140000_add_fact_extraction_ruleset_types` (попутно зарегистрированы `fact_anchors` и `confidence_calibration` для Phase 3/5). `Rule.config = { factKey, expectedSections: string[] }`. В `runDeterministic` после raw-collection применяется `factMatchesSectionPriors`: если для `factKey` сконфигурирован prior — фильтруются только matches из секций с `standardSection` в whitelist'е (или его prefix-children). Если prior не задан — всё пропускается без изменений (default-permissive). Если секция не классифицирована — также пропускается (не штрафуем за пропуски section-classifier'а).
+- **`renderTableMarkdown` (`packages/shared/src/utils/markdown.ts`)** — утиль рендера AST в pipe-Markdown с экранированием `|`. Готовится к подмешиванию в LLM-промпты Phase 4 (где table-блок надо подавать модели как разметку, а не CSV).
+- **13 новых тестов** для tableHeaderSynonyms + extractRawFromTable + extractFromTable. Все 291 тестов rules-engine зелёные.
+
 ## 2026-05-01
 
 ### PR-3 спринта качества классификации: Sprint 0 mitigation + UI fixes
