@@ -27,6 +27,7 @@ import {
   Edit3,
   Save,
   Search,
+  CornerDownRight,
 } from "lucide-react";
 
 import type {
@@ -161,7 +162,37 @@ function ContentBlockPanel({ blocks }: { blocks: Section["contentBlocks"] }) {
 
 /* ═══════════════ DiffOverlay ═══════════════ */
 
-function ClassificationDiffOverlay({ entries }: { entries: DiffEntry[] }) {
+interface DiffOverlayProps {
+  entries: DiffEntry[];
+  /** Все секции — для маппинга entry.sectionTitle → sectionId. */
+  sections: Section[];
+  /** Опции taxonomy для inline-select правки. */
+  taxonomyOptions: Array<{ value: string; label: string; type: string }>;
+  /** Мутация: применить standardSection к секции (validated). */
+  onQuickFix: (sectionId: string, newStandardSection: string | null) => void;
+  /** Прыжок к строке в основной структуре: фокус + scroll. */
+  onJumpToSection: (sectionId: string) => void;
+  /** Идёт ли мутация — для disable кнопок. */
+  fixPending: boolean;
+}
+
+function ClassificationDiffOverlay({
+  entries,
+  sections,
+  taxonomyOptions,
+  onQuickFix,
+  onJumpToSection,
+  fixPending,
+}: DiffOverlayProps) {
+  const titleToSection = useMemo(() => {
+    const m = new Map<string, Section>();
+    for (const s of sections) m.set(s.title.trim().toLowerCase(), s);
+    return m;
+  }, [sections]);
+
+  // Локальный state per-row select — initial value = expected (если есть) или actual.
+  const [pendingZones, setPendingZones] = useState<Map<string, string>>(new Map());
+
   if (entries.length === 0) {
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
@@ -174,43 +205,123 @@ function ClassificationDiffOverlay({ entries }: { entries: DiffEntry[] }) {
   const extra = entries.filter((e) => e.type === "extra");
   const wrongSection = entries.filter((e) => e.type === "wrong_section");
 
+  const getRowKey = (e: DiffEntry, idx: number) => `${e.type}:${e.sectionTitle}:${idx}`;
+
   return (
     <div className="space-y-3">
       <div className="flex gap-3 text-xs font-medium">
-        <span className="rounded bg-red-100 px-2 py-1 text-red-700">
-          Пропущено: {missing.length}
-        </span>
-        <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">
-          Лишних: {extra.length}
-        </span>
-        <span className="rounded bg-purple-100 px-2 py-1 text-purple-700">
-          Неверная секция: {wrongSection.length}
-        </span>
+        <span className="rounded bg-red-100 px-2 py-1 text-red-700">Пропущено: {missing.length}</span>
+        <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">Лишних: {extra.length}</span>
+        <span className="rounded bg-purple-100 px-2 py-1 text-purple-700">Неверная секция: {wrongSection.length}</span>
       </div>
-      <div className="max-h-60 overflow-y-auto space-y-1.5">
-        {entries.map((e, i) => (
-          <div
-            key={i}
-            className={`rounded-md border px-3 py-2 text-xs ${
-              e.type === "missing"
-                ? "border-red-200 bg-red-50 text-red-700"
-                : e.type === "extra"
-                  ? "border-amber-200 bg-amber-50 text-amber-700"
-                  : "border-purple-200 bg-purple-50 text-purple-700"
-            }`}
-          >
-            <span className="font-medium">
-              {e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверная секция"}
-            </span>
-            {": "}
-            {e.sectionTitle}
-            {e.type === "wrong_section" && e.expected && e.actual && (
-              <span className="ml-1 text-gray-500">
-                (ожидалось «{e.expected.standardSection ?? "—"}», получено «{e.actual.standardSection ?? "—"}»)
-              </span>
-            )}
-          </div>
-        ))}
+
+      <div className="max-h-80 overflow-y-auto space-y-1.5">
+        {entries.map((e, i) => {
+          const rowKey = getRowKey(e, i);
+          const matchedSection = titleToSection.get(e.sectionTitle.trim().toLowerCase());
+          // Default suggestion: expected zone (если есть). Inline editor существует только
+          // когда есть actual section — иначе нечего править.
+          const suggestedZone =
+            e.expected?.standardSection ?? matchedSection?.standardSection ?? "";
+          const currentValue = pendingZones.get(rowKey) ?? suggestedZone;
+          const canQuickFix = !!matchedSection;
+
+          return (
+            <div
+              key={rowKey}
+              className={`rounded-md border px-3 py-2 text-xs ${
+                e.type === "missing"
+                  ? "border-red-200 bg-red-50"
+                  : e.type === "extra"
+                    ? "border-amber-200 bg-amber-50"
+                    : "border-purple-200 bg-purple-50"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <span
+                    className={`font-medium ${
+                      e.type === "missing"
+                        ? "text-red-700"
+                        : e.type === "extra"
+                          ? "text-amber-700"
+                          : "text-purple-700"
+                    }`}
+                  >
+                    {e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверная секция"}
+                  </span>
+                  <span className="ml-1 text-gray-900" title={e.sectionTitle}>
+                    {e.sectionTitle}
+                  </span>
+                  {e.type === "wrong_section" && e.expected && e.actual && (
+                    <div className="mt-0.5 text-gray-500">
+                      ожидалось «{e.expected.standardSection ?? "—"}», получено «{e.actual.standardSection ?? "—"}»
+                    </div>
+                  )}
+                  {e.type === "extra" && e.actual && (
+                    <div className="mt-0.5 text-gray-500">
+                      получено «{e.actual.standardSection ?? "—"}»
+                    </div>
+                  )}
+                  {e.type === "missing" && e.expected && (
+                    <div className="mt-0.5 text-gray-500">
+                      ожидалось «{e.expected.standardSection ?? "—"}»
+                    </div>
+                  )}
+                </div>
+                {canQuickFix && (
+                  <button
+                    type="button"
+                    onClick={() => onJumpToSection(matchedSection.id)}
+                    className="shrink-0 rounded border border-gray-300 bg-white p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                    title="Перейти к строке в дереве"
+                  >
+                    <CornerDownRight size={12} />
+                  </button>
+                )}
+              </div>
+
+              {canQuickFix && (
+                <div className="mt-2 flex items-center gap-1.5">
+                  <select
+                    value={currentValue}
+                    onChange={(ev) => {
+                      const v = ev.target.value;
+                      setPendingZones((prev) => {
+                        const next = new Map(prev);
+                        next.set(rowKey, v);
+                        return next;
+                      });
+                    }}
+                    className="flex-1 min-w-0 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs"
+                    disabled={fixPending}
+                  >
+                    <option value="">— null —</option>
+                    {taxonomyOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newZone = currentValue === "" ? null : currentValue;
+                      // Sanity: skip no-op
+                      if (newZone === matchedSection.standardSection) return;
+                      onQuickFix(matchedSection.id, newZone);
+                    }}
+                    disabled={fixPending || currentValue === (matchedSection.standardSection ?? "")}
+                    className="shrink-0 rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                    title="Применить к секции (validated)"
+                  >
+                    Применить
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1200,6 +1311,18 @@ export default function ClassificationTreeViewer({
     focusedRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [focusedIdx]);
 
+  // Синхронизация focusedIdx с activeSectionId. Используется кнопкой "Перейти"
+  // в DiffOverlay: setActiveSectionId(id) сам по себе не двигает focusedIdx,
+  // и scrollIntoView выше зависит от focusedIdx. Этот effect ловит изменение
+  // activeSectionId и переустанавливает focusedIdx → scroll triggered.
+  useEffect(() => {
+    if (!activeSectionId) return;
+    const idx = visibleSections.findIndex((s) => s.id === activeSectionId);
+    if (idx >= 0 && idx !== focusedIdx) {
+      setFocusedIdx(idx);
+    }
+  }, [activeSectionId, visibleSections, focusedIdx]);
+
   /* ── Loading ── */
   if (q.isLoading) {
     return (
@@ -1255,7 +1378,28 @@ export default function ClassificationTreeViewer({
       />
 
       {/* Diff results */}
-      {showDiff && <ClassificationDiffOverlay entries={diffEntries} />}
+      {showDiff && (
+        <ClassificationDiffOverlay
+          entries={diffEntries}
+          sections={rawSections}
+          taxonomyOptions={taxonomyOptions}
+          onQuickFix={(sectionId, newStandardSection) =>
+            handleSaveClassification(sectionId, newStandardSection)
+          }
+          onJumpToSection={(sectionId) => {
+            // 1. Снимаем фильтры — иначе целевая строка может быть отфильтрована
+            //    и focusedRowRef не обнаружит её для scrollIntoView.
+            setFilters(EMPTY_FILTERS);
+            // 2. Раскрываем всех parent'ов чтобы строка стала видимой.
+            setCollapsedIds(new Set());
+            // 3. Активируем секцию — useEffect c focusedIdx сделает scrollIntoView.
+            setActiveSectionId(sectionId);
+            // 4. Фокусируемся на tree-контейнер для keyboard nav.
+            requestAnimationFrame(() => containerRef.current?.focus());
+          }}
+          fixPending={updateClassification.isPending}
+        />
+      )}
 
       {/* Keyboard hint */}
       <div className="flex items-center gap-1 text-[10px] text-gray-400">

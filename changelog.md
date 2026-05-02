@@ -2,6 +2,15 @@
 
 ## 2026-05-02
 
+### Rule-admin: quick-fix + jump-to-row в Diff overlay классификации
+
+`apps/rule-admin/.../ClassificationTreeViewer.tsx`. На странице Эталонные наборы → этап «Классификация» → панель Diff с эталоном (открывается по кнопке) каждая строка теперь имеет:
+
+- **Inline-select** с zone-options из taxonomy (default = expected zone, fallback = текущая actual). Кнопка «Применить» вызывает `updateSectionClassification` мутацию (validated). После успеха `getVersion` инвалидируется → diffEntries пересчитывается → строка автоматически исчезает из overlay, если расхождение устранено.
+- **Кнопка перехода к строке** (icon `CornerDownRight`): сбрасывает фильтры, раскрывает collapsed parents, выставляет `activeSectionId` → useEffect делает `scrollIntoView`. Фокус возвращается на tree-контейнер для keyboard nav.
+
+Detail-rows (ожидалось/получено) разнесены на отдельные строки для читаемости. Quick-fix отключается (`disabled`) для diff-entry без matched section в дереве (например `missing` без actual sections в БД).
+
 ### PR-B спринта 2: иерархия + окно соседей + few-shot
 
 Финальный PR спринта качества классификации — все 3 задачи плана 2.1/2.2/2.3.
