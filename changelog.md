@@ -2,6 +2,19 @@
 
 ## 2026-05-03
 
+### Спринт 1 SoA footnotes (commit 5/7): редизайн FootnotesPanel в rule-admin
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx` — переписан целиком (~830 строк). Главные изменения:
+
+- Типы `SoaFootnote`, `SoaFootnoteAnchor`, `FootnoteMutations` добавлены, `SoaTable` расширен полем `soaFootnotes: SoaFootnote[]` (с массивом `anchors`). Старые поля `SoaTable.footnotes: string[]` и `SoaCell.footnoteRefs: number[]` помечены `@deprecated` в коде, но сохранены в типах для отображения суперскриптов в ячейках (рендерим реальные маркеры через `markerOrder → marker` карту).
+- `FootnotesPanel` переработан с нуля. Каждая строка сноски (`FootnoteRow`) показывает реальный маркер (`*`, `†`, `1`, `2`…), inline-редактирование marker и text через `soaFootnote.update` мутацию, кнопку удаления (с confirm) через `soaFootnote.delete`. Бейджи `Nc / Nr / Ncol` показывают сколько у сноски ячеек/строк/столбцов anchors.
+- При выбранной ячейке у каждой сноски появляется toggle-кнопка «Bind cell» — нажатие вызывает `soaFootnote.linkAnchor` (если ещё не привязана) или `soaFootnote.unlinkAnchor` (если есть anchor для этой ячейки). Подсветка `highlightedFootnoteIds` рассчитывается через фильтр `anchors.cellId === selectedCell.cellId`.
+- Новые режимы привязки «Строка» и «Столбец»: dropdown со списком процедур / визитов + dropdown со списком сносок → кнопка «Привязать» вызывает `linkAnchor` с `targetType='row'` / `'col'`. Этого не было — раньше можно было привязывать только к ячейкам.
+- Inline-форма «Создать сноску» (marker + text) внизу панели → `soaFootnote.create` с `source='manual'`.
+- Удалены старые мутации `updateSoaCellFootnoteRefs` и `updateSoaTableFootnotes` из UI — они остаются в API как legacy shim для backward compat (Коммит 4).
+
+E2E-тест для нового UI не добавлен в этом коммите (отдельный проход с Playwright Codegen, см. memory `feedback_e2e_workflow.md`). TypeScript + lint зелёные на всём монорепо.
+
 ### Спринт 1 SoA footnotes (commit 4/7): tRPC router + service + расширенный getSoaData
 
 Новый домен `soaFootnote` в API:
