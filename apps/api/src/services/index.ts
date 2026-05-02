@@ -15,3 +15,4 @@ export { evaluationService } from "./evaluation.service.js";
 export { correctionService } from "./correction.service.js";
 export { disagreementService } from "./disagreement.service.js";
 export { approvalService } from "./approval.service.js";
+export { fewShotService } from "./few-shot.service.js";
