@@ -2,6 +2,16 @@
 
 ## 2026-05-03
 
+### Спринт 2 SoA orientation (commit 1/3): schema + migration
+
+`packages/db/prisma/schema.prisma`:
+- Новый enum `SoaOrientation` со значениями `visits_cols | visits_rows | unknown`.
+- В `SoaTable` добавлены поля `orientation: SoaOrientation @default(visits_cols)` (каноническая ориентация для всех downstream-консьюмеров) и `orientationConflict: Boolean @default(false)` — флаг для UI чтобы показать алёрт «несколько SOA с разной ориентацией, выбрана с визитами в колонках».
+
+Миграция `20260502231259_add_soa_orientation`: `CREATE TYPE` + `ALTER TABLE soa_tables ADD COLUMN`. Применена в dev и test БД.
+
+Цель спринта (по плану в `~/.claude/plans/spicy-tinkering-pearl.md`): автоматически распознавать таблицы с visits в строках вместо колонок, транспонировать в каноническую форму для дальнейшего pipeline; при наличии нескольких SoA с разной ориентацией — выбирать с visits в колонках, остальные помечать `orientationConflict=true`. Логика детектирования и transpose — следующий коммит.
+
 ### Спринт 1 SoA footnotes (commit 7/7): deprecation legacy endpoints + summary
 
 `apps/api/src/routers/processing.ts`:
