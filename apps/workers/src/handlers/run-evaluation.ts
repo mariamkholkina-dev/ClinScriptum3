@@ -168,6 +168,25 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
       delta = await computeDelta(run.id, run.comparedToRunId);
     }
 
+    // Sprint 5.3: метрика observability — сколько активных few-shot примеров
+    // и каких zones было в момент evaluation. Если есть baseline сравнение и
+    // delta содержит avgF1 change, можем грубо оценить «потенциальное влияние»
+    // few-shot: zones с high coverage в few-shots более вероятно изменятся.
+    // Это observability, не строгое measurement; для строгого нужен ablation.
+    const fewShots = await prisma.classificationFewShot.findMany({
+      where: { tenantId: run.tenantId, isActive: true },
+      select: { standardSection: true },
+    });
+    const fewShotByZone: Record<string, number> = {};
+    for (const fs of fewShots) {
+      fewShotByZone[fs.standardSection] = (fewShotByZone[fs.standardSection] ?? 0) + 1;
+    }
+    const fewShotMetrics = {
+      activeCount: fewShots.length,
+      zonesCovered: Object.keys(fewShotByZone).length,
+      byZone: fewShotByZone,
+    };
+
     const durationMs = Date.now() - startTime;
 
     const factCoverage =
@@ -177,7 +196,7 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
       where: { id: run.id },
       data: {
         status: "completed",
-        metrics: metrics as object,
+        metrics: { ...metrics, fewShots: fewShotMetrics } as object,
         durationMs,
         totalSamples: totalResults,
         passedSamples: passedResults,

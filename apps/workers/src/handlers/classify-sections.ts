@@ -165,6 +165,11 @@ const LLM_CHECK_BATCH_SIZE = 20;
 const LLM_CHECK_BATCH_RETRY_ATTEMPTS = 2;
 const LLM_CHECK_BATCH_RETRY_DELAY_MS = 3000;
 
+// Sprint 5.2: max few-shots в LLM Check промпт. ~50 chars на пример (title +
+// zone + reason) → 50×100 chars overhead = 5K → влезает с запасом.
+// 100 — компромисс между coverage edge cases и token cost.
+const FEWSHOT_MAX_PER_PROMPT = 100;
+
 function batchByBudget(items: string[], budget: number): string[][] {
   const batches: string[][] = [];
   let current: string[] = [];
@@ -460,7 +465,32 @@ export async function handleClassifySections(data: {
       const checkPromptTemplate =
         promptRules?.rules.find((r) => r.name === "section_classify:llm_check")?.promptTemplate ??
         DEFAULT_LLM_CHECK_PROMPT;
-      const systemPrompt = checkPromptTemplate.replace("{{catalog}}", catalog);
+
+      // Sprint 5.2: few-shot inject. Загружаем активные ClassificationFewShot
+      // tenant'а и формируем блок «ПРИМЕРЫ ЭКСПЕРТА» для подмеси в системный
+      // промпт. Список ограничен FEWSHOT_MAX_PER_PROMPT чтобы не раздуть токены —
+      // выбираются последние созданные (наиболее релевантные правки эксперта).
+      // Если store пуст — блок будет пустой (поведение как до Sprint 5).
+      const fewShots = await prisma.classificationFewShot.findMany({
+        where: { tenantId: ctx.tenantId, isActive: true },
+        orderBy: { createdAt: "desc" },
+        take: FEWSHOT_MAX_PER_PROMPT,
+      });
+      const fewShotBlock = fewShots.length > 0
+        ? "\n\nДОПОЛНИТЕЛЬНЫЕ ПРИМЕРЫ ОТ ЭКСПЕРТА (имеют приоритет над общими правилами):\n" +
+          fewShots
+            .map((fs, i) => {
+              const path = fs.parentPath ? ` (путь: ${fs.parentPath})` : "";
+              const reason = fs.reason ? ` — ${fs.reason}` : "";
+              return `${i + 1}. "${fs.title}"${path} → ${fs.standardSection}${reason}`;
+            })
+            .join("\n")
+        : "";
+      const systemPrompt = checkPromptTemplate.replace("{{catalog}}", catalog) + fewShotBlock;
+      logger.info("LLM Check few-shot injected", {
+        fewShotCount: fewShots.length,
+        promptLengthDelta: fewShotBlock.length,
+      });
 
       const gateway = new LLMGateway({
         provider: llmConfig.provider as LLMProvider,

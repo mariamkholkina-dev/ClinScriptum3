@@ -2,6 +2,30 @@
 
 ## 2026-05-03
 
+### Sprint 5.2 + 5.3 — few-shot inject в LLM Check + eval-метрика
+
+`apps/workers/src/handlers/classify-sections.ts`, `apps/workers/src/handlers/run-evaluation.ts`, `apps/workers/src/handlers/__tests__/{classify-sections,run-evaluation}.test.ts`.
+
+**5.2 — Few-shot inject в LLM Check.** Перед каждым batch LLM Check загружаются активные `ClassificationFewShot` tenant'а (top-`FEWSHOT_MAX_PER_PROMPT=100` по `createdAt desc`) и добавляются в систем-промпт блоком «ДОПОЛНИТЕЛЬНЫЕ ПРИМЕРЫ ОТ ЭКСПЕРТА (имеют приоритет)»:
+
+```
+1. "Препарат сравнения" (путь: 5. Изучаемый препарат) → ip.comparator — отдельная subzone
+2. "Шкалы и опросники" → appendix.scales_and_questionnaires — в приложениях
+...
+```
+
+Если store пуст — блок пустой, поведение идентично pre-Sprint 5. Hardcoded few-shot из seed-prompts.ts оставлены как baseline.
+
+**5.3 — Eval-метрика few-shot observability.** `run-evaluation` handler после расчёта `metrics` загружает active few-shots tenant'а и добавляет в `metrics.fewShots`:
+```json
+{
+  "activeCount": 14,
+  "zonesCovered": 9,
+  "byZone": { "ip.comparator": 3, "procedures.lifestyle": 2, ... }
+}
+```
+Помогает понять покрытие zones примерами при interpretation baseline diff'ов.
+
 ### Sprint 5.1 + 5.4 — хранение эталонных примеров классификации + UI
 
 `packages/db/prisma/schema.prisma` (model `ClassificationFewShot` + миграция `20260503000000_add_classification_few_shots`), `apps/api/src/services/few-shot.service.ts`, `apps/api/src/routers/few-shot.ts`, `apps/rule-admin/src/app/(app)/few-shots/page.tsx`.
