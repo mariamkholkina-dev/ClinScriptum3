@@ -2,6 +2,37 @@
 
 ## 2026-05-03
 
+### Спринт 1 SoA footnotes (commit 7/7): deprecation legacy endpoints + summary
+
+`apps/api/src/routers/processing.ts`:
+- Над процедурами `updateSoaCellFootnoteRefs` и `updateSoaTableFootnotes` поставлены JSDoc-комментарии `@deprecated` с указанием замены (`soaFootnote.linkAnchor`/`unlinkAnchor` и `soaFootnote.create`/`update`/`delete`) и target-спринта удаления (Sprint 5).
+- При каждом вызове старых endpoints пишется `logger.warn("[deprecated] ...")` с `tenantId` + ID ресурса — поможет в логах подсчитать оставшихся клиентов до удаления.
+
+**Sprint 1 SoA footnotes — итог по 7 коммитам:**
+
+| # | SHA | Что |
+|---|---|---|
+| 1 | `3e4f78d` | DB-модели `SoaFootnote` + `SoaFootnoteAnchor`, два enum, миграция `20260502205347_add_soa_footnotes`. Legacy-поля помечены `@deprecated`. |
+| 2 | `84a7a80` | Pure-функции `extractCellMarkers` / `extractFootnoteDefinitions` / `linkAnchorsToFootnotes` в doc-parser. 36 unit-тестов. |
+| 3 | `e39ea03` | `parseHtmlTableWithSpans` сохраняет `rawHtml` ячеек, `expandGridFromHtmlRows` строит `rawHtmlGrid`, `buildSoaResult` извлекает маркеры и анкоры, `persistSoaTables` пишет в нормализованные таблицы + sync legacy. 7 integration-тестов. |
+| 4 | `6bf2ca2` | Сервис + tRPC router `soaFootnote`, расширенный `getSoaData`, переписанные legacy shims. 13 service-тестов. |
+| 5 | `9a21da5` | Полный редизайн `FootnotesPanel` в rule-admin: реальные маркеры, bind cell/row/col, бейджи anchors. |
+| 6 | `ca71bf5` | Read-only список сносок в apps/web SoaTab под каждой SOA-таблицей. |
+| 7 | (this) | `@deprecated` JSDoc + `logger.warn` на legacy endpoints для удаления в Sprint 5. |
+
+Что покрыто конкретно по протоколам пользователя (см. примеры «4.2.2.1 Блок-схема клинического исследования»):
+- `Прием препарата²` — маркер `2` извлечён из rawHtml ячейки названия процедуры → `targetType='row'`, `rowIndex` соответствующей процедуры.
+- `X¹` в ячейке «Регистрация НЯ → Скрининг» — маркер `1` → `targetType='cell'`, cellId соответствующей ячейки.
+- Массовые `X*` в столбцах НВ/ДЗ — каждый получает свой `cell` anchor.
+- Блок «Примечание:» с разделителями em-dash (`* — по показаниям`, `1 — до введения...`) парсится `extractFootnoteDefinitions`. Многобуквенный глоссарий (`ТЗ – телефонный звонок`, `MFI-20 (...) - ...`) автоматически отсеивается по whitelist маркеров.
+
+Что не покрыто этим спринтом:
+- Графические маркеры (горизонтальные стрелки между ячейками для «Прием препарата²» / «Заполнение Дневника пациентом») — отдельный Sprint 3 «Drawing-derived cells» с XML-парсингом DOCX через JSZip + fast-xml-parser.
+- Continuation-таблицы (длинная SOA, разбитая на 2 части с повторённой шапкой) — отдельный Sprint «merge SoA continuations». Сейчас детектор их видит как две независимые SOA.
+- Удаление legacy полей и endpoints — Sprint 5 после унификации UI rule-admin/web в shared-компонент.
+
+Все 171 тест api и 132 теста doc-parser зелёные. Полный typecheck на 17 workspace зелёный. Lint без новых errors.
+
 ### Спринт 1 SoA footnotes (commit 6/7): read-only список сносок в apps/web SoaTab
 
 `apps/web/src/app/(app)/documents/[versionId]/page.tsx` — медицинский писатель в основном UI впервые видит сноски, привязанные к каждой SOA-таблице.
