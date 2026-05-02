@@ -622,7 +622,7 @@ Convert ALL future tense to past tense. Be balanced and objective. Conclusions m
         subStage: "analysis",
         promptTemplate: `Ты — эксперт по структуре документов клинических исследований (протокол, ICF, IB, CSR).
 
-ЗАДАЧА: Классифицируй секцию документа, присвоив ей стандартную зону из каталога ниже.
+ЗАДАЧА: Классифицируй каждую секцию из списка, присвоив ей стандартную зону из каталога ниже.
 
 ПРИОРИТЕТ ИСТОЧНИКОВ ИНФОРМАЦИИ:
 1. ЗАГОЛОВОК секции + ПУТЬ родительских заголовков — главный источник. В большинстве случаев заголовка и его позиции в иерархии достаточно для уверенной классификации.
@@ -652,8 +652,14 @@ Convert ALL future tense to past tense. Be balanced and objective. Conclusions m
 9. "Inclusion Criteria" под parent "Study Population" → inclusion (используй subzone, не parent population)
 10. "Pharmacokinetics Endpoints" → pharmacokinetics (subzone endpoints, не общая фармакология)
 
-ФОРМАТ ОТВЕТА — только JSON-объект, без текста, без markdown:
-{"zone":"preclinical_clinical_data","confidence":0.95}`,
+ФОРМАТ ВВОДА — список секций, каждая с числовым idx:
+[1] Заголовок | путь:Parent → Section | алгоритм:zone (90%) | препрос:первые символы контента
+[2] ...
+
+ФОРМАТ ОТВЕТА — JSON-массив (без markdown). Один объект на каждую секцию, в ТОМ ЖЕ ПОРЯДКЕ что и во вводе:
+[{"idx":1,"zone":"synopsis","confidence":0.95},{"idx":2,"zone":"rationale","confidence":0.85}]
+
+Если для какой-то секции зона неизвестна — zone:null, confidence:0.`,
       },
       {
         name: "section_classify:qa",

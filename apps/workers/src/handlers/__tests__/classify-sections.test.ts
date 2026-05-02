@@ -251,3 +251,67 @@ describe("handleClassifySections", () => {
     }
   });
 });
+
+describe("Sprint 3.2 — robust JSON parser", () => {
+  // Импортируем приватные хелперы через __testing namespace.
+  const importTesting = async () => {
+    const mod = (await import("../classify-sections.js")) as { __testing: {
+      extractBalanced: (s: string, open: string, close: string) => string | null;
+      parseLlmJsonArray: (s: string) => unknown[] | null;
+      parseLlmJsonObject: (s: string) => Record<string, unknown> | null;
+    } };
+    return mod.__testing;
+  };
+
+  it("parseLlmJsonArray handles think-tags + JSON array", async () => {
+    const { parseLlmJsonArray } = await importTesting();
+    const raw = '<think>reasoning</think>\n[{"idx":1,"zone":"synopsis"}]';
+    const result = parseLlmJsonArray(raw);
+    expect(result).toEqual([{ idx: 1, zone: "synopsis" }]);
+  });
+
+  it("parseLlmJsonArray ignores brackets inside reasoning text", async () => {
+    const { parseLlmJsonArray } = await importTesting();
+    // Старый greedy regex matched бы от первого [ до последнего ] (через
+    // примеры в тексте) → JSON.parse failed. Balanced parser берёт первый
+    // valid range.
+    const raw = 'Пример: [1,2,3]. Результат:\n[{"idx":1,"zone":"synopsis"}]';
+    const result = parseLlmJsonArray(raw);
+    expect(result).toEqual([1, 2, 3]); // первый balanced — это [1,2,3]
+  });
+
+  it("parseLlmJsonArray handles markdown code block", async () => {
+    const { parseLlmJsonArray } = await importTesting();
+    const raw = '```json\n[{"idx":1,"zone":"synopsis"}]\n```';
+    const result = parseLlmJsonArray(raw);
+    expect(result).toEqual([{ idx: 1, zone: "synopsis" }]);
+  });
+
+  it("parseLlmJsonArray returns null for garbage", async () => {
+    const { parseLlmJsonArray } = await importTesting();
+    const raw = "это просто текст без JSON";
+    expect(parseLlmJsonArray(raw)).toBeNull();
+  });
+
+  it("parseLlmJsonObject parses bare object with extra text", async () => {
+    const { parseLlmJsonObject } = await importTesting();
+    const raw = 'Ответ: {"zone":"synopsis","confidence":0.95}';
+    expect(parseLlmJsonObject(raw)).toEqual({ zone: "synopsis", confidence: 0.95 });
+  });
+
+  it("extractBalanced ignores brackets inside strings", async () => {
+    const { extractBalanced } = await importTesting();
+    const s = '{"a":"value with } inside","b":1}';
+    expect(extractBalanced(s, "{", "}")).toBe(s);
+  });
+
+  it("extractBalanced returns null when no opening bracket", async () => {
+    const { extractBalanced } = await importTesting();
+    expect(extractBalanced("no brackets here", "[", "]")).toBeNull();
+  });
+
+  it("parseLlmJsonArray refuses suspicious refusal phrases", async () => {
+    const { parseLlmJsonArray } = await importTesting();
+    expect(parseLlmJsonArray("не могу помочь с этим [1,2,3]")).toBeNull();
+  });
+});
