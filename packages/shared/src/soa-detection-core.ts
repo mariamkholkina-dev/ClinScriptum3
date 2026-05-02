@@ -51,6 +51,8 @@ interface ScoringResult {
   numRows: number;
 }
 
+type SoaOrientation = "visits_cols" | "visits_rows" | "unknown";
+
 interface SoaDetectionResult {
   tableBlockId: string;
   sectionId: string;
@@ -65,6 +67,8 @@ interface SoaDetectionResult {
   footnotes: string[];
   footnoteDefs: ResolvedFootnote[];
   footnoteAnchors: ResolvedAnchor[];
+  orientation: SoaOrientation;
+  orientationConflict: boolean;
 }
 
 interface SoaCellData {
@@ -172,17 +176,48 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
   const soaTables: SoaDetectionResult[] = [];
 
   for (const candidate of candidates) {
-    const scoring = scoreTable(candidate);
+    // Decide orientation BEFORE scoring — scoring assumes visits-in-columns
+    // (it inspects the first row for visit signals and the first column for
+    // procedure patterns). For `visits_rows` candidates we transpose first
+    // so the rest of the pipeline keeps the canonical layout.
+    const orientation = detectOrientation(candidate.rows);
+    const workingCandidate =
+      orientation === "visits_rows" ? transposeCandidate(candidate) : candidate;
+
+    const scoring = scoreTable(workingCandidate);
 
     if (scoring.score < 3.5) continue;
 
     const isSoa = isTrueSoa(scoring);
     if (!isSoa) continue;
 
-    log.info("[soa] SOA detected", { title: candidate.title, score: scoring.score.toFixed(1) });
+    log.info("[soa] SOA detected", {
+      title: workingCandidate.title,
+      score: scoring.score.toFixed(1),
+      orientation,
+      transposed: orientation === "visits_rows",
+    });
 
-    const result = buildSoaResult(candidate, scoring);
-    if (result) soaTables.push(result);
+    const result = buildSoaResult(workingCandidate, scoring);
+    if (result) {
+      result.orientation = orientation;
+      soaTables.push(result);
+    }
+  }
+
+  // Mixed-orientation guard. If at least one detected SoA is `visits_cols`
+  // and there's also a `visits_rows` (or vice versa), prefer the canonical
+  // layout and flag the others — UI shows an alert and lets the writer
+  // resolve manually.
+  const orientationSet = new Set(soaTables.map((t) => t.orientation));
+  if (orientationSet.size > 1 && orientationSet.has("visits_cols")) {
+    log.info("[soa] Mixed orientations detected — flagging non-canonical tables", {
+      total: soaTables.length,
+      orientations: Array.from(orientationSet),
+    });
+    for (const t of soaTables) {
+      if (t.orientation !== "visits_cols") t.orientationConflict = true;
+    }
   }
 
   if (soaTables.length === 0) {
@@ -483,6 +518,9 @@ function buildSoaResult(
     footnotes: footnoteDefs.map((f) => f.text),
     footnoteDefs,
     footnoteAnchors,
+    // Defaults — overwritten by detectSoaForVersion if needed.
+    orientation: "visits_cols",
+    orientationConflict: false,
   };
 }
 
@@ -702,6 +740,126 @@ function stripHtmlTags(html: string): string {
     .trim();
 }
 
+/* ═══════════════════════ Orientation ═══════════════════════ */
+
+interface OrientationSignals {
+  visitsInRow: number;
+  visitsInCol: number;
+  proceduresInRow: number;
+  proceduresInCol: number;
+}
+
+function countVisitSignals(text: string): number {
+  let n = 0;
+  for (const signal of HEADER_SIGNALS) {
+    if (signal.pattern.test(text)) n += 1;
+  }
+  return n;
+}
+
+function countProcedureSignals(text: string): number {
+  let n = 0;
+  for (const pattern of PROCEDURE_ROW_PATTERNS) {
+    if (pattern.test(text)) n += 1;
+  }
+  return n;
+}
+
+function gatherOrientationSignals(rows: string[][]): OrientationSignals {
+  if (rows.length === 0 || rows[0].length === 0) {
+    return { visitsInRow: 0, visitsInCol: 0, proceduresInRow: 0, proceduresInCol: 0 };
+  }
+  const firstRow = rows[0].slice(1);
+  const firstCol = rows.slice(1).map((r) => r[0] ?? "");
+
+  const firstRowText = firstRow.join(" ");
+  const firstColText = firstCol.join(" ");
+
+  return {
+    visitsInRow: countVisitSignals(firstRowText),
+    visitsInCol: countVisitSignals(firstColText),
+    proceduresInRow: countProcedureSignals(firstRowText),
+    proceduresInCol: countProcedureSignals(firstColText),
+  };
+}
+
+/**
+ * Heuristic for which axis carries the visits and which carries the procedures.
+ *
+ * `visits_cols` — the canonical layout used by virtually all clinical
+ * protocols (header row = visits, first column = procedures). Returned when
+ * visit signals dominate the first row AND procedure signals dominate the
+ * first column.
+ *
+ * `visits_rows` — the transposed layout. Returned when the same dominance
+ * holds with axes swapped.
+ *
+ * `unknown` — the gap between row and column signals is below the 30%
+ * confidence threshold; the table is too symmetric to call.
+ */
+export function detectOrientation(rows: string[][]): SoaOrientation {
+  const s = gatherOrientationSignals(rows);
+
+  const colsScore = s.visitsInRow + s.proceduresInCol;
+  const rowsScore = s.visitsInCol + s.proceduresInRow;
+  const total = colsScore + rowsScore;
+
+  if (total === 0) return "unknown";
+
+  // Margin must be at least 30% of total signals to commit to an orientation.
+  const margin = Math.abs(colsScore - rowsScore) / total;
+  if (margin < 0.3) return "unknown";
+
+  return colsScore > rowsScore ? "visits_cols" : "visits_rows";
+}
+
+/**
+ * Returns a new candidate with rows / rawHtmlGrid / htmlRows transposed.
+ * Used when `detectOrientation` returns `visits_rows` so the rest of the
+ * pipeline keeps assuming the canonical visits-in-columns shape.
+ *
+ * Colspan / rowspan from the source `htmlRows` are flattened — once we
+ * transpose at the text-grid level, the merged-cell metadata is no longer
+ * meaningful. In practice transposed SoA tables are simple grids and do not
+ * use merged cells.
+ */
+export function transposeCandidate(candidate: TableCandidate): TableCandidate {
+  const numRows = candidate.rows.length;
+  if (numRows === 0) return candidate;
+  const numCols = Math.max(...candidate.rows.map((r) => r.length));
+
+  const newRows: string[][] = Array.from({ length: numCols }, () =>
+    Array<string>(numRows).fill(""),
+  );
+  const newRawHtmlGrid: string[][] = Array.from({ length: numCols }, () =>
+    Array<string>(numRows).fill(""),
+  );
+  for (let r = 0; r < numRows; r++) {
+    for (let c = 0; c < numCols; c++) {
+      newRows[c][r] = candidate.rows[r][c] ?? "";
+      newRawHtmlGrid[c][r] = candidate.rawHtmlGrid[r]?.[c] ?? "";
+    }
+  }
+
+  // Rebuild a flat HtmlCell[][] from the transposed text/html grids without
+  // any colspan/rowspan — see function comment.
+  const newHtmlRows: HtmlCell[][] = newRows.map((row, ri) =>
+    row.map((text, ci) => ({
+      text,
+      rawHtml: newRawHtmlGrid[ri][ci] ?? "",
+      colspan: 1,
+      rowspan: 1,
+    })),
+  );
+
+  return {
+    ...candidate,
+    rows: newRows,
+    rawHtmlGrid: newRawHtmlGrid,
+    htmlRows: newHtmlRows,
+  };
+}
+
 /* ═══════════════════════ Persistence ═══════════════════════ */
 
 async function persistSoaTables(
@@ -747,6 +905,8 @@ async function persistSoaTables(
             title: soa.title,
             soaScore: soa.score,
             status: "detected",
+            orientation: soa.orientation,
+            orientationConflict: soa.orientationConflict,
             headerData: { visits: soa.visits, headerRows: soa.headerRows },
             rawMatrix: soa.rawMatrix,
             // Legacy field — kept in sync until Sprint 5 cleanup.

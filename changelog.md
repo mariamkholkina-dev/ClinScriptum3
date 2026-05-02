@@ -2,6 +2,23 @@
 
 ## 2026-05-03
 
+### Спринт 2 SoA orientation (commit 2/3): детектор + транспонирование в каноническую форму
+
+`packages/shared/src/soa-detection-core.ts`:
+
+- **`detectOrientation(rows)`** — pure-функция, эвристика на основе тех же `HEADER_SIGNALS` и `PROCEDURE_ROW_PATTERNS`, что используются в scoring. Считает visit-сигналы и procedure-сигналы отдельно для первой строки и первого столбца, сравнивает суммы `(visitsInRow + proceduresInCol)` vs `(visitsInCol + proceduresInRow)`. Margin меньше 30% от total → возвращает `unknown`. Иначе возвращает доминирующую ориентацию.
+- **`transposeCandidate(candidate)`** — возвращает новую `TableCandidate` с транспонированными `rows`, `rawHtmlGrid`, `htmlRows`. Colspan/rowspan уплощаются до 1×1 — для transposed SoA-таблиц merged cells на практике не встречаются.
+- **Интеграция в `detectSoaForVersion`**: для каждого кандидата сначала `detectOrientation`, затем при `visits_rows` — `transposeCandidate`, и только потом `scoreTable` + `buildSoaResult` (которые предполагают канонический layout). `result.orientation` хранит **исходную** ориентацию (для UI бейджа "Транспонировано автоматически" в Sprint 2.3).
+- **Mixed-orientation guard**: после сбора всех `SoaDetectionResult`-ов, если в наборе есть и `visits_cols` и `visits_rows` (и не только `unknown`) — `orientationConflict=true` для всех **не-`visits_cols`** таблиц. UI покажет алёрт «несколько SoA с разной ориентацией, выбрана с visits в колонках».
+- `persistSoaTables` записывает оба новых поля в БД.
+
+Интеграционный тест `apps/api/src/__tests__/integration/soa-orientation.test.ts` (новый) — 5 кейсов:
+- canonical layout сохраняет `orientation='visits_cols'`, `orientationConflict=false`;
+- transposed layout детектируется как `visits_rows`, транспонируется в каноническую форму (визиты попадают в `headerData.visits`, процедуры — на ось ячеек);
+- mixed-orientation документ → `orientationConflict=true` для visits_rows таблицы, false для visits_cols.
+
+Все 176 api тестов зелёные, full monorepo typecheck и lint без новых errors.
+
 ### Спринт 2 SoA orientation (commit 1/3): schema + migration
 
 `packages/db/prisma/schema.prisma`:
