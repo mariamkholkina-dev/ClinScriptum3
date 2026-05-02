@@ -173,6 +173,60 @@ const MAX_CONFIDENCE = 0.95;
  * - The aggregated `source` is the highest-weighted occurrence (synopsis
  *   if present, otherwise the first body source).
  */
+/**
+ * Phase 5: confidence calibration coefficients per factKey × sectionType.
+ *
+ * `final = sigmoid(α·llm_conf + β·prior(factKey,sectionType) + γ·n_sources)`
+ *
+ * Calibrated via `scripts/calibrate-confidence.ts` against golden samples.
+ * Defaults below are reasonable starting points; tune per-tenant via
+ * the `confidence_calibration` RuleSet.
+ */
+export interface CalibrationCoefficients {
+  alpha: number;
+  beta: number;
+  gamma: number;
+  prior?: Partial<Record<string, Partial<Record<string, number>>>>;
+}
+
+export const DEFAULT_CALIBRATION: CalibrationCoefficients = {
+  alpha: 1.0,
+  beta: 0.3,
+  gamma: 0.15,
+  prior: {},
+};
+
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
+export function applyCalibration(
+  rawConfidence: number,
+  factKey: string,
+  sectionType: string | null | undefined,
+  nSources: number,
+  coefs: CalibrationCoefficients = DEFAULT_CALIBRATION,
+): number {
+  const prior =
+    sectionType && coefs.prior?.[factKey]?.[sectionType] !== undefined
+      ? coefs.prior[factKey]![sectionType]!
+      : 0;
+  const x =
+    coefs.alpha * (rawConfidence - 0.5) +
+    coefs.beta * prior +
+    coefs.gamma * Math.log(1 + Math.max(0, nSources - 1));
+  return sigmoid(x);
+}
+
+/**
+ * Brier score of a single prediction: (predicted_prob - actual_outcome)^2.
+ * Lower is better; 0 = perfect calibration.
+ */
+export function brierScore(predicted: number, actual: 0 | 1): number {
+  const diff = predicted - actual;
+  return diff * diff;
+}
+
 export function aggregateByCanonical(facts: ExtractedFact[]): AggregatedFact[] {
   const groups = new Map<string, ExtractedFact[]>();
   const order: string[] = [];

@@ -263,6 +263,63 @@ export async function runDeterministic(
     groupedByKey.set(fact.factKey, arr);
   }
 
+  // Phase 5: emit synopsis_body_mismatch Finding when a factKey
+  // resolves to >1 distinct canonical with sources from synopsis AND
+  // body. Tells reviewers about cross-source disagreement before they
+  // see the merged Fact row.
+  let synopsisBodyMismatchCount = 0;
+  for (const [factKey, facts] of groupedByKey) {
+    if (facts.length < 2) continue;
+    const synopsisCanonicals = new Set<string>();
+    const bodyCanonicals = new Set<string>();
+    for (const f of facts) {
+      const isSynopsis = (f.source.sectionTitle ?? "").toLowerCase().includes("synopsis") ||
+        (f.source.sectionTitle ?? "").toLowerCase().includes("синопсис");
+      if (isSynopsis) synopsisCanonicals.add(f.canonical);
+      else bodyCanonicals.add(f.canonical);
+    }
+    let crossMismatch = false;
+    for (const c of synopsisCanonicals) {
+      if (bodyCanonicals.size > 0 && !bodyCanonicals.has(c)) {
+        crossMismatch = true;
+        break;
+      }
+    }
+    if (!crossMismatch) continue;
+    synopsisBodyMismatchCount++;
+    const synopsisValues = [...new Set(
+      facts.filter((f) =>
+        (f.source.sectionTitle ?? "").toLowerCase().match(/synopsis|синопсис/),
+      ).map((f) => f.value),
+    )];
+    const bodyValues = [...new Set(
+      facts.filter((f) =>
+        !(f.source.sectionTitle ?? "").toLowerCase().match(/synopsis|синопсис/),
+      ).map((f) => f.value),
+    )];
+    await prisma.finding.create({
+      data: {
+        docVersionId: ctx.docVersionId,
+        type: "intra_audit",
+        description: `Расхождение значения «${factKey}» между synopsis и основным текстом: synopsis = ${synopsisValues.join("; ")}, body = ${bodyValues.join("; ")}`,
+        suggestion: "Проверьте, какое значение является корректным, и приведите оба упоминания к единой формулировке.",
+        sourceRef: {
+          factKey,
+          synopsisValues,
+          bodyValues,
+        },
+        issueType: "synopsis_body_mismatch",
+        issueFamily: "fact_consistency",
+        severity: "medium",
+        extraAttributes: {
+          factKey,
+          synopsisCanonicals: [...synopsisCanonicals],
+          bodyCanonicals: [...bodyCanonicals],
+        } as object,
+      },
+    });
+  }
+
   for (const [factKey, facts] of groupedByKey) {
     const hasContradiction = contradictions.some((c) => c.factKey === factKey);
     const best = facts.reduce((a, b) => (b.confidence > a.confidence ? b : a), facts[0]);
@@ -306,6 +363,7 @@ export async function runDeterministic(
       totalExtracted: extracted.length,
       uniqueFactKeys: groupedByKey.size,
       contradictions: contradictions.length,
+      synopsisBodyMismatch: synopsisBodyMismatchCount,
       factKeys: [...groupedByKey.keys()],
     },
     ruleSnapshot: snapshotRules(resolved?.rules, {

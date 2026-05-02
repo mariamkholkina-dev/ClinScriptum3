@@ -1,8 +1,8 @@
 export { RulesEngine } from "./engine.js";
 export { SectionClassifier, DEFAULT_PROTOCOL_SECTIONS } from "./section-classifier.js";
 export { FactExtractor, DEFAULT_FACT_RULES } from "./fact-extractor.js";
-export { canonicalize, aggregateByCanonical } from "./canonicalize.js";
-export type { CanonicalValue, AggregatedFact } from "./canonicalize.js";
+export { canonicalize, aggregateByCanonical, applyCalibration, brierScore, DEFAULT_CALIBRATION } from "./canonicalize.js";
+export type { CanonicalValue, AggregatedFact, CalibrationCoefficients } from "./canonicalize.js";
 export { detectContradictions } from "./contradiction-detector.js";
 export { extractFromTable, extractRawFromTable } from "./table-extractor.js";
 export type { TableAst } from "./table-extractor.js";

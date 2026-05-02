@@ -128,6 +128,20 @@ Verified: `npm test --workspace=@clinscriptum/api` → 151/151 passed на test-
 - **QA scope per-section** — `runLlmQa` теперь собирает `referencedSectionIds` из `variants[].sectionId` всех проверяемых фактов, и грузит в context только эти секции (вместо `docSnippet.slice(0, qaInputBudget)` по всему документу). Если ни один variant не имеет `sectionId` (legacy data) — fallback на whole-doc.
 - **16 новых тестов** для llm-json (findJsonSpan + parseLlmJson). Все 347 тестов rules-engine зелёные.
 
+### Phase 5 spr.5 fact-extraction roadmap — calibration + cross-source reconciliation
+
+Замыкаем feedback loop: калиброванная confidence через изотонически-подобную формулу и публикация cross-source расхождений как первоклассных Findings.
+
+- **`applyCalibration(rawConf, factKey, sectionType, nSources, coefs)`** в `packages/rules-engine/src/canonicalize.ts`. Формула `final = sigmoid(α·(raw-0.5) + β·prior(factKey,sectionType) + γ·log(1+max(0,n-1)))`. Дефолтные коэффициенты `α=1.0, β=0.3, γ=0.15`. `prior` хранится как `{ factKey: { sectionType: number } }` — будет калиброваться `scripts/calibrate-confidence.ts` против golden samples с использованием `confidence_calibration` RuleSet (тип уже зарегистрирован в Phase 2 миграции).
+- **`brierScore(predicted, actual)`** — стандартная мера калибровки. 0 = идеально, 1 = противоположное. Будет использоваться в `EvaluationResult.confidenceMetrics` после wiring'а.
+- **Cross-source reconciliation как Finding (`runDeterministic`)** — после агрегации проверяется каждый `factKey` с >1 canonical-группой; если множества canonical из synopsis-источников и body-источников расходятся, эмитится `Finding` с `type=intra_audit`, `issueType=synopsis_body_mismatch`, `issueFamily=fact_consistency`, `severity=medium`. `extraAttributes` содержит `synopsisCanonicals[]` и `bodyCanonicals[]` для UI-отображения. `sourceRef` — структурированный JSON для quick-fix workflow.
+- **`runDeterministic` data-возврат** дополнен `synopsisBodyMismatch: <count>` для метрик и observability.
+- **9 новых тестов** для applyCalibration + brierScore. Все 378 тестов rules-engine зелёные.
+
+### Active learning + prompt-RuleSet — отложено в follow-up
+
+Часть Phase 4 (перенос промптов в RuleSet, few-shot per standardSection, генератор `scripts/generate-few-shot.ts`) и часть Phase 5 (типизация `CorrectionRecommendation.recommendationType`, `scripts/calibrate-confidence.ts`, UI рекомендаций в rule-admin) требуют автономной разработки с UI-итерациями + golden-датасета. Пишутся отдельными PR-ами после baseline-замера на текущей версии.
+
 ## 2026-05-01
 
 ### PR-3 спринта качества классификации: Sprint 0 mitigation + UI fixes
