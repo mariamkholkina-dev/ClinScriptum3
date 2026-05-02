@@ -77,18 +77,32 @@ export function diffClassificationWithExpected(
 
   const entries: DiffEntry[] = [];
 
-  const actualByTitle = new Map<string, Section>();
+  // Multimap: title → list of actual sections (в порядке появления в документе).
+  // Раньше Map<title, Section> хранил ТОЛЬКО последнюю — для документов с
+  // дубликатами заголовков (typical в clinical protocols, например подписи
+  // Совет по этике на разных уровнях иерархии) extra-entry для первого
+  // дубликата никогда не исчезала после quick-fix.
+  const actualByTitle = new Map<string, Section[]>();
   for (const s of sections) {
-    actualByTitle.set(s.title.trim().toLowerCase(), s);
+    const key = s.title.trim().toLowerCase();
+    const arr = actualByTitle.get(key) ?? [];
+    arr.push(s);
+    actualByTitle.set(key, arr);
   }
 
+  // Распределяем expected-записи по actual в порядке появления:
+  // первая expected с title T → bucket[0], вторая → bucket[1], и т.д.
+  // Если expected больше чем actual в bucket — оставшиеся expected = missing.
+  // Если actual больше чем expected — оставшиеся actual = extra.
   const matchedActual = new Set<string>();
+  const usedFromBucket = new Map<string, number>();
 
   for (const exp of expected.sections) {
     const key = exp.title.trim().toLowerCase();
-    const actual = actualByTitle.get(key);
+    const bucket = actualByTitle.get(key) ?? [];
+    const usedSoFar = usedFromBucket.get(key) ?? 0;
 
-    if (!actual) {
+    if (usedSoFar >= bucket.length) {
       entries.push({
         type: "missing",
         sectionTitle: exp.title,
@@ -97,6 +111,8 @@ export function diffClassificationWithExpected(
       continue;
     }
 
+    const actual = bucket[usedSoFar];
+    usedFromBucket.set(key, usedSoFar + 1);
     matchedActual.add(actual.id);
 
     if (exp.standardSection != null && actual.standardSection !== exp.standardSection) {

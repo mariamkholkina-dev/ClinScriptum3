@@ -1232,22 +1232,11 @@ export default function ClassificationTreeViewer({
   // StageDataViewer → ClassificationTreeViewer) не успевал перерендериться
   // с новым expectedResults до того как diff overlay покажет результат.
   const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onSuccess: async (data) => {
-      // eslint-disable-next-line no-console
-      console.log("[diff-quick-fix] updateStageStatus saved", {
-        stage: data?.stage,
-        expectedSectionsCount: Array.isArray((data?.expectedResults as { sections?: unknown[] } | null)?.sections)
-          ? ((data?.expectedResults as { sections: unknown[] }).sections.length)
-          : "n/a",
-      });
+    onSuccess: async () => {
       if (goldenSampleId) {
         await utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
         await utils.goldenDataset.getSample.refetch({ id: goldenSampleId });
       }
-    },
-    onError: (err) => {
-      // eslint-disable-next-line no-console
-      console.error("[diff-quick-fix] updateStageStatus FAILED", err);
     },
   });
 
@@ -1276,11 +1265,7 @@ export default function ClassificationTreeViewer({
       }
 
       // 2) Update expected_results JSON (если есть golden-sample context)
-      if (!goldenSampleId) {
-        // eslint-disable-next-line no-console
-        console.warn("[diff-quick-fix] goldenSampleId not provided — skipping expected_results update");
-        return;
-      }
+      if (!goldenSampleId) return;
 
       const current =
         (expectedResults && typeof expectedResults === "object"
@@ -1295,31 +1280,24 @@ export default function ClassificationTreeViewer({
       let nextSections: Array<Record<string, unknown>>;
       if (diffType === "missing" && existingIdx >= 0) {
         // Эксперт согласен, что эта секция не должна быть в эталоне → удаляем
+        // ровно ОДНУ запись (для документов с дубликатами titles удалим первую).
         nextSections = sectionsArr.filter((_, i) => i !== existingIdx);
+      } else if (diffType === "extra") {
+        // Для extra ВСЕГДА insert, даже если existingIdx >= 0. Это поддерживает
+        // случай дубликатов titles в документе: для каждой actual-секции с
+        // одинаковым title нужна отдельная запись в expected (multimap-matching).
+        nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
       } else if (existingIdx >= 0) {
-        // Update existing entry
+        // wrong_section с существующей expected-записью → обновляем zone
         nextSections = sectionsArr.map((s, i) =>
           i === existingIdx
             ? { ...s, title: sectionTitle, standardSection: newZone }
             : s,
         );
       } else {
-        // Insert new
+        // wrong_section без expected-записи (странный случай) → insert
         nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
       }
-
-      // eslint-disable-next-line no-console
-      console.log("[diff-quick-fix] mutating expected_results", {
-        diffType,
-        sectionTitle,
-        newZone,
-        existingIdx,
-        prevSectionsCount: sectionsArr.length,
-        nextSectionsCount: nextSections.length,
-        goldenSampleId,
-        stageKey,
-        stageStatus,
-      });
 
       updateExpected.mutate({
         goldenSampleId,
