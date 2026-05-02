@@ -174,13 +174,18 @@ export async function runDeterministic(
   const extractor = engine.getFactExtractor();
 
   const prefixes = ctx.excludedSectionPrefixes ?? EXCLUDED_SECTION_PREFIXES;
-  const sectionData = sections
-    .filter((s) => !s.standardSection || !prefixes.some((p) => s.standardSection!.startsWith(p)))
-    .map((s) => ({
-      title: s.title,
-      content: serializeContentBlocks(s.contentBlocks),
-      isSynopsis: s.standardSection === "synopsis",
-    }));
+  const eligibleSections = sections.filter(
+    (s) => !s.standardSection || !prefixes.some((p) => s.standardSection!.startsWith(p)),
+  );
+  const titleToStandard = new Map<string, string>();
+  for (const s of eligibleSections) {
+    if (s.standardSection) titleToStandard.set(s.title, s.standardSection);
+  }
+  const sectionData = eligibleSections.map((s) => ({
+    title: s.title,
+    content: serializeContentBlocks(s.contentBlocks),
+    isSynopsis: s.standardSection === "synopsis",
+  }));
 
   const extracted = extractor.extractFromSections(sectionData);
   const contradictions = detectContradictions(extracted);
@@ -194,28 +199,37 @@ export async function runDeterministic(
 
   for (const [factKey, facts] of groupedByKey) {
     const hasContradiction = contradictions.some((c) => c.factKey === factKey);
-    const best = facts[0];
-    const variants: FactVariant[] = facts.map((f) => ({
-      value: f.value,
-      confidence: 1.0,
-      level: "deterministic" as const,
-      sourceText: f.source.textSnippet ?? "",
-      sectionTitle: f.source.sectionTitle ?? "",
-    }));
-    const sources = facts.map((f) => f.source);
+    const best = facts.reduce((a, b) => (b.confidence > a.confidence ? b : a), facts[0]);
+    const totalSourceCount = facts.reduce((sum, f) => sum + f.sourceCount, 0);
+    const variants: FactVariant[] = facts.flatMap((f) =>
+      f.sources.map((src) => ({
+        value: f.value,
+        confidence: f.confidence,
+        level: "deterministic" as const,
+        sourceText: src.textSnippet ?? "",
+        sectionTitle: src.sectionTitle ?? "",
+      })),
+    );
+    const sources = facts.flatMap((f) => f.sources);
+    const standardSectionCode = best.source.sectionTitle
+      ? titleToStandard.get(best.source.sectionTitle) ?? null
+      : null;
     await prisma.fact.create({
       data: {
         docVersionId: ctx.docVersionId,
         factKey,
         factCategory: "general",
         value: best.value,
-        confidence: 1.0,
+        canonicalValue: best.canonical,
+        standardSectionCode,
+        sourceCount: totalSourceCount,
+        confidence: best.confidence,
         factClass: best.factClass,
         sources: sources as any,
         hasContradiction,
         status: "extracted",
         deterministicValue: best.value,
-        deterministicConfidence: 1.0,
+        deterministicConfidence: best.confidence,
         variants: variants as any,
       },
     });
