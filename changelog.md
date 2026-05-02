@@ -2,6 +2,19 @@
 
 ## 2026-05-03
 
+### Спринт 1 SoA footnotes (commit 3/7): wiring детектора, persist в нормализованные таблицы
+
+`packages/shared/src/soa-detection-core.ts` — внутренняя ревизия детектора SoA, чтобы впервые реально извлекать сноски и привязки к ним из таблицы и сохранять их в `SoaFootnote` + `SoaFootnoteAnchor`.
+
+- Добавлено поле `rawHtml` в `HtmlCell`, поля `rawHtmlGrid` и `nextBlockHtml` в `TableCandidate`. `parseHtmlTableWithSpans` теперь через group-capture сохраняет содержимое каждой ячейки между `<td>...</td>`, чтобы маркеры `<sup>` и Unicode-надстрочные не терялись на этапе `stripHtmlTags`.
+- `expandGridFromHtmlRows` параллельно строит `rawHtmlGrid` — заполнение rowspan/colspan повторяет rawHtml исходной ячейки **только** для верхне-левого слота, остальные слоты пустые. Это критично, иначе маркеры дублировались бы для каждой объединённой ячейки.
+- `collectTableCandidates` ищет следующий блок `paragraph`/`list` в той же section и сохраняет его HTML — это будущий блок «Примечание:» под таблицей с определениями сносок.
+- `buildSoaResult` использует `extractCellMarkers`/`extractFootnoteDefinitions`/`linkAnchorsToFootnotes` (Коммит 2): извлекает маркеры из шапки → `targetType='col'`, из первого столбца → `targetType='row'`, из data-cells → `targetType='cell'`. `cleanText` идёт в `rawValue`, `procedures[i]`, `visits[c]` — таким образом ячейка `X<sup>1</sup>` нормализуется в `rawValue='X'` + якорь сноски `1` на эту ячейку.
+- `persistSoaTables` в той же транзакции (`timeout: 60_000`) после `createMany(cells)` строит `cellIdMap` через `findMany`, делает `tx.soaFootnote.createMany`, затем `tx.soaFootnoteAnchor.createMany` с резолвом `cellId` для cell-анкоров. Параллельно заполняет legacy `SoaTable.footnotes` (массив текстов) и `SoaCell.footnoteRefs` (массив `markerOrder` всех cell-анкоров данной ячейки) для backward-compat.
+- `packages/shared/package.json` — добавлена зависимость `@clinscriptum/doc-parser`.
+
+Интеграционный тест `apps/api/src/__tests__/integration/soa-footnotes.test.ts` (новый) — 7 кейсов: создаёт DocumentVersion + Section + ContentBlock с тестовой SoA-таблицей и блоком «Примечание», запускает `detectSoaForVersion`, проверяет создание `SoaFootnote`/`SoaFootnoteAnchor` правильных типов (cell/col), резолв `cellId`, очистку маркеров из `rawValue`/visit names, синк legacy-полей, cascade-delete. Все 158 тестов api-workspace зелёные.
+
 ### Спринт 1 SoA footnotes (commit 2/7): inline-маркеры и определения сносок — pure-функции
 
 `packages/doc-parser/src/cell-markers.ts` (новый модуль). Три pure-функции, без зависимости от mammoth/Prisma — чисто работают со строками HTML:

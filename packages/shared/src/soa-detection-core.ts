@@ -7,6 +7,14 @@
  */
 
 import { prisma } from "@clinscriptum/db";
+import {
+  extractCellMarkers,
+  extractFootnoteDefinitions,
+  linkAnchorsToFootnotes,
+  type PendingAnchor,
+  type ResolvedFootnote,
+  type ResolvedAnchor,
+} from "@clinscriptum/doc-parser";
 
 export interface SoaLogger {
   info(msg: string, meta?: Record<string, unknown>): void;
@@ -17,6 +25,7 @@ export interface SoaLogger {
 
 interface HtmlCell {
   text: string;
+  rawHtml: string;
   colspan: number;
   rowspan: number;
 }
@@ -27,6 +36,8 @@ interface TableCandidate {
   title: string;
   htmlRows: HtmlCell[][];
   rows: string[][];
+  rawHtmlGrid: string[][];
+  nextBlockHtml: string | null;
   sectionId: string;
   order: number;
 }
@@ -50,13 +61,17 @@ interface SoaDetectionResult {
   procedures: string[];
   matrix: SoaCellData[][];
   rawMatrix: string[][];
+  /// @deprecated removed in Sprint 5 — use `footnoteDefs` instead.
   footnotes: string[];
+  footnoteDefs: ResolvedFootnote[];
+  footnoteAnchors: ResolvedAnchor[];
 }
 
 interface SoaCellData {
   rawValue: string;
   normalizedValue: string;
   confidence: number;
+  markers: string[];
 }
 
 /* ═══════════════════════ Constants ═══════════════════════ */
@@ -191,8 +206,10 @@ function collectTableCandidates(
 
   for (const section of sections) {
     let lastParagraphText = "";
+    const blocks = section.contentBlocks;
 
-    for (const block of section.contentBlocks) {
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
       if (block.type === "paragraph" || block.type === "list") {
         lastParagraphText = block.content;
         continue;
@@ -200,10 +217,22 @@ function collectTableCandidates(
 
       if (block.type === "table" && block.rawHtml) {
         const htmlRows = parseHtmlTableWithSpans(block.rawHtml);
-        const rows = expandGridFromHtmlRows(htmlRows);
-        if (rows.length < 2 || (rows[0]?.length ?? 0) < 2) {
+        const { textGrid, rawHtmlGrid } = expandGridFromHtmlRows(htmlRows);
+        if (textGrid.length < 2 || (textGrid[0]?.length ?? 0) < 2) {
           lastParagraphText = "";
           continue;
+        }
+
+        // Find the next paragraph/list block in the same section — it
+        // typically holds the footnote-definition block ("Примечание:").
+        let nextBlockHtml: string | null = null;
+        for (let j = i + 1; j < blocks.length; j++) {
+          const next = blocks[j];
+          if (next.type === "paragraph" || next.type === "list") {
+            nextBlockHtml = next.rawHtml ?? next.content;
+            break;
+          }
+          if (next.type === "table") break;
         }
 
         candidates.push({
@@ -211,7 +240,9 @@ function collectTableCandidates(
           rawHtml: block.rawHtml,
           title: detectTableTitle(lastParagraphText),
           htmlRows,
-          rows,
+          rows: textGrid,
+          rawHtmlGrid,
+          nextBlockHtml,
           sectionId: section.id,
           order: block.order,
         });
@@ -330,7 +361,7 @@ function buildSoaResult(
   candidate: TableCandidate,
   scoring: ScoringResult
 ): SoaDetectionResult | null {
-  const { rows, htmlRows } = candidate;
+  const { rows, htmlRows, rawHtmlGrid } = candidate;
   if (rows.length < 2) return null;
 
   const headerRowCount = detectHeaderRowCount(rows);
@@ -339,32 +370,105 @@ function buildSoaResult(
   if (dataRows.length === 0) return null;
 
   const numCols = Math.max(...rows.map((r) => r.length));
-  const { visits, headerLevels } = buildMultiLevelVisits(rows, htmlRows, headerRowCount, numCols);
+  const { visits: rawVisits, headerLevels } = buildMultiLevelVisits(
+    rows,
+    htmlRows,
+    headerRowCount,
+    numCols,
+  );
 
-  if (visits.length === 0) return null;
+  if (rawVisits.length === 0) return null;
+
+  const pendingAnchors: PendingAnchor[] = [];
+
+  // Phase: extract markers from header cells (excluding the first column,
+  // which is the procedure-name header). Each marker becomes an anchor on
+  // the matching column.
+  const visits: string[] = rawVisits.map((rawText, colIdx) => {
+    const headerRawHtmlColumns: string[] = [];
+    for (let r = 0; r < headerRowCount && r < rawHtmlGrid.length; r++) {
+      const slot = rawHtmlGrid[r]?.[colIdx + 1] ?? "";
+      if (slot) headerRawHtmlColumns.push(slot);
+    }
+    const cleanParts: string[] = [];
+    for (const part of headerRawHtmlColumns) {
+      const { cleanText, markers } = extractCellMarkers(part);
+      if (cleanText) cleanParts.push(cleanText);
+      for (const m of markers) {
+        pendingAnchors.push({
+          marker: m,
+          targetType: "col",
+          colIndex: colIdx,
+        });
+      }
+    }
+    if (cleanParts.length > 0) {
+      // Preserve original visit name format (parts joined with " / ") if
+      // the multi-level builder used that pattern.
+      return Array.from(new Set(cleanParts)).join(" / ");
+    }
+    return rawText;
+  });
 
   const procedures: string[] = [];
   const matrix: SoaCellData[][] = [];
   const rawMatrix: string[][] = rows.slice(0, headerRowCount);
 
-  for (const row of dataRows) {
-    const procName = (row[0] ?? "").trim();
-    if (!procName) continue;
+  for (let dataRowIdx = 0; dataRowIdx < dataRows.length; dataRowIdx++) {
+    const row = dataRows[dataRowIdx];
+    const sourceRowIdx = headerRowCount + dataRowIdx;
+    const procRawHtml = rawHtmlGrid[sourceRowIdx]?.[0] ?? "";
+    const { cleanText: procName, markers: procMarkers } =
+      extractCellMarkers(procRawHtml);
 
-    procedures.push(procName);
+    const procedureName = procName || (row[0] ?? "").trim();
+    if (!procedureName) continue;
+
+    const procedureIndex = procedures.length;
+    procedures.push(procedureName);
     rawMatrix.push(row);
+
+    for (const m of procMarkers) {
+      pendingAnchors.push({
+        marker: m,
+        targetType: "row",
+        rowIndex: procedureIndex,
+      });
+    }
 
     const cellRow: SoaCellData[] = [];
     for (let col = 1; col <= visits.length; col++) {
-      const raw = (row[col] ?? "").trim();
+      const cellRawHtml = rawHtmlGrid[sourceRowIdx]?.[col] ?? "";
+      const { cleanText: cleanCell, markers: cellMarkers } =
+        extractCellMarkers(cellRawHtml);
+      const raw = (cleanCell || (row[col] ?? "")).trim();
       const normalized = normalizeMarker(raw);
       const confidence = computeCellConfidence(raw, normalized);
-      cellRow.push({ rawValue: raw, normalizedValue: normalized, confidence });
+
+      for (const m of cellMarkers) {
+        pendingAnchors.push({
+          marker: m,
+          targetType: "cell",
+          rowIndex: procedureIndex,
+          colIndex: col - 1,
+        });
+      }
+
+      cellRow.push({
+        rawValue: raw,
+        normalizedValue: normalized,
+        confidence,
+        markers: cellMarkers,
+      });
     }
     matrix.push(cellRow);
   }
 
   if (procedures.length === 0) return null;
+
+  const definitions = extractFootnoteDefinitions(candidate.nextBlockHtml);
+  const { footnotes: footnoteDefs, anchors: footnoteAnchors } =
+    linkAnchorsToFootnotes(pendingAnchors, definitions);
 
   return {
     tableBlockId: candidate.blockId,
@@ -376,7 +480,9 @@ function buildSoaResult(
     procedures,
     matrix,
     rawMatrix,
-    footnotes: [],
+    footnotes: footnoteDefs.map((f) => f.text),
+    footnoteDefs,
+    footnoteAnchors,
   };
 }
 
@@ -506,16 +612,24 @@ function parseHtmlTableWithSpans(html: string): HtmlCell[][] {
   const rowMatches = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi);
   if (!rowMatches) return rows;
 
+  const cellRe = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
   for (const rowHtml of rowMatches) {
     const cells: HtmlCell[] = [];
-    const cellMatches = rowHtml.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi);
-    if (!cellMatches) continue;
-
-    for (const cellHtml of cellMatches) {
-      const text = stripHtmlTags(cellHtml).trim();
-      const colspan = parseInt(cellHtml.match(/colspan\s*=\s*["']?(\d+)/i)?.[1] ?? "1", 10);
-      const rowspan = parseInt(cellHtml.match(/rowspan\s*=\s*["']?(\d+)/i)?.[1] ?? "1", 10);
-      cells.push({ text, colspan, rowspan });
+    cellRe.lastIndex = 0;
+    let cellMatch: RegExpExecArray | null;
+    while ((cellMatch = cellRe.exec(rowHtml)) !== null) {
+      const cellOpenTag = cellMatch[0].slice(0, cellMatch[0].indexOf(">") + 1);
+      const innerHtml = cellMatch[1];
+      const text = stripHtmlTags(innerHtml);
+      const colspan = parseInt(
+        cellOpenTag.match(/colspan\s*=\s*["']?(\d+)/i)?.[1] ?? "1",
+        10,
+      );
+      const rowspan = parseInt(
+        cellOpenTag.match(/rowspan\s*=\s*["']?(\d+)/i)?.[1] ?? "1",
+        10,
+      );
+      cells.push({ text, rawHtml: innerHtml, colspan, rowspan });
     }
 
     if (cells.length > 0) rows.push(cells);
@@ -524,8 +638,13 @@ function parseHtmlTableWithSpans(html: string): HtmlCell[][] {
   return rows;
 }
 
-function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): string[][] {
-  if (htmlRows.length === 0) return [];
+interface ExpandedGrid {
+  textGrid: string[][];
+  rawHtmlGrid: string[][];
+}
+
+function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
+  if (htmlRows.length === 0) return { textGrid: [], rawHtmlGrid: [] };
 
   let maxCols = 0;
   for (const row of htmlRows) {
@@ -535,28 +654,39 @@ function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): string[][] {
   }
 
   const numRows = htmlRows.length;
-  const grid: (string | null)[][] = Array.from({ length: numRows }, () =>
-    Array(maxCols).fill(null)
+  const textGrid: (string | null)[][] = Array.from({ length: numRows }, () =>
+    Array(maxCols).fill(null),
+  );
+  // rawHtmlGrid is populated only for the top-left slot of each merged cell;
+  // remaining colspan/rowspan slots stay empty so footnote markers in the
+  // source cell are not duplicated when extracted later.
+  const rawHtmlGrid: string[][] = Array.from({ length: numRows }, () =>
+    Array(maxCols).fill(""),
   );
 
   for (let r = 0; r < numRows; r++) {
     let gridCol = 0;
     for (const cell of htmlRows[r]) {
-      while (gridCol < maxCols && grid[r][gridCol] !== null) {
+      while (gridCol < maxCols && textGrid[r][gridCol] !== null) {
         gridCol++;
       }
       if (gridCol >= maxCols) break;
 
+      rawHtmlGrid[r][gridCol] = cell.rawHtml;
+
       for (let dr = 0; dr < cell.rowspan && r + dr < numRows; dr++) {
         for (let dc = 0; dc < cell.colspan && gridCol + dc < maxCols; dc++) {
-          grid[r + dr][gridCol + dc] = cell.text;
+          textGrid[r + dr][gridCol + dc] = cell.text;
         }
       }
       gridCol += cell.colspan;
     }
   }
 
-  return grid.map((row) => row.map((c) => c ?? ""));
+  return {
+    textGrid: textGrid.map((row) => row.map((c) => c ?? "")),
+    rawHtmlGrid,
+  };
 }
 
 function stripHtmlTags(html: string): string {
@@ -594,6 +724,22 @@ async function persistSoaTables(
       await tx.soaTable.deleteMany({ where: { docVersionId: versionId } });
 
       for (const soa of soaTables) {
+        // Pre-compute legacy footnoteRefs per-cell so the cell-create knows
+        // which markerOrder values to write into the deprecated Json field.
+        const cellFootnoteRefs = new Map<string, number[]>();
+        const markerToOrder = new Map<string, number>();
+        for (const f of soa.footnoteDefs) markerToOrder.set(f.marker, f.markerOrder);
+        for (const a of soa.footnoteAnchors) {
+          if (a.targetType !== "cell") continue;
+          if (a.rowIndex == null || a.colIndex == null) continue;
+          const key = `${a.rowIndex}:${a.colIndex}`;
+          const order = markerToOrder.get(a.footnoteMarker);
+          if (order == null) continue;
+          const existing = cellFootnoteRefs.get(key) ?? [];
+          if (!existing.includes(order)) existing.push(order);
+          cellFootnoteRefs.set(key, existing);
+        }
+
         const table = await tx.soaTable.create({
           data: {
             docVersionId: versionId,
@@ -603,6 +749,7 @@ async function persistSoaTables(
             status: "detected",
             headerData: { visits: soa.visits, headerRows: soa.headerRows },
             rawMatrix: soa.rawMatrix,
+            // Legacy field — kept in sync until Sprint 5 cleanup.
             footnotes: soa.footnotes,
           },
         });
@@ -619,12 +766,14 @@ async function persistSoaTables(
           rawValue: string;
           normalizedValue: string;
           confidence: number;
+          footnoteRefs: number[];
         }> = [];
 
         for (let row = 0; row < soa.procedures.length; row++) {
           for (let col = 0; col < soa.visits.length; col++) {
             const cell = soa.matrix[row]?.[col];
             if (!cell) continue;
+            const key = `${row}:${col}`;
             cellsData.push({
               soaTableId: table.id,
               rowIndex: row,
@@ -634,12 +783,84 @@ async function persistSoaTables(
               rawValue: cell.rawValue,
               normalizedValue: cell.normalizedValue ?? "",
               confidence: cell.confidence,
+              footnoteRefs: cellFootnoteRefs.get(key) ?? [],
             });
           }
         }
 
         if (cellsData.length > 0) {
           await tx.soaCell.createMany({ data: cellsData });
+        }
+
+        if (soa.footnoteDefs.length === 0) continue;
+
+        await tx.soaFootnote.createMany({
+          data: soa.footnoteDefs.map((f) => ({
+            soaTableId: table.id,
+            marker: f.marker,
+            markerOrder: f.markerOrder,
+            text: f.text,
+            source: "detected" as const,
+          })),
+        });
+
+        if (soa.footnoteAnchors.length === 0) continue;
+
+        // Resolve cellId / footnoteId for the anchors via lookup maps —
+        // both relations were just inserted above.
+        const cellRows = await tx.soaCell.findMany({
+          where: { soaTableId: table.id },
+          select: { id: true, rowIndex: true, colIndex: true },
+        });
+        const cellIdMap = new Map<string, string>();
+        for (const c of cellRows) {
+          cellIdMap.set(`${c.rowIndex}:${c.colIndex}`, c.id);
+        }
+
+        const footnoteRows = await tx.soaFootnote.findMany({
+          where: { soaTableId: table.id },
+          select: { id: true, marker: true },
+        });
+        const footnoteIdMap = new Map<string, string>();
+        for (const f of footnoteRows) footnoteIdMap.set(f.marker, f.id);
+
+        const anchorData: Array<{
+          footnoteId: string;
+          soaTableId: string;
+          targetType: "cell" | "row" | "col";
+          cellId: string | null;
+          rowIndex: number | null;
+          colIndex: number | null;
+          confidence: number;
+          source: "detected";
+        }> = [];
+
+        for (const a of soa.footnoteAnchors) {
+          const footnoteId = footnoteIdMap.get(a.footnoteMarker);
+          if (!footnoteId) continue;
+          let cellId: string | null = null;
+          if (a.targetType === "cell") {
+            if (a.rowIndex == null || a.colIndex == null) continue;
+            cellId = cellIdMap.get(`${a.rowIndex}:${a.colIndex}`) ?? null;
+            if (!cellId) continue;
+          }
+          anchorData.push({
+            footnoteId,
+            soaTableId: table.id,
+            targetType: a.targetType,
+            cellId,
+            rowIndex: a.targetType === "row" ? (a.rowIndex ?? null) : null,
+            colIndex: a.targetType === "col" ? (a.colIndex ?? null) : null,
+            confidence: a.confidence,
+            source: "detected",
+          });
+        }
+
+        if (anchorData.length > 0) {
+          await tx.soaFootnoteAnchor.createMany({
+            data: anchorData,
+            skipDuplicates: true,
+          });
         }
       }
     },
