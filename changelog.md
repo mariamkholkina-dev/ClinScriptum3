@@ -2,6 +2,20 @@
 
 ## 2026-05-03
 
+### Спринт 1 SoA footnotes (commit 4/7): tRPC router + service + расширенный getSoaData
+
+Новый домен `soaFootnote` в API:
+- `apps/api/src/services/soa-footnote.service.ts` (новый) — singleton с методами `listForTable`, `create`, `update`, `delete`, `linkAnchor`, `unlinkAnchor`. Каждый метод проходит `requireTenantResource()` через цепочку `soaTable.docVersion.document.study.tenantId`. `linkAnchor` валидирует что `cellId` принадлежит тому же `SoaTable` (защита от cross-table mixing). Внутри сервиса — sync legacy `SoaTable.footnotes` и `SoaCell.footnoteRefs` после каждой мутации, чтобы старый UI продолжал видеть актуальные данные.
+- `apps/api/src/routers/soa-footnote.ts` (новый) — тонкий tRPC router. Все procedures `protectedProcedure`, входы валидируются через `zod`. `linkAnchor` использует `z.discriminatedUnion("type", ...)` для типизированного target (cell/row/col).
+- Регистрация: `appRouter.soaFootnote = soaFootnoteRouter` в `apps/api/src/routers/index.ts`.
+
+`apps/api/src/services/processing.service.ts`:
+- `getSoaData` расширен — теперь `include` включает `soaFootnotes: { orderBy: markerOrder asc, include: anchors }`. Frontend получает нормализованные сноски с массивом anchors напрямую.
+- `updateSoaCellFootnoteRefs` (legacy `@deprecated`) переписан как **shim**: внутри транзакции удаляет существующие cell-anchors данной ячейки и создаёт новые `SoaFootnoteAnchor` рядом с обновлением legacy `SoaCell.footnoteRefs`. Старый клиент работает, новые данные пишутся куда нужно.
+- `updateSoaTableFootnotes` (legacy `@deprecated`) переписан: внутри транзакции `deleteMany SoaFootnote where soaTableId` (cascade удаляет анкоры), затем `createMany` с `marker = String(idx+1)`, `markerOrder = idx`, `source = 'manual'`. Параллельно обнуляет `SoaCell.footnoteRefs` потому что старые `markerOrder` ссылки больше невалидны.
+
+Тесты `apps/api/src/__tests__/integration/soa-footnote-service.test.ts` (новый) — 13 кейсов: create/list, cross-tenant FORBIDDEN, дубликат маркера → CONFLICT, linkAnchor cell/row/col, cellId из чужого SoaTable → DomainError, footnote чужого тенанта → NOT_FOUND, sync legacy footnoteRefs, cascade-delete anchors, legacy shim записывает анкоры в нормализованную таблицу. Все 171 тест api зелёные.
+
 ### Спринт 1 SoA footnotes (commit 3/7): wiring детектора, persist в нормализованные таблицы
 
 `packages/shared/src/soa-detection-core.ts` — внутренняя ревизия детектора SoA, чтобы впервые реально извлекать сноски и привязки к ним из таблицы и сохранять их в `SoaFootnote` + `SoaFootnoteAnchor`.

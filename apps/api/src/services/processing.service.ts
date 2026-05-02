@@ -432,7 +432,13 @@ export const processingService = {
 
     const tables = await prisma.soaTable.findMany({
       where: { docVersionId },
-      include: { cells: { orderBy: [{ rowIndex: "asc" }, { colIndex: "asc" }] } },
+      include: {
+        cells: { orderBy: [{ rowIndex: "asc" }, { colIndex: "asc" }] },
+        soaFootnotes: {
+          orderBy: { markerOrder: "asc" },
+          include: { anchors: true },
+        },
+      },
       orderBy: { createdAt: "asc" },
     });
 
@@ -502,6 +508,11 @@ export const processingService = {
     });
   },
 
+  /**
+   * @deprecated Use `soaFootnote.linkAnchor` / `unlinkAnchor` instead.
+   * Kept until Sprint 5; this shim mirrors the change into the
+   * normalized `soa_footnote_anchors` table so new readers stay in sync.
+   */
   async updateSoaCellFootnoteRefs(
     tenantId: string,
     cellId: string,
@@ -517,12 +528,52 @@ export const processingService = {
     });
     requireTenantResource(cell, tenantId, (c) => c.soaTable.docVersion.document.study.tenantId);
 
-    return prisma.soaCell.update({
-      where: { id: cellId },
-      data: { footnoteRefs },
+    const sortedRefs = [...new Set(footnoteRefs)].sort((a, b) => a - b);
+
+    await prisma.$transaction(async (tx) => {
+      // Drop existing cell-typed anchors for this cell.
+      await tx.soaFootnoteAnchor.deleteMany({
+        where: { cellId, targetType: "cell" },
+      });
+
+      if (sortedRefs.length > 0) {
+        const footnotes = await tx.soaFootnote.findMany({
+          where: {
+            soaTableId: cell.soaTableId,
+            markerOrder: { in: sortedRefs },
+          },
+          select: { id: true, markerOrder: true },
+        });
+        const data = footnotes.map((f) => ({
+          footnoteId: f.id,
+          soaTableId: cell.soaTableId,
+          targetType: "cell" as const,
+          cellId,
+          rowIndex: null,
+          colIndex: null,
+          confidence: 1.0,
+          source: "manual" as const,
+        }));
+        if (data.length > 0) {
+          await tx.soaFootnoteAnchor.createMany({ data, skipDuplicates: true });
+        }
+      }
+
+      await tx.soaCell.update({
+        where: { id: cellId },
+        data: { footnoteRefs: sortedRefs },
+      });
     });
+
+    return prisma.soaCell.findUniqueOrThrow({ where: { id: cellId } });
   },
 
+  /**
+   * @deprecated Use `soaFootnote.create` / `update` / `delete` instead.
+   * Kept until Sprint 5; this shim rewrites the normalized
+   * `soa_footnotes` rows for the table from scratch (manual source) and
+   * preserves `markerOrder` = array index for stable ordering.
+   */
   async updateSoaTableFootnotes(
     tenantId: string,
     soaTableId: string,
@@ -534,10 +585,37 @@ export const processingService = {
     });
     requireTenantResource(table, tenantId, (t) => t.docVersion.document.study.tenantId);
 
-    return prisma.soaTable.update({
-      where: { id: soaTableId },
-      data: { footnotes },
+    await prisma.$transaction(async (tx) => {
+      // Clear existing footnotes (cascades to anchors).
+      await tx.soaFootnote.deleteMany({ where: { soaTableId } });
+
+      if (footnotes.length > 0) {
+        await tx.soaFootnote.createMany({
+          data: footnotes.map((text, idx) => ({
+            soaTableId,
+            marker: String(idx + 1),
+            markerOrder: idx,
+            text,
+            source: "manual" as const,
+          })),
+        });
+      }
+
+      await tx.soaTable.update({
+        where: { id: soaTableId },
+        data: { footnotes },
+      });
+
+      // Existing legacy footnoteRefs on cells now point to (possibly)
+      // different markerOrders; recompute them from anchors which were
+      // cascade-deleted above so each cell ends up with [].
+      await tx.soaCell.updateMany({
+        where: { soaTableId },
+        data: { footnoteRefs: [] },
+      });
     });
+
+    return prisma.soaTable.findUniqueOrThrow({ where: { id: soaTableId } });
   },
 
   async addSoaVisit(
