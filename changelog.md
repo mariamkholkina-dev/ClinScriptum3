@@ -2,15 +2,15 @@
 
 ## 2026-05-02
 
-### Sprint 3 — Performance + robust parsing (LLM Check)
+### Sprint 4 — headings + uniqueness + fuzzy zoneLookup
 
-`apps/workers/src/handlers/classify-sections.ts`, `packages/db/src/seed-prompts.ts`, `apps/workers/src/handlers/__tests__/classify-sections.test.ts`.
+`packages/doc-parser/src/heading-detector.ts`, `packages/rules-engine/src/section-classifier.ts`, `apps/workers/src/handlers/classify-sections.ts`.
 
-**3.1 — Batch-режим в LLM Check.** Раньше Step 2 делал 1 LLM-вызов на каждую секцию (~200 запросов на протокол). Теперь — batches по `LLM_CHECK_BATCH_SIZE=20` с per-batch retry (`LLM_CHECK_BATCH_RETRY_ATTEMPTS=2`). Промпт обновлён под формат `[idx] Title | путь | алгоритм:zone | preview` → ответ JSON-array `[{idx,zone,confidence}]`. Если в массиве пропущен idx — соответствующая секция остаётся на deterministic-зоне с warn-логом. ~10× меньше LLM-запросов и токенов overhead'а.
+**4.1 — Numbered headings без bold.** В `heading-detector.ts` numbered секции (regex `^(\d+(?:\.\d+)*)\s+`) теперь распознаются и без флага `isBold`. Чтобы избежать false-positives на list-items: фильтр trailing-punctuation (`,;:` → null), для single-level (`dots<2`) — длина ≤ 80 chars. Multi-level (`1.1`, `1.1.1`) распознаются всегда. +5 unit-тестов.
 
-**3.2 — Robust JSON parser.** `extractBalanced(s, open, close)` — balanced-bracket parser с поддержкой quoted-strings и escapes. Заменил greedy regex `\[[\s\S]*\]` который ломался на reasoning-ответах вида «пример: [1,2,3], результат: [{...}]» (matched от первого `[` до последнего `]`). Новый flow: 1) `JSON.parse(cleaned)` целиком (fast-path), 2) `extractBalanced` для array, 3) для object с `sections`/`results`/`corrections` внутри. +8 unit-тестов.
+**4.2 — Singleton constraints в `classifyHierarchical`.** Жёсткий список `SINGLETON_ZONES` (synopsis, rationale, introduction, abbreviations, table_of_contents, references, schema, visit_schedule). Если deterministic classifier выдал одну такую zone для нескольких секций → оставляем секцию с max confidence, остальным сбрасываем `standardSection=null, confidence=0` (LLM Check переклассифицирует). +2 unit-теста.
 
-**3.3 — Снять двойной retry.** Удалена константа `MAX_RETRIES` и per-section retry-loop в LLM Check. Полагаемся на orchestrator step-retry (`lib/step-retry.ts`, 3 попытки exp. backoff для `llm_check`/`llm_qa`) + per-batch retry на TypeError fetch failed. Раньше было 3 уровня retry (per-section × per-orchestrator-attempt × per-pipeline-attempt) — overcorrelated и медленно при failures.
+**4.3 — Fuzzy `resolveZoneKey` через Levenshtein.** Когда LLM вернул невалидный zone-key (опечатка, лишний/пропущенный underscore) — поиск ближайшего по distance ≤ 3 (с safety-проверкой `dist > key.length / 2 → skip`). Экономит дорогие LLM-cycle на регенерацию. 2-row optimization Levenshtein.
 
 ### Rule-admin: quick-fix + jump-to-row в Diff overlay классификации
 

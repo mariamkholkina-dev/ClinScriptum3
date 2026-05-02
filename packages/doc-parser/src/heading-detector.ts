@@ -62,14 +62,32 @@ export function detectHeading(
   }
 
   const numMatch = text.match(NUMBERED_SECTION_RE);
-  if (numMatch && isBold) {
+  if (numMatch) {
     const dots = numMatch[1].split(".").length;
-    return {
-      text: text.trim(),
-      level: dots,
-      method: "numbered",
-      paragraphIndex,
-    };
+    const trimmed = text.trim();
+
+    // Bold numbered → всегда heading.
+    if (isBold) {
+      return { text: trimmed, level: dots, method: "numbered", paragraphIndex };
+    }
+
+    // Sprint 4.1: numbered headings БЕЗ bold. Реальные документы клин.
+    // исследований часто имеют numbered headings без жирного шрифта (стиль
+    // Heading 1-9 не привязан к bold). Раньше такие секции пропускались
+    // — документ становился "плоским" без иерархии.
+    //
+    // NUMBERED_SECTION_RE требует пробел после номера ("1 Title"), а не
+    // точку ("1. Apple"), поэтому большинство list-items уже отфильтрованы
+    // на уровне regex. Дополнительно проверяем:
+    //   - не оканчивается на запятую/точку с запятой/двоеточие (это list item)
+    //   - для dots < 2 — длина ≤ 80 chars (single-level одиночные пункты
+    //     длинных списков отсекаются)
+    const lastChar = trimmed.charAt(trimmed.length - 1);
+    if (lastChar === "," || lastChar === ";" || lastChar === ":") return null;
+
+    if (dots < 2 && trimmed.length > 80) return null;
+
+    return { text: trimmed, level: dots, method: "numbered", paragraphIndex };
   }
 
   return null;

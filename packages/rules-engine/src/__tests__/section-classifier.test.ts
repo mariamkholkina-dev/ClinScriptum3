@@ -531,4 +531,56 @@ describe("SectionClassifier", () => {
       expect(results.get("s1")?.standardSection).toBe("safety.adverse_events");
     });
   });
+
+  describe("Sprint 4.2 — singleton constraints", () => {
+    const synopsisRule: SectionMappingRule = {
+      standardSection: "synopsis",
+      patterns: ["(?i)\\bsynopsis\\b|\\bсинопсис\\b"],
+      type: "zone",
+      isRequired: true,
+      category: "protocol",
+    };
+
+    it("keeps highest-confidence section when singleton zone matches multiple", () => {
+      const cls = new SectionClassifier([synopsisRule]);
+      const sections = [
+        { id: "s1", title: "Synopsis", level: 1 }, // exact match — высокий confidence
+        { id: "s2", title: "Краткий синопсис исследования", level: 2 }, // слабее
+      ];
+      const results = cls.classifyHierarchical(sections);
+
+      const s1 = results.get("s1");
+      const s2 = results.get("s2");
+
+      // Один из двух должен сохранить synopsis (тот что с большим confidence),
+      // другой — null. Не оба и не ноль.
+      const synopsisCount = [s1, s2].filter((r) => r?.standardSection === "synopsis").length;
+      expect(synopsisCount).toBe(1);
+
+      // Тот что с null — не должен оставить старый confidence
+      const cleared = [s1, s2].find((r) => r?.standardSection === null);
+      expect(cleared?.confidence).toBe(0);
+    });
+
+    it("does NOT enforce singleton for non-singleton zones (e.g. procedures)", () => {
+      // Создаём fake правило procedures (не в SINGLETON_ZONES) — несколько секций
+      // могут иметь её одновременно.
+      const proceduresRule: SectionMappingRule = {
+        standardSection: "procedures",
+        patterns: ["(?i)\\bprocedures?\\b|\\bпроцедуры?\\b"],
+        type: "zone",
+        isRequired: false,
+        category: "protocol",
+      };
+      const cls = new SectionClassifier([proceduresRule]);
+      const sections = [
+        { id: "s1", title: "Procedures", level: 1 },
+        { id: "s2", title: "Study Procedures", level: 1 },
+      ];
+      const results = cls.classifyHierarchical(sections);
+
+      expect(results.get("s1")?.standardSection).toBe("procedures");
+      expect(results.get("s2")?.standardSection).toBe("procedures");
+    });
+  });
 });
