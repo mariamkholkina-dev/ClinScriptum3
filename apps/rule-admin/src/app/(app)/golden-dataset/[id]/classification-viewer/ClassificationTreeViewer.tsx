@@ -1227,9 +1227,38 @@ export default function ClassificationTreeViewer({
   // Мутация обновления expected_results JSON (для extra/missing в diff overlay).
   // Используется когда нужно добавить/изменить/удалить запись секции в эталоне,
   // а не только её standardSection в БД.
+  //
+  // Optimistic update: сразу патчим cached getSample в react-query чтобы UI
+  // обновился мгновенно — invalidate без optimistic иногда не приводил к
+  // быстрому re-render parent'а (page.tsx → StagePanel → StageDataViewer →
+  // ClassificationTreeViewer), и diff overlay показывал устаревший snapshot.
   const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onSuccess: () => {
-      // Перепроверяем sample целиком чтобы page.tsx state и StagePanel synced
+    onMutate: async (vars) => {
+      if (!goldenSampleId) return;
+      await utils.goldenDataset.getSample.cancel({ id: goldenSampleId });
+      const prev = utils.goldenDataset.getSample.getData({ id: goldenSampleId });
+      if (prev) {
+        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            stageStatuses: old.stageStatuses.map((s) =>
+              s.stage === vars.stage
+                ? { ...s, expectedResults: vars.expectedResults ?? s.expectedResults }
+                : s,
+            ),
+          };
+        });
+      }
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      // Откатываем optimistic update при ошибке server-side
+      if (goldenSampleId && ctx?.prev) {
+        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
+      }
+    },
+    onSettled: () => {
       if (goldenSampleId) {
         utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
       }
