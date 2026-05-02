@@ -2,6 +2,14 @@
 
 ## 2026-05-02
 
+### Rule-admin: breadcrumb иерархии в diff overlay классификации
+
+`apps/rule-admin/.../ClassificationTreeViewer.tsx`. В каждой строке Diff overlay над заголовком теперь показывается путь от корня документа до родителя секции (мелким серым шрифтом). Например, для секции «Препарат сравнения» в разделе «5. Изучаемый препарат / 5.2. Описание препаратов» breadcrumb даст «Изучаемый препарат / Описание препаратов».
+
+Для дубликатов одинаковых titles (типичная ситуация в clinical protocols — «Препарат сравнения», «Совет по этике…») это **единственный** способ различить разные секции документа без перехода в дерево.
+
+Реализация: в главном компоненте — `useMemo` с обходом `rawSections` в document-order через стек по `level`. Передаётся как prop `sectionPaths: Map<string, string[]>` в `ClassificationDiffOverlay`. Для `missing` entry breadcrumb не показывается (нет реальной секции в документе).
+
 ### Rule-admin: точные индексы actualSectionId/expectedIndex в diff overlay (фикс дубликатов)
 
 `apps/rule-admin/.../classification-viewer/{utils.ts,types.ts,ClassificationTreeViewer.tsx}`. Исправлен серьёзный баг quick-fix для документов с дубликатами заголовков (например «Препарат сравнения», «Совет по этике»):

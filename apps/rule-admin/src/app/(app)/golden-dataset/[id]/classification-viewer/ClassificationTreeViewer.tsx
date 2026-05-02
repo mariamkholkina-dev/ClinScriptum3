@@ -166,6 +166,10 @@ interface DiffOverlayProps {
   entries: DiffEntry[];
   /** Все секции — для построения id→Section lookup и для missing-jump fallback. */
   sections: Section[];
+  /** Path-цепочка parent-titles для каждой actual-секции (Map<sectionId, [root..parent]>).
+      Показывается над title в каждой entry — для дубликатов titles это
+      единственный способ различить разделы документа. */
+  sectionPaths: Map<string, string[]>;
   /** Опции taxonomy для inline-select правки. */
   taxonomyOptions: Array<{ value: string; label: string; type: string }>;
   /**
@@ -195,6 +199,7 @@ interface DiffOverlayProps {
 function ClassificationDiffOverlay({
   entries,
   sections,
+  sectionPaths,
   taxonomyOptions,
   onQuickFix,
   onJumpToSection,
@@ -280,6 +285,21 @@ function ClassificationDiffOverlay({
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
+                  {/* Breadcrumb из parent titles — для wrong_section/extra (где
+                      есть actualSectionId). Для missing entry показать нечего:
+                      секции в документе нет, иерархического положения тоже. */}
+                  {e.actualSectionId && (() => {
+                    const path = sectionPaths.get(e.actualSectionId) ?? [];
+                    if (path.length === 0) return null;
+                    return (
+                      <div
+                        className="text-[10px] text-gray-400 truncate"
+                        title={path.join(" / ")}
+                      >
+                        {path.join(" / ")}
+                      </div>
+                    );
+                  })()}
                   <span
                     className={`font-medium ${
                       e.type === "missing"
@@ -1196,6 +1216,24 @@ export default function ClassificationTreeViewer({
     () => (showDiff ? diffClassificationWithExpected(rawSections, expectedResults) : []),
     [showDiff, rawSections, expectedResults],
   );
+
+  // Map<sectionId, [root..parent]> — путь от корня до родителя секции
+  // (без самой секции). Используется в diff overlay для показа breadcrumb,
+  // чтобы дубликаты titles были различимы по контексту иерархии.
+  // Стек parent'ов проходит rawSections в document order и поддерживается
+  // по правилу level: всё с level >= текущего выталкивается.
+  const sectionPaths = useMemo(() => {
+    const map = new Map<string, string[]>();
+    const stack: Section[] = [];
+    for (const s of rawSections) {
+      while (stack.length > 0 && stack[stack.length - 1].level >= s.level) {
+        stack.pop();
+      }
+      map.set(s.id, stack.map((p) => p.title));
+      stack.push(s);
+    }
+    return map;
+  }, [rawSections]);
   const diffMap = useMemo(() => {
     const m = new Map<string, DiffEntry["type"]>();
     for (const e of diffEntries) {
@@ -1563,6 +1601,7 @@ export default function ClassificationTreeViewer({
         <ClassificationDiffOverlay
           entries={diffEntries}
           sections={rawSections}
+          sectionPaths={sectionPaths}
           taxonomyOptions={taxonomyOptions}
           onQuickFix={(params) => handleQuickFix(params)}
           onJumpToSection={(sectionId) => {
