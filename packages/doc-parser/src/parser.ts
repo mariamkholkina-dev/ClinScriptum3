@@ -53,6 +53,11 @@ export async function parseDocx(
           rawHtml: el.html,
           order: blockOrder++,
           sourceAnchor: { paragraphIndex: i, textSnippet: text.slice(0, 80) },
+          tableAst: {
+            headers: parsed.headers,
+            rows: parsed.rows,
+            footnotes: parsed.footnotes,
+          },
         },
         heading: lastHeading,
       });

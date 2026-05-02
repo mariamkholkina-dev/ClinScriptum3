@@ -1,4 +1,5 @@
 import type { FactExtractionRule } from "./types.js";
+import { aggregateByCanonical, type AggregatedFact } from "./canonicalize.js";
 
 const MAX_VALUE_LENGTH = 120;
 
@@ -33,8 +34,23 @@ export class FactExtractor {
   /**
    * URS-073: Use regex as the primary deterministic mechanism
    * before LLM verification or extraction.
+   *
+   * Returns aggregated facts grouped by canonical value. All raw
+   * matches are collected (no early-exit on first hit) so that
+   * synopsis + body confirmations boost confidence and contradictions
+   * remain visible to downstream callers.
    */
-  extract(text: string, sectionTitle?: string): ExtractedFact[] {
+  extract(text: string, sectionTitle?: string): AggregatedFact[] {
+    return aggregateByCanonical(this.extractRaw(text, sectionTitle));
+  }
+
+  /**
+   * Lower-level API: returns every raw match, in order. Use
+   * `aggregateByCanonical` to collapse them. Useful for callers
+   * that need to combine matches from multiple sections before
+   * voting.
+   */
+  extractRaw(text: string, sectionTitle?: string): ExtractedFact[] {
     const results: ExtractedFact[] = [];
 
     for (const rule of this.rules) {
@@ -59,43 +75,30 @@ export class FactExtractor {
               method: "regex",
             },
           });
-
-          if (!rule.multipleValues) break;
         }
       }
     }
 
-    return deduplicateFacts(results);
+    return results;
   }
 
   extractFromSections(
     sections: Array<{ title: string; content: string; isSynopsis?: boolean }>
-  ): ExtractedFact[] {
-    const allFacts: ExtractedFact[] = [];
+  ): AggregatedFact[] {
+    const allRaw: ExtractedFact[] = [];
 
     const synopsisSection = sections.find((s) => s.isSynopsis);
     if (synopsisSection) {
-      allFacts.push(...this.extract(synopsisSection.content, synopsisSection.title));
+      allRaw.push(...this.extractRaw(synopsisSection.content, synopsisSection.title));
     }
 
     for (const section of sections) {
       if (section.isSynopsis) continue;
-      allFacts.push(...this.extract(section.content, section.title));
+      allRaw.push(...this.extractRaw(section.content, section.title));
     }
 
-    return deduplicateFacts(allFacts);
+    return aggregateByCanonical(allRaw);
   }
-}
-
-function deduplicateFacts(facts: ExtractedFact[]): ExtractedFact[] {
-  const seen = new Map<string, ExtractedFact>();
-  for (const fact of facts) {
-    const key = `${fact.factKey}:${fact.value}`;
-    if (!seen.has(key)) {
-      seen.set(key, fact);
-    }
-  }
-  return Array.from(seen.values());
 }
 
 export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
@@ -188,8 +191,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "primary_endpoint",
     patterns: [
-      "primary\\s+(?:endpoint|outcome|efficacy\\s+endpoint)[:\\s]+([^\\n]+)",
-      "(?:первичн\\w+\\s+конечн\\w+\\s+точк|основн\\w+\\s+(?:конечн\\w+\\s+точк|критери\\w+\\s+эффективност))\\w*[:\\s—–-]+([^\\n]+)",
+      "primary\\s+(?:endpoint|outcome|efficacy\\s+endpoint)[:\\s]+([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
+      "(?:первичн\\w+\\s+конечн\\w+\\s+точк|основн\\w+\\s+(?:конечн\\w+\\s+точк|критери\\w+\\s+эффективност))\\w*[:\\s—–-]+([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["synopsis", "body"],
@@ -198,8 +201,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "secondary_endpoint",
     patterns: [
-      "secondary\\s+(?:endpoint|outcome)[:\\s]+([^\\n]+)",
-      "(?:вторичн\\w+\\s+конечн\\w+\\s+точк|вторичн\\w+\\s+цел)\\w*[:\\s—–-]+([^\\n]+)",
+      "secondary\\s+(?:endpoint|outcome)[:\\s]+([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
+      "(?:вторичн\\w+\\s+конечн\\w+\\s+точк|вторичн\\w+\\s+цел)\\w*[:\\s—–-]+([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["body"],
@@ -208,8 +211,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "inclusion_criteria",
     patterns: [
-      "inclusion\\s+criteria[:\\s]*([^\\n]+)",
-      "(?:критери\\w+\\s+включени)\\s*[:\\s]*([^\\n]+)",
+      "inclusion\\s+criteria[:\\s]*([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
+      "(?:критери\\w+\\s+включени)\\s*[:\\s]*([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["body"],
@@ -218,8 +221,8 @@ export const DEFAULT_FACT_RULES: FactExtractionRule[] = [
   {
     factKey: "exclusion_criteria",
     patterns: [
-      "exclusion\\s+criteria[:\\s]*([^\\n]+)",
-      "(?:критери\\w+\\s+(?:не)?включени)\\s*[:\\s]*([^\\n]+)",
+      "exclusion\\s+criteria[:\\s]*([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
+      "(?:критери\\w+\\s+(?:не)?включени)\\s*[:\\s]*([^\\n]+(?:\\n-\\s+[^\\n]+)*)",
     ],
     factClass: "phase_specific",
     sourcePriority: ["body"],

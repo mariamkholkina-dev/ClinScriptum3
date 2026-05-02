@@ -19,3 +19,4 @@ export type { LlmTaskConfig, LlmConfigSnapshot, ReasoningMode } from "./llm-conf
 export { loadGenerationPrompts } from "./generation-prompts.js";
 export { loadBundleRules, loadRulesForType, snapshotRules, resolveActiveBundle } from "./bundle-rule-loader.js";
 export type { ResolvedRuleSet } from "./bundle-rule-loader.js";
+export { seedFactAnchors, FACT_ANCHORS_SEED } from "./seed-fact-anchors.js";
