@@ -324,11 +324,26 @@ function ClassificationDiffOverlay({
                     disabled={fixPending}
                   >
                     <option value="">— null —</option>
-                    {taxonomyOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
+                    {taxonomyOptions
+                      .filter((o) => o.type === "zone")
+                      .slice()
+                      .sort((a, b) => a.label.localeCompare(b.label, "ru"))
+                      .map((zone) => {
+                        const subzones = taxonomyOptions
+                          .filter((s) => s.type === "subzone" && s.value.startsWith(zone.value + "."))
+                          .slice()
+                          .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+                        return (
+                          <optgroup key={zone.value} label={zone.label}>
+                            <option value={zone.value}>{zone.label}</option>
+                            {subzones.map((s) => (
+                              <option key={s.value} value={s.value}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        );
+                      })}
                   </select>
                 )}
                 <button
@@ -874,11 +889,15 @@ function SectionClassificationEditor({
         <option value="">— Не определена —</option>
         {taxonomyOptions
           .filter((o) => o.type === "zone")
+          .slice()
+          .sort((a, b) => a.label.localeCompare(b.label, "ru"))
           .map((zone) => (
             <optgroup key={zone.value} label={zone.label}>
               <option value={zone.value}>{zone.label}</option>
               {taxonomyOptions
                 .filter((s) => s.type === "subzone" && s.value.startsWith(zone.value + "."))
+                .slice()
+                .sort((a, b) => a.label.localeCompare(b.label, "ru"))
                 .map((s) => (
                   <option key={s.value} value={s.value}>
                     {s.label}

@@ -2,6 +2,15 @@
 
 ## 2026-05-02
 
+### Rule-admin: zone-группировка и сортировка в select'ах классификации
+
+`apps/rule-admin/.../ClassificationTreeViewer.tsx`. Раньше select для выбора зоны в строке Diff overlay (quick-fix `extra`/`wrong_section`) показывал **плоский список** всех taxonomy options — найти нужную зону среди ~100 элементов было сложно. Сейчас:
+
+- Опции группируются `<optgroup>` по zone (как в основном in-row редакторе SectionTreeRow): сначала zone, под ней её subzones.
+- Внутри group — сортировка по `label` русским collation'ом. Zones — тоже отсортированы alphabetically.
+
+Эта же сортировка добавлена в основной `SectionTreeRow`-редактор (раньше zones и subzones шли в порядке возврата из БД).
+
 ### Rule-admin: quick-fix + jump-to-row в Diff overlay классификации
 
 `apps/rule-admin/.../ClassificationTreeViewer.tsx`. На странице Эталонные наборы → этап «Классификация» → панель Diff с эталоном (открывается по кнопке) каждая строка теперь имеет:
