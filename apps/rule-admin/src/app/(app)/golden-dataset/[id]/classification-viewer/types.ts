@@ -31,6 +31,14 @@ export interface DiffEntry {
   sectionTitle: string;
   expected?: { standardSection: string | null };
   actual?: { standardSection: string | null };
+  /** Абсолютный индекс в expected.sections — для wrong_section и missing.
+      Нужен чтобы quick-fix обновлял ИМЕННО ту запись, на которую matched
+      этот entry (важно при дубликатах title в expected). */
+  expectedIndex?: number;
+  /** ID actual-секции — для wrong_section и extra. Нужен чтобы quick-fix
+      менял Section.standardSection ИМЕННО для нужной секции (важно при
+      дубликатах title в реальном документе). */
+  actualSectionId?: string;
 }
 
 export type SortKey =

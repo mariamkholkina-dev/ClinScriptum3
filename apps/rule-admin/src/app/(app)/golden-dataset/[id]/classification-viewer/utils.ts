@@ -94,10 +94,15 @@ export function diffClassificationWithExpected(
   // первая expected с title T → bucket[0], вторая → bucket[1], и т.д.
   // Если expected больше чем actual в bucket — оставшиеся expected = missing.
   // Если actual больше чем expected — оставшиеся actual = extra.
+  //
+  // expectedIndex и actualSectionId сохраняются в каждой entry — чтобы
+  // quick-fix мог точно обновить нужную запись (а не первую по title через
+  // findIndex, что для дубликатов попадает не в тот элемент).
   const matchedActual = new Set<string>();
   const usedFromBucket = new Map<string, number>();
 
-  for (const exp of expected.sections) {
+  for (let expIdx = 0; expIdx < expected.sections.length; expIdx++) {
+    const exp = expected.sections[expIdx];
     const key = exp.title.trim().toLowerCase();
     const bucket = actualByTitle.get(key) ?? [];
     const usedSoFar = usedFromBucket.get(key) ?? 0;
@@ -107,6 +112,7 @@ export function diffClassificationWithExpected(
         type: "missing",
         sectionTitle: exp.title,
         expected: { standardSection: exp.standardSection },
+        expectedIndex: expIdx,
       });
       continue;
     }
@@ -121,6 +127,8 @@ export function diffClassificationWithExpected(
         sectionTitle: exp.title,
         expected: { standardSection: exp.standardSection },
         actual: { standardSection: actual.standardSection },
+        expectedIndex: expIdx,
+        actualSectionId: actual.id,
       });
     }
   }
@@ -131,6 +139,7 @@ export function diffClassificationWithExpected(
         type: "extra",
         sectionTitle: s.title,
         actual: { standardSection: s.standardSection },
+        actualSectionId: s.id,
       });
     }
   }

@@ -2,6 +2,19 @@
 
 ## 2026-05-02
 
+### Rule-admin: точные индексы actualSectionId/expectedIndex в diff overlay (фикс дубликатов)
+
+`apps/rule-admin/.../classification-viewer/{utils.ts,types.ts,ClassificationTreeViewer.tsx}`. Исправлен серьёзный баг quick-fix для документов с дубликатами заголовков (например «Препарат сравнения», «Совет по этике»):
+
+- Раньше `handleQuickFix` искал запись в `expected.sections` через `findIndex` по `title` — для дубликатов всегда находил **первое** вхождение. Multimap-matching в `diffClassificationWithExpected` мог сопоставить wrong_section со ВТОРЫМ дубликатом, и quick-fix обновлял не ту запись: ломал первый дубликат (превращал его в новый wrong_section), оставляя второй прежним. Внешне это выглядело как «после клика ничего не происходит».
+- Кнопка «Перейти к строке» аналогично использовала `titleToSection` (первое вхождение) — для дубликатов прыгала не на ту секцию.
+
+Фикс:
+
+- `DiffEntry` теперь хранит `expectedIndex` (абсолютный индекс в `expected.sections`) и `actualSectionId` (id реальной секции). Заполняются в `diffClassificationWithExpected` во время multimap-matching.
+- `handleQuickFix` использует переданные индексы напрямую вместо `findIndex` по title. wrong_section обновляет ровно `expected.sections[expectedIndex]`, missing удаляет ровно его.
+- `ClassificationDiffOverlay` использует `sectionsById` (вместо `titleToSection`) для кнопки «Перейти» и для suggested zone — `e.actualSectionId` уникально указывает на нужную actual-секцию.
+
 ### Rule-admin: zone-группировка и сортировка в select'ах классификации
 
 `apps/rule-admin/.../ClassificationTreeViewer.tsx`. Раньше select для выбора зоны в строке Diff overlay (quick-fix `extra`/`wrong_section`) показывал **плоский список** всех taxonomy options — найти нужную зону среди ~100 элементов было сложно. Сейчас:

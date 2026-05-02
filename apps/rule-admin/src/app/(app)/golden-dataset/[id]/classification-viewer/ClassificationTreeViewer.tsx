@@ -164,19 +164,25 @@ function ContentBlockPanel({ blocks }: { blocks: Section["contentBlocks"] }) {
 
 interface DiffOverlayProps {
   entries: DiffEntry[];
-  /** Все секции — для маппинга entry.sectionTitle → sectionId. */
+  /** Все секции — для построения id→Section lookup и для missing-jump fallback. */
   sections: Section[];
   /** Опции taxonomy для inline-select правки. */
   taxonomyOptions: Array<{ value: string; label: string; type: string }>;
   /**
-   * Quick-fix мутация. Логика по типу:
-   *   - wrong_section: обновить Section.standardSection + upsert в expected_results
-   *   - extra: добавить запись в expected_results (опционально изменить standardSection)
-   *   - missing: удалить запись из expected_results (sectionId=null, newZone=null)
+   * Quick-fix мутация. Принимает ТОЧНЫЕ ссылки из DiffEntry (actualSectionId,
+   * expectedIndex) — НЕ ищет по title (важно для документов с дубликатами
+   * заголовков; иначе обновляется не та запись и появляется новый wrong_section).
+   *
+   * Логика по типу:
+   *   - wrong_section: обновить Section[actualSectionId].standardSection +
+   *                    expected.sections[expectedIndex].standardSection
+   *   - extra: добавить запись в expected.sections + обновить Section[actualSectionId]
+   *   - missing: удалить expected.sections[expectedIndex]
    */
   onQuickFix: (params: {
     diffType: DiffEntry["type"];
-    sectionId: string | null;
+    actualSectionId: string | null;
+    expectedIndex: number | null;
     sectionTitle: string;
     newZone: string | null;
   }) => void;
@@ -194,9 +200,12 @@ function ClassificationDiffOverlay({
   onJumpToSection,
   fixPending,
 }: DiffOverlayProps) {
-  const titleToSection = useMemo(() => {
+  // id-lookup для случая, когда entry уже несёт actualSectionId
+  // (wrong_section/extra). Для missing entry actualSectionId = undefined,
+  // и кнопка «Перейти к строке» в принципе не показывается (нет actual).
+  const sectionsById = useMemo(() => {
     const m = new Map<string, Section>();
-    for (const s of sections) m.set(s.title.trim().toLowerCase(), s);
+    for (const s of sections) m.set(s.id, s);
     return m;
   }, [sections]);
 
@@ -245,7 +254,12 @@ function ClassificationDiffOverlay({
       <div className="max-h-80 overflow-y-auto space-y-1.5">
         {entries.map((e, i) => {
           const rowKey = getRowKey(e, i);
-          const matchedSection = titleToSection.get(e.sectionTitle.trim().toLowerCase());
+          // Берём ТОЧНУЮ секцию по id из entry (не первую попавшуюся по title!),
+          // иначе для дубликатов кнопка «Перейти» прыгает не туда, а quick-fix
+          // обновляет не ту запись.
+          const matchedSection = e.actualSectionId
+            ? sectionsById.get(e.actualSectionId)
+            : undefined;
           const suggestedZone = getSuggestedZone(e, matchedSection);
           const currentValue = pendingZones.get(rowKey) ?? suggestedZone;
           const applyMeta = getApplyLabel(e);
@@ -351,7 +365,8 @@ function ClassificationDiffOverlay({
                   onClick={() =>
                     onQuickFix({
                       diffType: e.type,
-                      sectionId: matchedSection?.id ?? null,
+                      actualSectionId: e.actualSectionId ?? null,
+                      expectedIndex: e.expectedIndex ?? null,
                       sectionTitle: e.sectionTitle,
                       newZone: e.type === "missing" ? null : (currentValue === "" ? null : currentValue),
                     })
@@ -1259,31 +1274,45 @@ export default function ClassificationTreeViewer({
     },
   });
 
-  // Quick-fix для строки diff overlay. Принимает sectionId (если есть в БД),
-  // sectionTitle и newZone. Логика по типу entry:
-  //  - extra: section в БД, нет в expected → upsert в expected.sections[*]
-  //  - wrong_section: есть в обоих, разные zone → updateClassification (Section)
-  //                   + upsert в expected (чтобы не появился extra)
-  //  - missing: нет в БД, есть в expected → удалить из expected
+  // Quick-fix для строки diff overlay. Принимает ТОЧНЫЕ ссылки из DiffEntry:
+  //   - actualSectionId — id реальной секции (для wrong_section/extra)
+  //   - expectedIndex — абсолютный индекс в expected.sections (для wrong_section/missing)
+  //
+  // КРИТИЧНО: НЕ ищем по title через findIndex. Документы могут иметь дубликаты
+  // заголовков (типичный случай — «Препарат сравнения», «Совет по этике» на
+  // разных уровнях). Multimap matching в diffClassificationWithExpected
+  // распределяет expected-записи по actual в порядке появления, а findIndex
+  // находил бы только ПЕРВОЕ вхождение → quick-fix обновлял не тот элемент:
+  // wrong_section[1] становилась match, но wrong_section[0] (раньше match)
+  // ломалась. Это приводило к "ничего не происходит" + накопление поломок.
+  //
+  // Логика по типу:
+  //   - wrong_section: Section[actualSectionId].standardSection := newZone
+  //                    + expected.sections[expectedIndex].standardSection := newZone
+  //   - extra: Section[actualSectionId].standardSection := newZone
+  //            + push новой записи в expected.sections (для каждого дубликата
+  //              нужна отдельная expected-запись — multimap-matching распределит)
+  //   - missing: удалить expected.sections[expectedIndex]
   const handleQuickFix = useCallback(
     (params: {
       diffType: DiffEntry["type"];
-      sectionId: string | null;
+      actualSectionId: string | null;
+      expectedIndex: number | null;
       sectionTitle: string;
       newZone: string | null;
     }) => {
-      const { diffType, sectionId, sectionTitle, newZone } = params;
+      const { diffType, actualSectionId, expectedIndex, sectionTitle, newZone } = params;
 
-      // 1) Update Section.standardSection (если есть section и тип — wrong_section/extra)
-      if (sectionId && diffType !== "missing" && newZone !== null) {
+      // 1) Update Section.standardSection (только wrong_section/extra)
+      if (actualSectionId && diffType !== "missing" && newZone !== null) {
         updateClassification.mutate({
-          sectionId,
+          sectionId: actualSectionId,
           standardSection: newZone,
           classificationStatus: "validated",
         });
       }
 
-      // 2) Update expected_results JSON (если есть golden-sample context)
+      // 2) Update expected_results JSON
       if (!goldenSampleId) return;
 
       const current =
@@ -1291,31 +1320,30 @@ export default function ClassificationTreeViewer({
           ? (expectedResults as { sections?: Array<Record<string, unknown>> })
           : null) ?? {};
       const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
-      const titleLower = sectionTitle.trim().toLowerCase();
-      const existingIdx = sectionsArr.findIndex(
-        (s) => String(s.title ?? "").trim().toLowerCase() === titleLower,
-      );
 
       let nextSections: Array<Record<string, unknown>>;
-      if (diffType === "missing" && existingIdx >= 0) {
-        // Эксперт согласен, что эта секция не должна быть в эталоне → удаляем
-        // ровно ОДНУ запись (для документов с дубликатами titles удалим первую).
-        nextSections = sectionsArr.filter((_, i) => i !== existingIdx);
+      if (diffType === "missing") {
+        if (expectedIndex == null || expectedIndex < 0 || expectedIndex >= sectionsArr.length) {
+          // Защитная ветка — entry без expectedIndex быть не должно
+          return;
+        }
+        nextSections = sectionsArr.filter((_, i) => i !== expectedIndex);
       } else if (diffType === "extra") {
-        // Для extra ВСЕГДА insert, даже если existingIdx >= 0. Это поддерживает
-        // случай дубликатов titles в документе: для каждой actual-секции с
-        // одинаковым title нужна отдельная запись в expected (multimap-matching).
+        // Push новой записи. Multimap-matching распределит её по правильному
+        // дубликату actual-секции в следующем рендере.
         nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
-      } else if (existingIdx >= 0) {
-        // wrong_section с существующей expected-записью → обновляем zone
-        nextSections = sectionsArr.map((s, i) =>
-          i === existingIdx
-            ? { ...s, title: sectionTitle, standardSection: newZone }
-            : s,
-        );
       } else {
-        // wrong_section без expected-записи (странный случай) → insert
-        nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
+        // wrong_section
+        if (expectedIndex == null || expectedIndex < 0 || expectedIndex >= sectionsArr.length) {
+          // Странный случай: wrong_section без expectedIndex → insert
+          nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
+        } else {
+          nextSections = sectionsArr.map((s, i) =>
+            i === expectedIndex
+              ? { ...s, title: sectionTitle, standardSection: newZone }
+              : s,
+          );
+        }
       }
 
       updateExpected.mutate({
