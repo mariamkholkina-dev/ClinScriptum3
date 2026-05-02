@@ -1811,9 +1811,117 @@ function SoaTab({ versionId }: { versionId: string }) {
                 </span>
               </div>
             </div>
+
+            {/* Footnotes (read-only) */}
+            <SoaFootnotesReadOnly
+              footnotes={(table.soaFootnotes ?? []) as SoaFootnoteWithAnchors[]}
+              selectedCellId={(() => {
+                if (!selectedCell || selectedCell.tableId !== table.id) return null;
+                return (
+                  cells.find(
+                    (c: any) =>
+                      c.rowIndex === selectedCell.row &&
+                      c.colIndex === selectedCell.col,
+                  )?.id ?? null
+                );
+              })()}
+            />
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ──────────── SOA Footnotes (read-only list) ──────────── */
+
+interface SoaFootnoteAnchor {
+  id: string;
+  targetType: "cell" | "row" | "col";
+  cellId: string | null;
+  rowIndex: number | null;
+  colIndex: number | null;
+}
+
+interface SoaFootnoteWithAnchors {
+  id: string;
+  marker: string;
+  text: string;
+  source: "detected" | "manual";
+  anchors: SoaFootnoteAnchor[];
+}
+
+function SoaFootnotesReadOnly({
+  footnotes,
+  selectedCellId,
+}: {
+  footnotes: SoaFootnoteWithAnchors[];
+  selectedCellId: string | null;
+}) {
+  if (footnotes.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-lg border bg-white shadow-sm">
+      <div className="px-5 py-3 border-b bg-gray-50/50 flex items-center gap-2">
+        <Footprints className="h-4 w-4 text-gray-500" />
+        <h3 className="text-sm font-semibold text-gray-800">
+          Сноски ({footnotes.length})
+        </h3>
+        <span className="ml-auto text-[11px] text-gray-400 inline-flex items-center gap-1">
+          <Info className="h-3 w-3" />
+          Редактирование в rule-admin
+        </span>
+      </div>
+      <ul className="divide-y">
+        {footnotes.map((fn) => {
+          let cells = 0;
+          let rows = 0;
+          let cols = 0;
+          let highlighted = false;
+          for (const a of fn.anchors) {
+            if (a.targetType === "cell") {
+              cells++;
+              if (selectedCellId && a.cellId === selectedCellId) highlighted = true;
+            } else if (a.targetType === "row") rows++;
+            else if (a.targetType === "col") cols++;
+          }
+          return (
+            <li
+              key={fn.id}
+              className={cn(
+                "flex items-start gap-3 px-5 py-2 text-sm",
+                highlighted && "bg-brand-50 ring-1 ring-inset ring-brand-200",
+              )}
+            >
+              <span className="shrink-0 w-8 text-center font-bold text-brand-700">
+                {fn.marker}
+              </span>
+              <span className="flex-1 text-gray-700">
+                {fn.text || <em className="text-gray-400">(без текста)</em>}
+              </span>
+              <span className="shrink-0 flex items-center gap-1 text-[11px] text-gray-500">
+                {cells > 0 && (
+                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-700">
+                    {cells} {cells === 1 ? "ячейка" : "ячеек"}
+                  </span>
+                )}
+                {rows > 0 && (
+                  <span className="rounded bg-purple-100 px-1.5 py-0.5 text-purple-700">
+                    {rows} {rows === 1 ? "строка" : "строк"}
+                  </span>
+                )}
+                {cols > 0 && (
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">
+                    {cols} {cols === 1 ? "столбец" : "столбцов"}
+                  </span>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

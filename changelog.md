@@ -2,6 +2,15 @@
 
 ## 2026-05-03
 
+### Спринт 1 SoA footnotes (commit 6/7): read-only список сносок в apps/web SoaTab
+
+`apps/web/src/app/(app)/documents/[versionId]/page.tsx` — медицинский писатель в основном UI впервые видит сноски, привязанные к каждой SOA-таблице.
+
+- Новый компонент `SoaFootnotesReadOnly` (типы `SoaFootnoteWithAnchors` и `SoaFootnoteAnchor` локально) рендерит блок «Сноски (N)» под существующим Score Info. Каждая сноска: маркер (`*`, `1`, `†`…) + текст + бейджи `N ячеек / N строк / N столбцов`. Если выбрана ячейка — соответствующие сноски подсвечиваются `bg-brand-50` (брендовая полоса).
+- Источник данных — `processing.getSoaData` (расширен в Коммите 4 чтобы возвращать `soaFootnotes[].anchors[]`).
+- В шапке блока подсказка `Info` иконкой: «Редактирование в rule-admin» — медицинский писатель в apps/web имеет read-only доступ; полный CRUD — на стороне `apps/rule-admin/.../soa-viewer/`.
+- Если у таблицы 0 сносок — блок не отображается совсем (без шумного «не обнаружено»).
+
 ### Спринт 1 SoA footnotes (commit 5/7): редизайн FootnotesPanel в rule-admin
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx` — переписан целиком (~830 строк). Главные изменения:
