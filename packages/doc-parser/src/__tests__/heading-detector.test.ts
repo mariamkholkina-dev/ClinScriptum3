@@ -110,8 +110,33 @@ describe("detectHeading", () => {
       expect(result!.level).toBe(3);
     });
 
-    it("does not detect numbered text if not bold", () => {
-      const result = detectHeading("1.2 Not a heading", 0, undefined, undefined, false);
+    // Sprint 4.1: numbered headings без bold ТЕПЕРЬ распознаются с эвристиками.
+    it("Sprint 4.1: detects '1.2 Subsection' without bold (multi-level)", () => {
+      const result = detectHeading("1.2 Study Procedures", 0, undefined, undefined, false);
+      expect(result).not.toBeNull();
+      expect(result!.level).toBe(2);
+      expect(result!.method).toBe("numbered");
+    });
+
+    it("Sprint 4.1: detects '1 Title' without bold (short text)", () => {
+      const result = detectHeading("1 Введение", 0, undefined, undefined, false);
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe("numbered");
+    });
+
+    it("Sprint 4.1: rejects '1. Apple,' (list item, ends with comma)", () => {
+      const result = detectHeading("1. Apple,", 0, undefined, undefined, false);
+      expect(result).toBeNull();
+    });
+
+    it("Sprint 4.1: rejects '1. Pharmacology:' (ends with colon)", () => {
+      const result = detectHeading("1. Pharmacology:", 0, undefined, undefined, false);
+      expect(result).toBeNull();
+    });
+
+    it("Sprint 4.1: rejects single-level long sentence (>80 chars)", () => {
+      const longText = "1 This is a very long sentence that probably is not a heading but rather a list item with detailed description";
+      const result = detectHeading(longText, 0, undefined, undefined, false);
       expect(result).toBeNull();
     });
   });

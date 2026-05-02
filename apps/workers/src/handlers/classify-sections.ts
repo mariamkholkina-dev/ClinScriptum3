@@ -69,6 +69,32 @@ function buildZoneLookup(
   return lookup;
 }
 
+// Sprint 4.3: Levenshtein distance для fuzzy match невалидных zones.
+// Когда LLM возвращает близкий по написанию ключ — возьмём его. Например
+// "preclinical_data" → "preclinical_clinical_data" (1 word missing/typo).
+// Threshold MAX_FUZZY_DISTANCE = 3 — выше существенно меняет смысл.
+function levenshteinDistance(a: string, b: string): number {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const m = a.length;
+  const n = b.length;
+  // 2-row optimization вместо full matrix.
+  let prev = new Array<number>(n + 1);
+  let curr = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+const MAX_FUZZY_DISTANCE = 3;
+
 function resolveZoneKey(zone: string, lookup: Map<string, string>): string | null {
   if (lookup.has(zone)) return lookup.get(zone)!;
   const normalized = zone.toLowerCase().replace(/[.\s-]+/g, "_");
@@ -81,6 +107,22 @@ function resolveZoneKey(zone: string, lookup: Map<string, string>): string | nul
     const wpNorm = withoutParent.toLowerCase().replace(/[.\s-]+/g, "_");
     if (lookup.has(wpNorm)) return lookup.get(wpNorm)!;
   }
+
+  // Fuzzy fallback: ищем ближайший канонический key в lookup по Levenshtein.
+  // Сравниваем normalized zone с каждым ключом lookup; берём min distance.
+  // Только если distance ≤ MAX_FUZZY_DISTANCE и string length > distance × 2
+  // (чтобы избежать совпадения коротких разных слов вроде "ae" vs "ip").
+  let bestMatch: { key: string; canonical: string; dist: number } | null = null;
+  for (const [key, canonical] of lookup) {
+    if (key.length < 4) continue; // слишком коротко для fuzzy
+    const dist = levenshteinDistance(normalized, key);
+    if (dist > MAX_FUZZY_DISTANCE) continue;
+    if (dist > Math.floor(key.length / 2)) continue; // дистанция > половины — чужое слово
+    if (!bestMatch || dist < bestMatch.dist) {
+      bestMatch = { key, canonical, dist };
+    }
+  }
+  if (bestMatch) return bestMatch.canonical;
 
   return null;
 }

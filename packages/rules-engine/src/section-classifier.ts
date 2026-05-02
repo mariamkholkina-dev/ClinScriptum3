@@ -66,6 +66,26 @@ const MAX_MULTI_MATCH_BONUS_COUNT = 2;
 const PARENT_ZONE_BONUS = 0.05;
 const PARENT_ZONE_PENALTY = 0.1;
 
+// Sprint 4.2: глобальные singleton zones — могут появляться только ОДИН раз
+// в документе. Если deterministic classifier выдал ту же singleton zone для
+// нескольких секций, оставляем секцию с max confidence (первое появление при
+// равенстве), остальным сбрасываем zone=null,confidence=0 — пусть LLM Check
+// классифицирует их заново.
+//
+// Список основан на анализе taxonomy: zones которые семантически уникальны
+// в одном протоколе. При расширении taxonomy схемы (поле `unique:true`) —
+// заменить на динамический load из rules.
+const SINGLETON_ZONES = new Set([
+  "synopsis",
+  "rationale",
+  "introduction",
+  "abbreviations",
+  "table_of_contents",
+  "references",
+  "schema",
+  "visit_schedule",
+]);
+
 export class SectionClassifier {
   private rules: SectionMappingRule[];
 
@@ -212,6 +232,32 @@ export class SectionClassifier {
         }
       }
       stack.push({ level, zone: stackZone });
+    }
+
+    // Sprint 4.2: enforce singleton constraints. Группируем секции по
+    // standardSection. Если zone ∈ SINGLETON_ZONES и группа имеет ≥2 секций —
+    // оставляем ту что с max confidence, остальные обнуляем (LLM переклассифицирует).
+    const byZone = new Map<string, Array<{ id: string; result: ClassificationResult }>>();
+    for (const [id, result] of out) {
+      if (!result.standardSection) continue;
+      if (!SINGLETON_ZONES.has(result.standardSection)) continue;
+      const arr = byZone.get(result.standardSection) ?? [];
+      arr.push({ id, result });
+      byZone.set(result.standardSection, arr);
+    }
+    for (const [, group] of byZone) {
+      if (group.length < 2) continue;
+      // Sort desc by confidence, ties → preserve document order (stable).
+      group.sort((a, b) => b.result.confidence - a.result.confidence);
+      // Все кроме первого — обнуляем.
+      for (let i = 1; i < group.length; i++) {
+        out.set(group[i].id, {
+          sectionTitle: group[i].result.sectionTitle,
+          standardSection: null,
+          confidence: 0,
+          method: group[i].result.method,
+        });
+      }
     }
 
     return out;
