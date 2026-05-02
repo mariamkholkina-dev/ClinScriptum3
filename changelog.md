@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-05-03
+
+### Sprint 5.1 + 5.4 — хранение эталонных примеров классификации + UI
+
+`packages/db/prisma/schema.prisma` (model `ClassificationFewShot` + миграция `20260503000000_add_classification_few_shots`), `apps/api/src/services/few-shot.service.ts`, `apps/api/src/routers/few-shot.ts`, `apps/rule-admin/src/app/(app)/few-shots/page.tsx`.
+
+**5.1 — Storage:**
+- Новая Prisma model `ClassificationFewShot` (tenant-isolated): `title`, `parentPath?`, `contentPreview?`, `standardSection`, `reason?`, `isActive`, `sourceSectionId?`, `createdById`. Indexes на `(tenant_id, is_active)` и `(tenant_id, standard_section)` для быстрого top-K lookup.
+- `fewShotService` с CRUD методами: `create`, `list` (с курсорной пагинацией), `get` (tenant-isolation guard), `update`, `delete`, `listActive` (для будущего LLM Check inject в Sprint 5.2).
+- tRPC router `fewShot` с endpoints `list/get/create/update/delete` под `qualityProcedure` (требует rule_admin/rule_approver/tenant_admin).
+
+**5.4 — UI `/few-shots`:**
+- Страница в rule-admin (`/few-shots`) — CRUD управление примерами. Фильтры по zone и активности.
+- Inline-редактор в модалке: title, parentPath, standardSection (group-select по zone/subzone), reason, contentPreview (≤500 chars), isActive flag.
+- Список с breadcrumb (parentPath), zone в моноширинном шрифте, причиной курсивом, превью контента в две строки.
+- Toggle активности per-item кнопкой (без открытия редактора). Hard-delete с подтверждением.
+
+Sprint 5.2 (подмешивание few-shot в LLM Check) и 5.3 (eval-метрика) пойдут отдельным PR-B после merge.
+
 ## 2026-05-02
 
 ### Fix taxonomy: legacy zone-keys заменены везде в production коде
