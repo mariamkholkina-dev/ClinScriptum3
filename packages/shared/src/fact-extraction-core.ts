@@ -13,7 +13,7 @@ import { RulesEngine, detectContradictions, toFactExtractionRules } from "@clins
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 
-export const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "appendix", "ip.preclinical_data"];
+export const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "appendix", "ip.preclinical_clinical_data"];
 export const LOW_CONFIDENCE_THRESHOLD = 0.6;
 const LLM_CONCURRENCY = 3;
 const MAX_RETRIES = 2;

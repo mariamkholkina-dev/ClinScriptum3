@@ -2,15 +2,24 @@
 
 ## 2026-05-02
 
-### Sprint 4 — headings + uniqueness + fuzzy zoneLookup
+### Fix taxonomy: legacy zone-keys заменены везде в production коде
 
-`packages/doc-parser/src/heading-detector.ts`, `packages/rules-engine/src/section-classifier.ts`, `apps/workers/src/handlers/classify-sections.ts`.
+Прошёл по всему коду и заменил **старые** zone keys на актуальные:
+- `ip.preclinical_data` → `ip.preclinical_clinical_data` (расширена в PR-9)
+- `population.contraception_requirements` → `procedures.contraception_requirements` (перенесена в PR-9)
+- `procedures.schedule_of_assessments` / `schedule_of_assessments` → `design.visit_schedule` / `visit_schedule` (слита в PR-12)
 
-**4.1 — Numbered headings без bold.** В `heading-detector.ts` numbered секции (regex `^(\d+(?:\.\d+)*)\s+`) теперь распознаются и без флага `isBold`. Чтобы избежать false-positives на list-items: фильтр trailing-punctuation (`,;:` → null), для single-level (`dots<2`) — длина ≤ 80 chars. Multi-level (`1.1`, `1.1.1`) распознаются всегда. +5 unit-тестов.
+Затронуло hardcoded references в `EXCLUDED_SECTION_PREFIXES` (api + shared), `DEFAULT_PROTOCOL_SECTIONS` (section-classifier — обновлён canonical key + расширены regex-patterns русскими «регламент клинического исследования»/«блок-схема»), `impact-analyzer`, `generate-icf` (SECTION_TO_PROTOCOL_MAP), `intra-doc-audit` (ZONE_AFFINITY_MAP), `rule-admin study-settings page` (KNOWN_ZONES + DEFAULT_AFFINITY_PAIRS), `web audit page` label-map.
 
-**4.2 — Singleton constraints в `classifyHierarchical`.** Жёсткий список `SINGLETON_ZONES` (synopsis, rationale, introduction, abbreviations, table_of_contents, references, schema, visit_schedule). Если deterministic classifier выдал одну такую zone для нескольких секций → оставляем секцию с max confidence, остальным сбрасываем `standardSection=null, confidence=0` (LLM Check переклассифицирует). +2 unit-теста.
+### Расширение few-shot примеров в `section_classify:llm_check`
 
-**4.3 — Fuzzy `resolveZoneKey` через Levenshtein.** Когда LLM вернул невалидный zone-key (опечатка, лишний/пропущенный underscore) — поиск ближайшего по distance ≤ 3 (с safety-проверкой `dist > key.length / 2 → skip`). Экономит дорогие LLM-cycle на регенерацию. 2-row optimization Levenshtein.
+`packages/db/src/seed-prompts.ts`. Добавлены 4 новых примера для исторически путаемых zones:
+- **#11 ip.description** — «Описание препарата / Состав / Лекарственная форма» (subzone vs parent ip)
+- **#12 design.blinding_and_unblinding** — «Вскрытие кода / Раскрытие кода рандомизации»
+- **#13 population.demographics_and_baseline** — «Антропометрические и демографические данные» (baseline, не procedures.vital_signs)
+- **#14 appendix.scales_and_questionnaires** — «Шкалы и опросники» в приложениях
+
+Tenant-admin может перезалить промпты через `npm run db:seed` (RuleSet section_classification_qa, version 1, deleteMany + create) или в rule-admin UI.
 
 ### Rule-admin: quick-fix + jump-to-row в Diff overlay классификации
 

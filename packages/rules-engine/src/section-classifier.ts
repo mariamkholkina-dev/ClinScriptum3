@@ -326,8 +326,11 @@ export const DEFAULT_PROTOCOL_SECTIONS: SectionMappingRule[] = [
     category: "protocol",
   },
   {
-    standardSection: "schedule_of_assessments",
-    patterns: ["schedule\\s+of\\s+(assessments?|activities?|procedures?)", "\\bSOA\\b"],
+    // PR-12 (2026-04-30): зона merged in design.visit_schedule. Старый ключ
+    // schedule_of_assessments оставлен для backward compat в DEFAULT_PROTOCOL_SECTIONS,
+    // но canonical теперь visit_schedule.
+    standardSection: "visit_schedule",
+    patterns: ["schedule\\s+of\\s+(assessments?|activities?|procedures?)", "\\bSOA\\b", "(?i)регламент\\s+клиническ\\w*\\s+исследован\\w*", "(?i)блок-?схем\\w*\\s+исследован\\w*"],
     isRequired: true,
     category: "protocol",
   },

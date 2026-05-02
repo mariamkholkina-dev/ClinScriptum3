@@ -107,7 +107,7 @@ const ZONE_LABELS: Record<string, string> = {
   efficacy_assessments: "Оценка эффективности",
   safety_assessments: "Оценка безопасности",
   statistics: "Статистика",
-  schedule_of_assessments: "График процедур (SoA)",
+  visit_schedule: "График процедур (SoA)",
   ethics: "Этика",
   appendices: "Приложения",
   __unclassified__: "Без классификации",

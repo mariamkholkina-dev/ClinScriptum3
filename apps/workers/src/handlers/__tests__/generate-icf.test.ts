@@ -190,7 +190,7 @@ describe("handleGenerateICF", () => {
                     safety_assessments: "Source for risks",
                     efficacy_assessments: "Source for benefits",
                     ethics: "Source for confidentiality",
-                    schedule_of_assessments: "Source for visits",
+                    visit_schedule: "Source for visits",
                   },
                   facts: [{ key: "phase", value: "II" }],
                 },

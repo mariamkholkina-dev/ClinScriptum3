@@ -35,7 +35,7 @@ const ICF_SECTIONS = [
 
 const SECTION_TO_PROTOCOL_MAP: Record<string, string[]> = {
   purpose_of_study: ["study_objectives", "introduction"],
-  study_procedures: ["study_design", "schedule_of_assessments", "efficacy_assessments"],
+  study_procedures: ["study_design", "visit_schedule", "efficacy_assessments"],
   who_can_participate: ["study_population"],
   study_drug_description: ["treatments"],
   risks_side_effects: ["safety_assessments"],
@@ -43,7 +43,7 @@ const SECTION_TO_PROTOCOL_MAP: Record<string, string[]> = {
   alternatives: ["treatments"],
   confidentiality: ["ethics"],
   voluntary_participation: ["ethics"],
-  visits: ["schedule_of_assessments"],
+  visits: ["visit_schedule"],
 };
 
 export async function handleGenerateICF(data: {

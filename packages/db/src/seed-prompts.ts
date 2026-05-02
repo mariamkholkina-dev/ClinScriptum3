@@ -643,14 +643,18 @@ Convert ALL future tense to past tense. Be balanced and objective. Conclusions m
 ПРИМЕРЫ КЛАССИФИКАЦИИ (заголовок → зона + причина):
 1. "Synopsis" / "Синопсис исследования" → synopsis (стандартная отдельная секция, точное название)
 2. "Background and Rationale" / "Обоснование исследования" → rationale (обоснование выбора дизайна)
-3. "Препарат сравнения" / "Comparator" / "Active Control" → comparator (новая subzone IP — лекарственное средство, с которым сравнивается препарат исследования)
+3. "Препарат сравнения" / "Comparator" / "Active Control" → comparator (subzone ip — лекарственное средство, с которым сравнивается препарат исследования)
 4. "Результаты значимых доклинических и клинических исследований" → preclinical_clinical_data (объединённая зона: и доклинические, и предыдущие клинические данные по препарату)
-5. "Регламент клинического исследования" / "Schedule of Assessments" / "Блок-схема исследования" / "График процедур" → visit_schedule (объединённая зона визитов и SoA-таблицы)
-6. "Ограничения в питании, образе жизни" / "Физическая активность" → lifestyle (новая subzone procedures — диета, алкоголь, курение, физактивность во время исследования; НЕ путать с критериями отбора)
+5. "Регламент клинического исследования" / "Schedule of Assessments" / "Блок-схема исследования" / "График процедур" → visit_schedule (объединённая зона визитов и SoA-таблицы; раньше была procedures.schedule_of_assessments — слита в design.visit_schedule)
+6. "Ограничения в питании, образе жизни" / "Физическая активность" → lifestyle (subzone procedures — диета, алкоголь, курение, физактивность во время исследования; НЕ путать с критериями отбора)
 7. "Тест на беременность" / "Контрацепция во время исследования" → contraception_requirements (subzone procedures — операционные процедуры, НЕ population.exclusion)
 8. "Statistical Analysis Plan" / "Множественные сравнения" → analysis_methods (subzone statistics, НЕ overview)
 9. "Inclusion Criteria" под parent "Study Population" → inclusion (используй subzone, не parent population)
 10. "Pharmacokinetics Endpoints" → pharmacokinetics (subzone endpoints, не общая фармакология)
+11. "Описание препарата" / "Состав исследуемого препарата" / "Лекарственная форма" → description (subzone ip — конкретное описание состава/формы IP; ПРЕДПОЧТИТЕЛЬНЕЕ, чем общий ip когда есть subzone)
+12. "Вскрытие кода" / "Раскрытие кода рандомизации" / "Unblinding procedures" → blinding_and_unblinding (subzone design — процедуры разослепления; в обновлённой taxonomy ослепление и разослепление в одной subzone)
+13. "Антропометрические и демографические данные" / "Demographics and baseline characteristics" → demographics_and_baseline (subzone population — baseline-характеристики пациента; НЕ procedures.vital_signs, рост/вес здесь это базовая характеристика для статистики, а не клиническая процедура)
+14. "Шкалы и опросники" / "Scales and questionnaires" в приложениях → scales_and_questionnaires (subzone appendix — справочные материалы, формы для оценки; обычно в конце документа)
 
 ФОРМАТ ВВОДА — список секций, каждая с числовым idx:
 [1] Заголовок | путь:Parent → Section | алгоритм:zone (90%) | препрос:первые символы контента

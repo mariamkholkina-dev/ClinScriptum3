@@ -12,7 +12,7 @@ const PROTOCOL_TO_ICF_MAP: Record<string, string[]> = {
   treatments: ["study_drug_description", "study_procedures"],
   efficacy_assessments: ["study_procedures", "visits"],
   safety_assessments: ["risks_side_effects", "safety_monitoring"],
-  schedule_of_assessments: ["visits", "study_procedures"],
+  visit_schedule: ["visits", "study_procedures"],
   statistics: [],
   ethics: ["confidentiality", "voluntary_participation"],
 };

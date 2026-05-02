@@ -45,7 +45,7 @@ interface ExtractedFact {
   qaConfidence: number;
 }
 
-const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "appendix", "ip.preclinical_data"];
+const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "appendix", "ip.preclinical_clinical_data"];
 const SYNOPSIS_PREFIX = "synopsis";
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
