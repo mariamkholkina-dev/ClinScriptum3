@@ -1228,40 +1228,26 @@ export default function ClassificationTreeViewer({
   // Используется когда нужно добавить/изменить/удалить запись секции в эталоне,
   // а не только её standardSection в БД.
   //
-  // Optimistic update: сразу патчим cached getSample в react-query чтобы UI
-  // обновился мгновенно — invalidate без optimistic иногда не приводил к
-  // быстрому re-render parent'а (page.tsx → StagePanel → StageDataViewer →
-  // ClassificationTreeViewer), и diff overlay показывал устаревший snapshot.
+  // await invalidate + refetch — без них parent (page.tsx → StagePanel →
+  // StageDataViewer → ClassificationTreeViewer) не успевал перерендериться
+  // с новым expectedResults до того как diff overlay покажет результат.
   const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onMutate: async (vars) => {
-      if (!goldenSampleId) return;
-      await utils.goldenDataset.getSample.cancel({ id: goldenSampleId });
-      const prev = utils.goldenDataset.getSample.getData({ id: goldenSampleId });
-      if (prev) {
-        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, (old) => {
-          if (!old) return old;
-          return {
-            ...old,
-            stageStatuses: old.stageStatuses.map((s) =>
-              s.stage === vars.stage
-                ? { ...s, expectedResults: vars.expectedResults ?? s.expectedResults }
-                : s,
-            ),
-          };
-        });
-      }
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      // Откатываем optimistic update при ошибке server-side
-      if (goldenSampleId && ctx?.prev) {
-        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
-      }
-    },
-    onSettled: () => {
+    onSuccess: async (data) => {
+      // eslint-disable-next-line no-console
+      console.log("[diff-quick-fix] updateStageStatus saved", {
+        stage: data?.stage,
+        expectedSectionsCount: Array.isArray((data?.expectedResults as { sections?: unknown[] } | null)?.sections)
+          ? ((data?.expectedResults as { sections: unknown[] }).sections.length)
+          : "n/a",
+      });
       if (goldenSampleId) {
-        utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
+        await utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
+        await utils.goldenDataset.getSample.refetch({ id: goldenSampleId });
       }
+    },
+    onError: (err) => {
+      // eslint-disable-next-line no-console
+      console.error("[diff-quick-fix] updateStageStatus FAILED", err);
     },
   });
 
@@ -1290,9 +1276,16 @@ export default function ClassificationTreeViewer({
       }
 
       // 2) Update expected_results JSON (если есть golden-sample context)
-      if (!goldenSampleId) return;
+      if (!goldenSampleId) {
+        // eslint-disable-next-line no-console
+        console.warn("[diff-quick-fix] goldenSampleId not provided — skipping expected_results update");
+        return;
+      }
 
-      const current = (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
+      const current =
+        (expectedResults && typeof expectedResults === "object"
+          ? (expectedResults as { sections?: Array<Record<string, unknown>> })
+          : null) ?? {};
       const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
       const titleLower = sectionTitle.trim().toLowerCase();
       const existingIdx = sectionsArr.findIndex(
@@ -1314,6 +1307,19 @@ export default function ClassificationTreeViewer({
         // Insert new
         nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
       }
+
+      // eslint-disable-next-line no-console
+      console.log("[diff-quick-fix] mutating expected_results", {
+        diffType,
+        sectionTitle,
+        newZone,
+        existingIdx,
+        prevSectionsCount: sectionsArr.length,
+        nextSectionsCount: nextSections.length,
+        goldenSampleId,
+        stageKey,
+        stageStatus,
+      });
 
       updateExpected.mutate({
         goldenSampleId,
