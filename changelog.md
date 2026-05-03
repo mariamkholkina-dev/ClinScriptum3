@@ -2,6 +2,11 @@
 
 ## 2026-05-03
 
+### Fix: лимит 200 секций в bulk-update мутациях
+
+`apps/api/src/routers/processing.ts`:
+- `bulkUpdateSectionStructureStatus` и `bulkUpdateSectionClassificationStatus` подняли лимит `sectionIds.max` с 200 до 1000. У реальных протоколов нередко 200+ секций (например, 225 в текущем golden-sample), и кнопка «Подтвердить» с «Выделить все» падала с 400 без видимой ошибки в UI.
+
 ### UX: разрешение дубликатов title в Diff overlay Парсинга
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/`:

@@ -219,7 +219,7 @@ export const processingRouter = router({
   bulkUpdateSectionStructureStatus: p
     .input(
       z.object({
-        sectionIds: z.array(z.string().uuid()).min(1).max(200),
+        sectionIds: z.array(z.string().uuid()).min(1).max(1000),
         status: z.enum(["validated", "not_validated", "requires_rework"]),
         structureComment: z.string().optional(),
       }),
@@ -231,7 +231,7 @@ export const processingRouter = router({
   bulkUpdateSectionClassificationStatus: p
     .input(
       z.object({
-        sectionIds: z.array(z.string().uuid()).min(1).max(200),
+        sectionIds: z.array(z.string().uuid()).min(1).max(1000),
         status: z.enum(["validated", "not_validated", "requires_rework"]),
         classificationComment: z.string().optional(),
       }),
