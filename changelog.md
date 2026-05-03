@@ -2,6 +2,23 @@
 
 ## 2026-05-04
 
+### Спринт 6 SoA detection robustness (commit 4/8): merge continuation SoA tables
+
+Word часто разрывает длинную SoA на 2-3 части `<w:tbl>` с повторённой шапкой — ранее каждая часть становилась отдельной `SoaTable`. Теперь они сливаются в одну логическую таблицу.
+
+Schema:
+- `SoaTable.sourceBlockIds: Json @default("[]")` — массив всех ContentBlock IDs continuation parts. Существующее `sourceBlockId` оставлено для backward compatibility и заполняется первым элементом.
+- Миграция `20260504110000_add_soa_source_block_ids`. Применена в dev и test БД.
+
+`packages/shared/src/soa-detection-core.ts`:
+- Новый `mergeContinuationTables(tables)` — strict-equality grouping по `(sectionId, orientation, visits, headerRows)`. Внутри группы concatenation `procedures`, `matrix` rows, `rawMatrix` data rows (header rows последующих частей пропускаются), `tableDrawings`, `cellGeometry` data rows. `footnoteDefs` мерджатся по `marker` (first wins, остальные пропускаются), `footnoteAnchors` сшиваются с rowIndex offset для cell- и row-anchors.
+- `detectSoaForVersion` вызывает merge между detection и persist. Лог `[soa] Merged continuation tables` с before/after.
+- `SoaDetectionResult.sourceBlockIds: string[]` — новое поле; default `[candidate.blockId]` в `buildSoaResult`.
+- `persistSoaTables` пишет `SoaTable.sourceBlockIds`.
+
+Tests:
+- 4 integration теста в `apps/api/src/__tests__/integration/soa-continuation-merge.test.ts`: pair merge, разные visits НЕ мерджатся, trio merge, rowIndex contiguity без коллизий. Тесты используют локальный `timeout: 30_000` (default 5s слишком близко к baseline 4.3-4.7s интеграционок).
+
 ### Спринт 6 SoA detection robustness (commit 2/8): wire mapDrawingsToCells в pipeline
 
 Sprint 3's `mapDrawingsToCells` (`packages/shared/src/soa-detection-core.ts:994`) был pure helper готов с того спринта, но никогда не вызывался — не было источника cell EMU coordinates. Sprint 6 commit 1 добавил geometry parser; этот commit подключает его в pipeline и фактически записывает данные в БД.

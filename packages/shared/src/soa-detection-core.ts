@@ -57,6 +57,13 @@ type SoaOrientation = "visits_cols" | "visits_rows" | "unknown";
 
 interface SoaDetectionResult {
   tableBlockId: string;
+  /**
+   * All ContentBlock IDs that contributed to this result. Length 1 by
+   * default; grows to ≥2 when continuation merge fires
+   * (`mergeContinuationTables`). The first element always equals
+   * `tableBlockId` for backward compatibility.
+   */
+  sourceBlockIds: string[];
   sectionId: string;
   title: string;
   score: number;
@@ -324,8 +331,123 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
     return;
   }
 
-  await persistSoaTables(versionId, soaTables);
-  log.info("[soa] Saved SOA tables", { count: soaTables.length });
+  // Continuation merge: identical visits + headerRows in the same
+  // section, same orientation, are typically a single SoA Word split
+  // across consecutive `<w:tbl>` parts with a repeated header.
+  const merged = mergeContinuationTables(soaTables);
+  if (merged.length < soaTables.length) {
+    log.info("[soa] Merged continuation tables", {
+      before: soaTables.length,
+      after: merged.length,
+    });
+  }
+
+  await persistSoaTables(versionId, merged);
+  log.info("[soa] Saved SOA tables", { count: merged.length });
+}
+
+/**
+ * Merge SoA detection results that look like Word split a single
+ * logical table across multiple `<w:tbl>` parts. Strict equality on
+ * `visits + headerRows + sectionId + orientation` — fuzzy matching is
+ * out of scope for Sprint 6.
+ *
+ * Within each merge group:
+ *   - cells from later parts have their `rowIndex` offset by the sum
+ *     of `procedures.length` of earlier parts;
+ *   - `procedures`, `matrix` rows, `rawMatrix` data rows, `drawings`,
+ *     `cellGeometry` rows are concatenated in order;
+ *   - `footnoteDefs` are merged by `marker` (first wins);
+ *   - `footnoteAnchors` are concatenated with `rowIndex` offset for
+ *     cell-typed anchors;
+ *   - `sourceBlockIds` lists all contributing ContentBlock IDs.
+ */
+export function mergeContinuationTables(
+  tables: SoaDetectionResult[],
+): SoaDetectionResult[] {
+  if (tables.length < 2) return tables;
+  const groups = new Map<string, SoaDetectionResult[]>();
+  for (const t of tables) {
+    const key = JSON.stringify({
+      sectionId: t.sectionId,
+      orientation: t.orientation,
+      visits: t.visits,
+      headerRows: t.headerRows,
+    });
+    const arr = groups.get(key) ?? [];
+    arr.push(t);
+    groups.set(key, arr);
+  }
+  const out: SoaDetectionResult[] = [];
+  for (const [, parts] of groups) {
+    if (parts.length === 1) {
+      out.push(parts[0]);
+      continue;
+    }
+    // Merge into the first part. Process in source order — assume
+    // detection ran sections in document order and each part keeps
+    // its natural order.
+    const head = parts[0];
+    const merged: SoaDetectionResult = {
+      ...head,
+      sourceBlockIds: [...head.sourceBlockIds],
+      procedures: [...head.procedures],
+      matrix: head.matrix.map((row) => [...row]),
+      rawMatrix: head.rawMatrix.map((row) => [...row]),
+      footnoteDefs: [...head.footnoteDefs],
+      footnoteAnchors: [...head.footnoteAnchors],
+    };
+    let rowOffset = head.procedures.length;
+    const seenMarkers = new Set(merged.footnoteDefs.map((f) => f.marker));
+    for (let i = 1; i < parts.length; i++) {
+      const p = parts[i];
+      merged.sourceBlockIds.push(...p.sourceBlockIds);
+      merged.procedures.push(...p.procedures);
+      // Matrix rows: append as-is — rowIndex is positional.
+      for (const row of p.matrix) merged.matrix.push([...row]);
+      // rawMatrix: skip header rows of subsequent parts (they repeat
+      // the same visits/days from the head).
+      const headerRowCount = head.headerRows.length;
+      const dataRows = p.rawMatrix.slice(headerRowCount);
+      for (const row of dataRows) merged.rawMatrix.push([...row]);
+      // Footnote defs: skip duplicate markers.
+      for (const f of p.footnoteDefs) {
+        if (!seenMarkers.has(f.marker)) {
+          seenMarkers.add(f.marker);
+          merged.footnoteDefs.push({
+            ...f,
+            markerOrder: merged.footnoteDefs.length,
+          });
+        }
+      }
+      // Footnote anchors: rowIndex offset for cell-typed anchors.
+      for (const a of p.footnoteAnchors) {
+        const adjusted = { ...a };
+        if (a.targetType === "cell" && a.rowIndex != null) {
+          adjusted.rowIndex = a.rowIndex + rowOffset;
+        } else if (a.targetType === "row" && a.rowIndex != null) {
+          adjusted.rowIndex = a.rowIndex + rowOffset;
+        }
+        merged.footnoteAnchors.push(adjusted);
+      }
+      // Drawings: concat as-is — paragraphIndex stays original so UI
+      // can still locate them in the source.
+      merged.tableDrawings = [...merged.tableDrawings, ...p.tableDrawings];
+      // cellGeometry: concat data rows of subsequent parts. Heads of
+      // parts already contain header geometry; we keep the first
+      // part's header geometry and append data rows from siblings.
+      if (merged.cellGeometry && p.cellGeometry) {
+        const headerRowCountInGeom = head.headerRows.length;
+        const dataGeom = p.cellGeometry.slice(headerRowCountInGeom);
+        merged.cellGeometry = [...merged.cellGeometry, ...dataGeom];
+      } else if (p.cellGeometry && !merged.cellGeometry) {
+        merged.cellGeometry = p.cellGeometry;
+      }
+      rowOffset += p.procedures.length;
+    }
+    out.push(merged);
+  }
+  return out;
 }
 
 /* ═══════════════════════ Phase 1: Collect candidates ═══════════════════════ */
@@ -607,6 +729,7 @@ function buildSoaResult(
 
   return {
     tableBlockId: candidate.blockId,
+    sourceBlockIds: [candidate.blockId],
     sectionId: candidate.sectionId,
     title: candidate.title || "Schedule of Activities",
     score: scoring.score,
@@ -1124,6 +1247,7 @@ async function persistSoaTables(
           data: {
             docVersionId: versionId,
             sourceBlockId: soa.tableBlockId,
+            sourceBlockIds: soa.sourceBlockIds,
             title: soa.title,
             soaScore: soa.score,
             status: "detected",

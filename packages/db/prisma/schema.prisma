@@ -445,6 +445,12 @@ model SoaTable {
   id                  String          @id @default(uuid()) @db.Uuid
   docVersionId        String          @map("doc_version_id") @db.Uuid
   sourceBlockId       String?         @map("source_block_id") @db.Uuid
+  /// All ContentBlock IDs that contributed to this SoaTable. When a Word
+  /// table is split across two `<w:tbl>` parts with a repeated header
+  /// (continuation), the detector merges them and lists both block IDs
+  /// here. `sourceBlockId` is kept as the first element for backward
+  /// compatibility with consumers that read a single block.
+  sourceBlockIds      Json            @default("[]") @map("source_block_ids") @db.JsonB
   title               String          @default("")
   soaScore            Float           @default(0) @map("soa_score")
   status              SoaStatus       @default(detected)
