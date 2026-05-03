@@ -2,6 +2,18 @@
 
 ## 2026-05-03
 
+### Спринт 3 SoA drawings (commit 1/4): schema для графических маркеров
+
+`packages/db/prisma/schema.prisma`:
+- `SoaTable.drawings: Json` (default `[]`) — массив сырых drawings, извлечённых из `word/document.xml` (стрелки, линии, скобки поверх SoA-таблицы). Формат `{ type, position: {xEmu,yEmu,cxEmu,cyEmu}, direction? }`. Используется UI для рендера SVG-overlay.
+- `SoaCell.markerSources: Json` (default `["text"]`) — массив источников, которые внесли свой вклад в маркировку ячейки: `'text'`/`'arrow'`/`'line'`/`'bracket'`. Если в ячейке текстового X нет, но через неё проходит стрелка — `markerSources=['arrow']` и значение нормализуется как X с confidence 0.85.
+
+Миграция `20260503130000_add_soa_drawings` — добавляет два JSON-столбца. Применена в dev и test БД.
+
+Цель спринта: распознавать ячейки SoA, помеченные не текстом X, а **горизонтальной стрелкой** поверх группы ячеек (как в реальном протоколе из примера пользователя — `Прием препарата² ←→` от Визит 1 до Визит 4). Раньше такие ячейки выглядели пустыми. Логика парсинга drawings и геометрический mapping — следующие коммиты.
+
+
+
 ### Спринт 2 SoA orientation (commit 3/3): UI бейджи и conflict-алёрт
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx`:

@@ -451,6 +451,10 @@ model SoaTable {
   orientationConflict Boolean         @default(false) @map("orientation_conflict")
   headerData          Json            @map("header_data") @db.JsonB
   rawMatrix           Json            @map("raw_matrix") @db.JsonB
+  /// Raw drawings extracted from word/document.xml that overlay this SoA
+  /// table (arrows, lines, brackets). Each item: { type, position: {xEmu, yEmu, cxEmu, cyEmu}, direction? }.
+  /// Used by the UI to render an SVG overlay.
+  drawings            Json            @default("[]") @db.JsonB
   /// @deprecated removed in Sprint 5; use relation `footnotes` (SoaFootnote[]) instead.
   footnotes           Json            @default("[]") @db.JsonB
   createdAt           DateTime        @default(now()) @map("created_at")
@@ -475,6 +479,10 @@ model SoaCell {
   normalizedValue String  @default("") @map("normalized_value")
   manualValue     String? @map("manual_value")
   confidence      Float   @default(1.0)
+  /// Sources contributing to the cell's mark — any of 'text', 'arrow',
+  /// 'line', 'bracket'. 'text' means the X/dash came from the cell text;
+  /// the others mean it was inferred from a graphic element overlaying the cell.
+  markerSources   Json    @default("[\"text\"]") @db.JsonB @map("marker_sources")
   /// @deprecated removed in Sprint 5; use relation `footnoteAnchors` (SoaFootnoteAnchor[]) instead.
   footnoteRefs    Json    @default("[]") @db.JsonB @map("footnote_refs")
 
