@@ -952,7 +952,13 @@ export default function ParsingTreeViewer({
 
   // Optimistic update: меняем кеш `getVersion` сразу, до ответа сервера.
   // UI обновляется мгновенно (без 1-2 сек ожидания на сетевой round-trip + повторную
-  // загрузку всех секций с блоками контента). При ошибке откатываем к снимку.
+  // загрузку всех секций с блоками контента).
+  //
+  // Важно: invalidate делаем ТОЛЬКО на onError. Если ставить invalidate в onSettled —
+  // при быстрых последовательных кликах refetch завершившейся мутации перезаписывает
+  // кеш данными до того как сервер успел применить более поздние мутации (race),
+  // и optimistic-патчи теряются. Поскольку наш patch идентичен ожидаемому результату
+  // сервера, обновлять кеш с сервера не нужно — он уже корректен.
   const markFalseHeading = trpc.document.markSectionFalseHeading.useMutation({
     onMutate: async ({ sectionId, isFalseHeading }) => {
       await utils.document.getVersion.cancel({ versionId });
@@ -970,8 +976,7 @@ export default function ParsingTreeViewer({
     },
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) utils.document.getVersion.setData({ versionId }, ctx.prev);
-    },
-    onSettled: () => {
+      // На ошибке синхронизируемся с реальным состоянием сервера.
       utils.document.getVersion.invalidate({ versionId });
     },
   });
@@ -979,6 +984,7 @@ export default function ParsingTreeViewer({
   // Optimistic update для эталона: патчим `goldenDataset.getSample` в кеше,
   // родительский page.tsx через useQuery подхватит и пробросит свежий expectedResults
   // обратно сюда через props — overlay перерисуется мгновенно.
+  // Invalidate только на onError (та же причина, что выше — race с параллельными мутациями).
   const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
     onMutate: async (input) => {
       if (!goldenSampleId) return undefined;
@@ -1006,10 +1012,6 @@ export default function ParsingTreeViewer({
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev && goldenSampleId) {
         utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
-      }
-    },
-    onSettled: () => {
-      if (goldenSampleId) {
         utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
       }
     },

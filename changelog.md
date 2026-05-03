@@ -2,6 +2,12 @@
 
 ## 2026-05-03
 
+### Fix: race condition в optimistic update Diff overlay
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx`:
+- Убран `invalidate` из `onSettled` обоих мутаций (`markFalseHeading`, `updateExpected`). При быстрых последовательных кликах `invalidate` завершившейся мутации запускал refetch, который перезаписывал кеш данными до того как сервер успел применить ещё pending мутации — optimistic-патчи терялись и строки в overlay не исчезали.
+- `invalidate` теперь делается только в `onError`, для синхронизации с сервером после неудачи. Поскольку наш optimistic patch идентичен ожидаемому состоянию сервера, явный refetch на success не нужен.
+
 ### Optimistic update в Diff overlay Парсинга
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx`:
