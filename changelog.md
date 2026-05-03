@@ -2,6 +2,67 @@
 
 ## 2026-05-03
 
+### Спринт 3 SoA drawings (commit 4/4): UI бейджи и индикаторы графических маркеров
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx`:
+- Тип `SoaCell` дополнен `markerSources: ('text'|'arrow'|'line'|'bracket')[]`. Тип `SoaTable` дополнен `drawings: DrawingUI[]` (с `position`, `direction`, `prstGeom`).
+- В шапке `SingleSoaTableViewer` — бейдж «Графика: N» (синий), показывается когда у таблицы есть распознанные drawings. Title-tooltip с deтальной подсказкой.
+- На ячейке — иконка `→` (для arrow) или `│` (для line/bracket) в верхнем-левом углу, если `markerSources` содержит не-text источник. Tooltip «Получено из arrow/line/bracket».
+- В `CellDetailPanel` — строчка «Источник: …» с перечислением не-text источников, чтобы писатель мог увидеть откуда взялся маркер.
+
+`apps/web/src/app/(app)/documents/[versionId]/page.tsx`:
+- В шапке каждой SoA-таблицы под бейджами orientation добавлен синий бейдж «Графика: N» с тем же tooltip.
+
+Бейджи и иконки — read-only display. SVG-overlay со стрелками поверх ячеек не рендерится, поскольку EMU→px конвертация требует точных координат таблицы в браузере, что не входит в scope этого спринта (см. commit 3/4 — mapDrawingsToCells готов как контракт, но не активирован в pipeline). Когда EMU-координаты ячеек станут доступны, overlay добавится поверх существующего UI без переписывания типов.
+
+Sprint 3 SoA drawings — завершён. 4 коммита, 192 теста doc-parser зелёные, full monorepo typecheck зелёный. Что осталось интегрировать в production: парсинг `<w:tblGrid>` + `<w:trHeight>` для cell EMU-координат, передача `ParsedDocument.drawings` через worker `parse_document` в `detectSoaForVersion`, фактический вызов `mapDrawingsToCells` и запись `markerSources` для покрытых ячеек. Это отдельный followup.
+
+### Спринт 3 SoA drawings (commit 3/4): mapDrawingsToCells helper + integration
+
+`packages/doc-parser/src/parser.ts` — `parseDocx` теперь после mammoth-обработки вызывает `extractDrawings(buffer)` (best-effort, ошибки не валят парс) и кладёт результат в `ParsedDocument.drawings: Drawing[]`. `metadata.totalDrawings` добавлено для observability.
+
+`packages/shared/src/soa-detection-core.ts`:
+- Тип `MarkerSource = 'text' | 'arrow' | 'line' | 'bracket'`. `SoaCellData` расширен `markerSources: MarkerSource[]` — список сигналов, которые внесли вклад в маркировку ячейки. По умолчанию `['text']`, не меняет существующее поведение детектора.
+- `persistSoaTables` теперь пишет `markerSources` в `SoaCell.markerSources` JSON-колонку.
+- **`mapDrawingsToCells(drawings, cells, overlapThreshold=0.6)`** — новая pure-функция (export). Принимает массив `DrawingForMapping` и `CellRect[]` (EMU bounding boxes ячеек), возвращает `CellMarkerOverride[]` — пары `(rowIndex, colIndex, source)`. Правило перекрытия: ячейка считается покрытой когда ≥60% её площади в bounding box drawing. Image и shape игнорируются.
+
+Привязка drawings к ячейкам не активирована в pipeline в этом коммите — это контракт для будущего Sprint 3.5/4: чтобы вызвать функцию, нужны EMU-координаты ячеек таблицы, которые требуют отдельного парсинга `<w:tblGrid>` + `<w:trHeight>`. Pure-функция готова и протестирована mentally; integration с реальным DOCX откладывается.
+
+`ParsedDocument` теперь содержит `drawings: Drawing[]` (новое обязательное поле). Worker `parse_document` будет передавать этот массив в `detectSoaForVersion` после Sprint 3.5 — пока поле проходит транзитом.
+
+192/192 теста doc-parser зелёные, full monorepo typecheck зелёный.
+
+### Спринт 3 SoA drawings (commit 2/4): парсер DrawingML в doc-parser
+
+`packages/doc-parser/src/drawing-parser.ts` (новый модуль). Извлекает графические объекты из `word/document.xml` — стрелки, линии, скобки, картинки. Использует `JSZip` для распаковки DOCX и `fast-xml-parser` для XML (новые dependencies).
+
+API:
+- **`extractDrawings(buffer): Promise<Drawing[]>`** — топ-уровневый вход: `JSZip.loadAsync` → читает `word/document.xml` → парсит → возвращает массив.
+- **`extractDrawingsFromDocumentXml(xml): Drawing[]`** — pure-функция; принимает строку XML, возвращает drawings. Используется для unit-тестов с inline фикстурами.
+
+Каждый `Drawing`:
+- `type`: `'arrow' | 'line' | 'bracket' | 'image' | 'shape'` — классифицируется по `<a:prstGeom prst="...">`. Whitelist'ы для arrow (`rightArrow`, `leftRightArrow`, `bentArrow`, …), line (`straightConnector1`, `bentConnector*`), bracket (`leftBracket`, `bracePair`, …).
+- `position: { xEmu, yEmu, cxEmu, cyEmu }` — координаты в EMU (English Metric Units, 914400 на дюйм). Для floating-объектов (`<wp:anchor>`) берутся из `<a:off>`/`<a:ext>`, для inline — `<wp:extent>` плюс runtime-baseline (offset = 0).
+- `direction: 'horizontal' | 'vertical' | undefined` — на основе соотношения cx/cy (≥2× → доминирующая ось).
+- `paragraphIndex: number` — индекс родительского `<w:p>`, для будущей привязки к таблице.
+- `prstGeom?: string` — raw OOXML preset name для отладки.
+
+Поддержано: DrawingML (`<wp:anchor>`/`<wp:inline>` → `<a:graphic>` → `wps:wsp`/`pic:pic`), `<mc:AlternateContent>/Choice` (DrawingML branch), вложенность в `<w:tbl>`. VML (`<v:shape>`) детектируется но не разворачивается — DrawingML ветка содержит ту же геометрию.
+
+Тесты `packages/doc-parser/src/__tests__/drawing-parser.test.ts` — 12 кейсов: пустой/невалидный XML, отсутствие drawings, rightArrow/leftRightArrow/straightConnector/leftBracket/pic:pic, paragraph index, вложенность в таблицу, DrawingML branch в AlternateContent, fallback на `<wp:extent>` при отсутствии `<a:xfrm>`. Все 144 теста doc-parser зелёные.
+
+### Спринт 3 SoA drawings (commit 1/4): schema для графических маркеров
+
+`packages/db/prisma/schema.prisma`:
+- `SoaTable.drawings: Json` (default `[]`) — массив сырых drawings, извлечённых из `word/document.xml` (стрелки, линии, скобки поверх SoA-таблицы). Формат `{ type, position: {xEmu,yEmu,cxEmu,cyEmu}, direction? }`. Используется UI для рендера SVG-overlay.
+- `SoaCell.markerSources: Json` (default `["text"]`) — массив источников, которые внесли свой вклад в маркировку ячейки: `'text'`/`'arrow'`/`'line'`/`'bracket'`. Если в ячейке текстового X нет, но через неё проходит стрелка — `markerSources=['arrow']` и значение нормализуется как X с confidence 0.85.
+
+Миграция `20260503130000_add_soa_drawings` — добавляет два JSON-столбца. Применена в dev и test БД.
+
+Цель спринта: распознавать ячейки SoA, помеченные не текстом X, а **горизонтальной стрелкой** поверх группы ячеек (как в реальном протоколе из примера пользователя — `Прием препарата² ←→` от Визит 1 до Визит 4). Раньше такие ячейки выглядели пустыми. Логика парсинга drawings и геометрический mapping — следующие коммиты.
+
+
+
 ### Спринт 2 SoA orientation (commit 3/3): UI бейджи и conflict-алёрт
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx`:

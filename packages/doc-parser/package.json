@@ -5,8 +5,27 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./src/index.ts",
-  "exports": { ".": { "types": "./src/index.ts", "default": "./dist/index.js" } },
-  "scripts": { "build": "tsc", "dev": "tsc --watch", "test": "vitest run", "lint": "eslint src/", "typecheck": "tsc --noEmit" },
-  "dependencies": { "mammoth": "^1", "jsdom": "^24" },
-  "devDependencies": { "@types/jsdom": "^21", "typescript": "^5" }
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.5.8",
+    "jsdom": "^24",
+    "jszip": "^3.10.1",
+    "mammoth": "^1"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21",
+    "typescript": "^5"
+  }
 }

@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { detectHeading, type DetectedHeading } from "./heading-detector.js";
 import { parseHtmlTable, isSOATable } from "./table-parser.js";
 import { extractFootnotes } from "./footnote-extractor.js";
+import { extractDrawings, type Drawing } from "./drawing-parser.js";
 import type {
   ParsedDocument,
   ParsedSection,
@@ -114,17 +115,26 @@ export async function parseDocx(
 
   const title = extractTitle(rawText, headings);
 
+  let drawings: Drawing[] = [];
+  try {
+    drawings = await extractDrawings(buffer);
+  } catch {
+    // Drawing extraction is best-effort; don't fail the whole parse.
+  }
+
   return {
     title,
     sections,
     synopsis,
     soaTable,
     footnotes,
+    drawings,
     metadata: {
       totalParagraphs: String(elements.length),
       totalSections: String(countSections(sections)),
       totalTables: String(tables.length),
       totalFootnotes: String(footnotes.length),
+      totalDrawings: String(drawings.length),
       warnings: JSON.stringify(result.messages),
     },
   };
