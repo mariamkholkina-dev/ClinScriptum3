@@ -2,6 +2,23 @@
 
 ## 2026-05-04
 
+### Спринт 6 SoA detection robustness (commit 7/8): LLM verification UI badges
+
+Followup к Sprint 4 — `verificationLevel` и `llmConfidence` уже хранились на `SoaTable`, но не отображались в UI.
+
+`apps/rule-admin/.../soa-viewer/SoaViewer.tsx`:
+- Шапка таблицы (`SingleSoaTableViewer`):
+  - `verificationLevel === 'llm_check'` → синий бейдж `Проверено LLM ({llmConfidence × 100}%)`.
+  - `verificationLevel === 'llm_qa'` → амбер бейдж `Требует проверки LLM QA ({llmConfidence × 100}%)`.
+  - `verificationLevel === 'deterministic'` → без бейджа.
+  - Tooltip: «LLM Check выполнен в момент detect; уровень определяет согласие или конфликт детерминистики и LLM».
+- `CellDetailPanel` теперь принимает `verificationLevel` + `llmConfidence` и показывает их в нижней метаинформации ячейки.
+
+`apps/web/.../documents/[versionId]/page.tsx`:
+- Тот же бейдж рядом с заголовком «Извлечённые данные (для валидации)» в SoaTab. Read-only.
+
+Backend без изменений — `processing.service.getSoaData` уже возвращает все scalar поля `SoaTable` (включая `verificationLevel` и `llmConfidence`) через `findMany` без select.
+
 ### Спринт 6 SoA detection robustness (commit 6/8): yellow cell highlighting
 
 Реальные протоколы часто отмечают важные ячейки SoA желтой подсветкой. Теперь это сохраняется в БД и отображается в UI.
