@@ -27,6 +27,11 @@ export interface DiffEntry {
   sectionTitle: string;
   expected?: { level: number; order: number };
   actual?: { level: number; order: number };
+  /** ID реальной секции в БД (для extra и wrong_level). Используется
+      для resolve дубликатов title — несколько секций могут иметь
+      одинаковое название, и без id нельзя определить какая именно
+      попала в diff. */
+  actualSectionId?: string;
 }
 
 export type SortKey = "order" | "title" | "level" | "structureStatus" | "blockCount";

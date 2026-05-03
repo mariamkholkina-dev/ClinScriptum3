@@ -164,6 +164,10 @@ type ParsingQuickFix =
 interface ParsingDiffOverlayProps {
   entries: DiffEntry[];
   sections: Section[];
+  /** Иерархическая нумерация (как в дереве): sectionId → "1.2.3". Показывается
+      в строке overlay для extra и wrong_level, чтобы при дубликатах title
+      эксперт видел какая именно копия попала в diff. */
+  numbering: Map<string, string>;
   onQuickFix: (fix: ParsingQuickFix) => void;
   onJumpToSection: (sectionId: string) => void;
   fixPending: boolean;
@@ -172,15 +176,30 @@ interface ParsingDiffOverlayProps {
 function ParsingDiffOverlay({
   entries,
   sections,
+  numbering,
   onQuickFix,
   onJumpToSection,
   fixPending,
 }: ParsingDiffOverlayProps) {
+  // Resolve секции из entry: сначала по actualSectionId (точное совпадение,
+  // важно для дубликатов title), потом fallback по title (для старых entries).
+  const sectionById = useMemo(() => {
+    const m = new Map<string, Section>();
+    for (const s of sections) m.set(s.id, s);
+    return m;
+  }, [sections]);
   const titleToSection = useMemo(() => {
     const m = new Map<string, Section>();
     for (const s of sections) m.set(s.title.trim().toLowerCase(), s);
     return m;
   }, [sections]);
+  const resolveSection = (e: DiffEntry): Section | undefined => {
+    if (e.actualSectionId) {
+      const byId = sectionById.get(e.actualSectionId);
+      if (byId) return byId;
+    }
+    return titleToSection.get(e.sectionTitle.trim().toLowerCase());
+  };
 
   // Локальный per-row выбор уровня для wrong_level — initial = expected.level.
   const [pendingLevels, setPendingLevels] = useState<Map<string, number>>(new Map());
@@ -210,7 +229,8 @@ function ParsingDiffOverlay({
       <div className="max-h-80 overflow-y-auto space-y-1.5">
         {entries.map((e, i) => {
           const rowKey = getRowKey(e, i);
-          const matchedSection = titleToSection.get(e.sectionTitle.trim().toLowerCase());
+          const matchedSection = resolveSection(e);
+          const sectionNumber = matchedSection ? numbering.get(matchedSection.id) : undefined;
 
           const borderBg =
             e.type === "missing"
@@ -232,6 +252,11 @@ function ParsingDiffOverlay({
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <span className={`font-medium ${labelColor}`}>{labelText}</span>
+                  {sectionNumber && (
+                    <span className="ml-1 inline-block rounded bg-white px-1 font-mono text-[10px] text-gray-500" title="Номер секции в дереве (для дубликатов title)">
+                      №{sectionNumber}
+                    </span>
+                  )}
                   <span className="ml-1 text-gray-900" title={e.sectionTitle}>
                     {e.sectionTitle}
                   </span>
@@ -1273,6 +1298,7 @@ export default function ParsingTreeViewer({
         <ParsingDiffOverlay
           entries={diffEntries}
           sections={rawSections}
+          numbering={numbering}
           onQuickFix={handleQuickFix}
           onJumpToSection={(sectionId) => {
             // Сброс фильтров — иначе целевая строка может быть отфильтрована.
