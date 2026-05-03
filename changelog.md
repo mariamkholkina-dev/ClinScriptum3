@@ -2,6 +2,12 @@
 
 ## 2026-05-03
 
+### Optimistic update в Diff overlay Парсинга
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx`:
+- `markFalseHeading` и `updateExpected` мутации переведены на optimistic update (onMutate → cancel + getData snapshot + setData → onError откат → onSettled invalidate).
+- UI обновляется мгновенно, без 1-2 секунд ожидания на сетевой round-trip + повторную загрузку всех секций с блоками контента. При ошибке мутации откатываемся к снимку.
+
 ### Интерактивный Diff с эталоном на этапе Парсинг
 
 `packages/db/prisma/schema.prisma` + миграция `20260503150000_add_section_false_heading`:

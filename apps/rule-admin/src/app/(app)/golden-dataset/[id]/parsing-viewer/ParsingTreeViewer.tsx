@@ -950,14 +950,65 @@ export default function ParsingTreeViewer({
     [selectedIds, bulkStructureMutation],
   );
 
+  // Optimistic update: меняем кеш `getVersion` сразу, до ответа сервера.
+  // UI обновляется мгновенно (без 1-2 сек ожидания на сетевой round-trip + повторную
+  // загрузку всех секций с блоками контента). При ошибке откатываем к снимку.
   const markFalseHeading = trpc.document.markSectionFalseHeading.useMutation({
-    onSuccess: () => {
+    onMutate: async ({ sectionId, isFalseHeading }) => {
+      await utils.document.getVersion.cancel({ versionId });
+      const prev = utils.document.getVersion.getData({ versionId });
+      utils.document.getVersion.setData({ versionId }, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          sections: old.sections.map((s) =>
+            s.id === sectionId ? { ...s, isFalseHeading } : s,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.document.getVersion.setData({ versionId }, ctx.prev);
+    },
+    onSettled: () => {
       utils.document.getVersion.invalidate({ versionId });
     },
   });
 
+  // Optimistic update для эталона: патчим `goldenDataset.getSample` в кеше,
+  // родительский page.tsx через useQuery подхватит и пробросит свежий expectedResults
+  // обратно сюда через props — overlay перерисуется мгновенно.
   const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onSuccess: () => {
+    onMutate: async (input) => {
+      if (!goldenSampleId) return undefined;
+      await utils.goldenDataset.getSample.cancel({ id: goldenSampleId });
+      const prev = utils.goldenDataset.getSample.getData({ id: goldenSampleId });
+      utils.goldenDataset.getSample.setData({ id: goldenSampleId }, (old) => {
+        if (!old) return old;
+        // Cast: input.expectedResults — Record<string, unknown>|undefined из zod-схемы,
+        // в кеше тип JsonValue. Структурно совместимо, проблема только в null vs undefined.
+        return {
+          ...old,
+          stageStatuses: old.stageStatuses.map((ss) =>
+            ss.stage === input.stage
+              ? {
+                  ...ss,
+                  expectedResults: (input.expectedResults ?? {}) as typeof ss.expectedResults,
+                  status: input.status as typeof ss.status,
+                }
+              : ss,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev && goldenSampleId) {
+        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
+      }
+    },
+    onSettled: () => {
       if (goldenSampleId) {
         utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
       }
