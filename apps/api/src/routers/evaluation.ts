@@ -88,4 +88,12 @@ export const evaluationRouter = router({
     .query(({ ctx, input }) =>
       evaluationService.compareRuns(input.runId1, input.runId2, ctx.user.tenantId),
     ),
+
+  /**
+   * Per-golden-sample SoA detection metrics. Used by the SoA overview
+   * page to show precision/recall/F1 over the golden set.
+   */
+  getSoaMetricsByGoldenSample: p.query(({ ctx }) =>
+    evaluationService.getSoaMetricsByGoldenSample(ctx.user.tenantId),
+  ),
 });

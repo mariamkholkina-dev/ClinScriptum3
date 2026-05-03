@@ -2,6 +2,35 @@
 
 ## 2026-05-04
 
+### Спринт 6 SoA detection robustness (commit 8/8): real F1 metrics на /soa странице
+
+Завершающий коммит Sprint 6 — заменяет placeholder F1 на странице `/soa` реальными метриками относительно `expectedResults` golden samples.
+
+`apps/api/src/lib/soa-metrics.ts`:
+- `ExpectedSoaResults` — lenient JSON shape для ground truth (`{ soaTables: [{ visits, procedures, cells?, footnoteAnchors? }] }`).
+- `parseExpectedSoa(raw)` — best-effort парсер; возвращает null для пустого/неправильного формата, отбрасывает malformed cells/anchors.
+- `computeSoaMetrics(expected, actual)` — считает 5 групп метрик:
+  - `detectionAgreement`: 1 если обе стороны имеют ≥1 SoA; 0 если только одна; 1 если обе пусты.
+  - `visit`/`procedure`/`cell`: precision/recall/F1 по set-сравнению (агрегированно через все таблицы — порядок таблиц не важен).
+  - `footnoteLink`: PRF1 по `(procedure|visit|marker)` ключу. Null если у обеих сторон нет anchors.
+- Cell normalization: `X/✓/✔/+` → `x`; `–/—/-` → `-`; всё остальное в lowercase.
+
+`apps/api/src/services/evaluation.service.ts`:
+- Новый `getSoaMetricsByGoldenSample(tenantId)` — для каждого golden sample подтягивает stage `soa_detection`, expected results, actual SoaTable + cells + footnoteAnchors (через `cell` lookup для resolved procedure/visit), и вызывает `computeSoaMetrics`.
+
+`apps/api/src/routers/evaluation.ts`:
+- tRPC `evaluation.getSoaMetricsByGoldenSample` — quality-procedure protected query без input.
+
+UI `apps/rule-admin/src/app/(app)/soa/page.tsx`:
+- Новый блок «Метрики на golden set» над фильтрами с 4 cards: Detection agreement, Visit F1, Cell F1, Footnote link F1. Усреднение через samples с expected.
+- Раскрывающаяся per-sample таблица: Sample, Detect, Visits, Procedures, Cells, Footnotes — для drill-down.
+- Samples без expected отображаются серым с прочерками.
+
+Tests:
+- 8 unit тестов для `parseExpectedSoa` + `computeSoaMetrics` в `apps/api/src/lib/__tests__/soa-metrics.test.ts` (perfect match, partial cell, missed detection, malformed input, footnote null edge case).
+
+Sprint 6 завершён: 8 коммитов, ~50 новых тестов, 3 миграции (`add_soa_cell_geometry`, `add_soa_source_block_ids`, `add_soa_cell_highlight`).
+
 ### Спринт 6 SoA detection robustness (commit 7/8): LLM verification UI badges
 
 Followup к Sprint 4 — `verificationLevel` и `llmConfidence` уже хранились на `SoaTable`, но не отображались в UI.

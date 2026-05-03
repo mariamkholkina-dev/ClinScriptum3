@@ -2,6 +2,12 @@ import { prisma } from "@clinscriptum/db";
 import type { ContextStrategy, EvaluationRunType } from "@prisma/client";
 import { DomainError } from "./errors.js";
 import { logger } from "../lib/logger.js";
+import {
+  computeSoaMetrics,
+  parseExpectedSoa,
+  type ActualSoaTable,
+  type SoaMetrics,
+} from "../lib/soa-metrics.js";
 
 export const evaluationService = {
   async createRun(
@@ -270,6 +276,93 @@ export const evaluationService = {
     await prisma.evaluationRun.delete({ where: { id } });
     logger.info("Evaluation run deleted", { evaluationRunId: id });
     return { success: true };
+  },
+
+  /**
+   * Per-golden-sample SoA metrics. For every golden sample in the
+   * tenant we look at the `soa_detection` stage status; if it carries
+   * an `expectedResults` blob, we compare it against the actual
+   * SoaTables of the linked DocumentVersions and produce
+   * precision/recall/F1 for visits, procedures, cells and footnote
+   * anchors.
+   */
+  async getSoaMetricsByGoldenSample(tenantId: string): Promise<
+    Array<{
+      goldenSampleId: string;
+      sampleName: string;
+      hasExpected: boolean;
+      metrics: SoaMetrics;
+    }>
+  > {
+    const samples = await prisma.goldenSample.findMany({
+      where: { tenantId },
+      include: {
+        documents: {
+          include: { documentVersion: { select: { id: true } } },
+        },
+        stageStatuses: { where: { stage: "soa_detection" } },
+      },
+    });
+
+    const out: Array<{
+      goldenSampleId: string;
+      sampleName: string;
+      hasExpected: boolean;
+      metrics: SoaMetrics;
+    }> = [];
+
+    for (const s of samples) {
+      const stage = s.stageStatuses[0];
+      const expected = stage ? parseExpectedSoa(stage.expectedResults) : null;
+      if (!expected) {
+        out.push({
+          goldenSampleId: s.id,
+          sampleName: s.name,
+          hasExpected: false,
+          metrics: {
+            detectionAgreement: null,
+            visit: null,
+            procedure: null,
+            cell: null,
+            footnoteLink: null,
+          },
+        });
+        continue;
+      }
+
+      const versionIds = s.documents.map((d) => d.documentVersion.id);
+      const tables = await prisma.soaTable.findMany({
+        where: { docVersionId: { in: versionIds } },
+        include: {
+          cells: true,
+          footnoteAnchors: { include: { footnote: { select: { marker: true } }, cell: { select: { procedureName: true, visitName: true } } } },
+        },
+      });
+
+      const actual: ActualSoaTable[] = tables.map((t) => ({
+        cells: t.cells.map((c) => ({
+          procedureName: c.procedureName,
+          visitName: c.visitName,
+          rawValue: c.rawValue,
+          normalizedValue: c.normalizedValue,
+          manualValue: c.manualValue,
+        })),
+        footnoteAnchors: t.footnoteAnchors.map((a) => ({
+          marker: a.footnote.marker,
+          procedureName: a.cell?.procedureName ?? null,
+          visitName: a.cell?.visitName ?? null,
+        })),
+      }));
+
+      out.push({
+        goldenSampleId: s.id,
+        sampleName: s.name,
+        hasExpected: true,
+        metrics: computeSoaMetrics(expected, actual),
+      });
+    }
+
+    return out;
   },
 };
 
