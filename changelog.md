@@ -2,6 +2,21 @@
 
 ## 2026-05-03
 
+### Спринт 3 SoA drawings (commit 4/4): UI бейджи и индикаторы графических маркеров
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx`:
+- Тип `SoaCell` дополнен `markerSources: ('text'|'arrow'|'line'|'bracket')[]`. Тип `SoaTable` дополнен `drawings: DrawingUI[]` (с `position`, `direction`, `prstGeom`).
+- В шапке `SingleSoaTableViewer` — бейдж «Графика: N» (синий), показывается когда у таблицы есть распознанные drawings. Title-tooltip с deтальной подсказкой.
+- На ячейке — иконка `→` (для arrow) или `│` (для line/bracket) в верхнем-левом углу, если `markerSources` содержит не-text источник. Tooltip «Получено из arrow/line/bracket».
+- В `CellDetailPanel` — строчка «Источник: …» с перечислением не-text источников, чтобы писатель мог увидеть откуда взялся маркер.
+
+`apps/web/src/app/(app)/documents/[versionId]/page.tsx`:
+- В шапке каждой SoA-таблицы под бейджами orientation добавлен синий бейдж «Графика: N» с тем же tooltip.
+
+Бейджи и иконки — read-only display. SVG-overlay со стрелками поверх ячеек не рендерится, поскольку EMU→px конвертация требует точных координат таблицы в браузере, что не входит в scope этого спринта (см. commit 3/4 — mapDrawingsToCells готов как контракт, но не активирован в pipeline). Когда EMU-координаты ячеек станут доступны, overlay добавится поверх существующего UI без переписывания типов.
+
+Sprint 3 SoA drawings — завершён. 4 коммита, 192 теста doc-parser зелёные, full monorepo typecheck зелёный. Что осталось интегрировать в production: парсинг `<w:tblGrid>` + `<w:trHeight>` для cell EMU-координат, передача `ParsedDocument.drawings` через worker `parse_document` в `detectSoaForVersion`, фактический вызов `mapDrawingsToCells` и запись `markerSources` для покрытых ячеек. Это отдельный followup.
+
 ### Спринт 3 SoA drawings (commit 3/4): mapDrawingsToCells helper + integration
 
 `packages/doc-parser/src/parser.ts` — `parseDocx` теперь после mammoth-обработки вызывает `extractDrawings(buffer)` (best-effort, ошибки не валят парс) и кладёт результат в `ParsedDocument.drawings: Drawing[]`. `metadata.totalDrawings` добавлено для observability.

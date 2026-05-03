@@ -1481,6 +1481,14 @@ function SoaTab({ versionId }: { versionId: string }) {
                       Конфликт ориентации
                     </span>
                   )}
+                  {Array.isArray(table.drawings) && table.drawings.length > 0 && (
+                    <span
+                      className="rounded bg-blue-100 px-2 py-0.5 font-medium text-blue-700"
+                      title={`В исходном DOCX обнаружено ${table.drawings.length} графических объектов поверх таблицы`}
+                    >
+                      Графика: {table.drawings.length}
+                    </span>
+                  )}
                 </div>
               </div>
 

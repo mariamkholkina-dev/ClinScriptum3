@@ -34,6 +34,7 @@ interface SoaCell {
   confidence: number;
   /** @deprecated kept for legacy rendering of marker superscripts in cells */
   footnoteRefs: number[];
+  markerSources: ("text" | "arrow" | "line" | "bracket")[];
 }
 
 interface SoaFootnoteAnchor {
@@ -58,6 +59,21 @@ interface SoaFootnote {
   anchors: SoaFootnoteAnchor[];
 }
 
+interface DrawingPositionUI {
+  xEmu: number;
+  yEmu: number;
+  cxEmu: number;
+  cyEmu: number;
+}
+
+interface DrawingUI {
+  type: "arrow" | "line" | "bracket" | "image" | "shape";
+  position: DrawingPositionUI;
+  direction?: "horizontal" | "vertical";
+  paragraphIndex?: number;
+  prstGeom?: string;
+}
+
 interface SoaTable {
   id: string;
   title: string;
@@ -72,6 +88,7 @@ interface SoaTable {
   cells: SoaCell[];
   soaFootnotes: SoaFootnote[];
   sourceHtml: string | null;
+  drawings: DrawingUI[];
 }
 
 interface SelectedCell {
@@ -314,6 +331,16 @@ function ParsedSoaTable({
                         <sup className="absolute bottom-0 right-0.5 text-[8px] text-blue-600 font-bold">
                           {markerSup}
                         </sup>
+                      )}
+                      {cell.markerSources?.some((s) => s !== "text") && (
+                        <span
+                          className="absolute top-0 left-0.5 text-[9px]"
+                          title={`Получено из ${cell.markerSources
+                            .filter((s) => s !== "text")
+                            .join(", ")}`}
+                        >
+                          {cell.markerSources.includes("arrow") ? "→" : "│"}
+                        </span>
                       )}
                     </td>
                   );
@@ -835,6 +862,11 @@ function CellDetailPanel({
         <span>Исходное: &ldquo;{cell.rawValue || "—"}&rdquo;</span>
         <span>Нормализовано: &ldquo;{cell.normalizedValue || "—"}&rdquo;</span>
         <span>Уверенность: {Math.round(cell.confidence * 100)}%</span>
+        {cell.markerSources && cell.markerSources.some((s) => s !== "text") && (
+          <span className="text-blue-700 font-medium">
+            Источник: {cell.markerSources.filter((s) => s !== "text").join(", ")}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -937,6 +969,14 @@ function SingleSoaTableViewer({
               title="В документе есть SoA с разной ориентацией — приоритет дан таблице с визитами в столбцах"
             >
               Конфликт ориентации
+            </span>
+          )}
+          {table.drawings && table.drawings.length > 0 && (
+            <span
+              className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+              title={`В исходном DOCX обнаружено ${table.drawings.length} графических объектов поверх таблицы`}
+            >
+              Графика: {table.drawings.length}
             </span>
           )}
         </div>
