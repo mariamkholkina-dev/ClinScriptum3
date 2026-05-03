@@ -2,6 +2,7 @@ import { z } from "zod";
 import { router, protectedProcedure, qualityProcedure } from "../trpc/trpc.js";
 import { withDomainErrors } from "../trpc/error-mapper.js";
 import { processingService } from "../services/processing.service.js";
+import { logger } from "../lib/logger.js";
 
 const p = protectedProcedure.use(withDomainErrors);
 const qp = qualityProcedure.use(withDomainErrors);
@@ -190,25 +191,44 @@ export const processingRouter = router({
       processingService.setSoaTableStatus(ctx.user.tenantId, input.soaTableId, input.status),
     ),
 
+  /**
+   * @deprecated Use `soaFootnote.linkAnchor` / `unlinkAnchor` instead.
+   * Removal target: Sprint 5. The shim writes the same data into the
+   * normalized SoaFootnoteAnchor table so the legacy field stays in
+   * sync with the new readers.
+   */
   updateSoaCellFootnoteRefs: p
     .input(z.object({ cellId: z.string().uuid(), footnoteRefs: z.array(z.number()) }))
-    .mutation(({ ctx, input }) =>
-      processingService.updateSoaCellFootnoteRefs(
+    .mutation(({ ctx, input }) => {
+      logger.warn("[deprecated] processing.updateSoaCellFootnoteRefs called", {
+        tenantId: ctx.user.tenantId,
+        cellId: input.cellId,
+      });
+      return processingService.updateSoaCellFootnoteRefs(
         ctx.user.tenantId,
         input.cellId,
         input.footnoteRefs,
-      ),
-    ),
+      );
+    }),
 
+  /**
+   * @deprecated Use `soaFootnote.create` / `update` / `delete` instead.
+   * Removal target: Sprint 5. The shim recreates SoaFootnote rows for
+   * the table from scratch with marker = idx+1 and source=manual.
+   */
   updateSoaTableFootnotes: p
     .input(z.object({ soaTableId: z.string().uuid(), footnotes: z.array(z.string()) }))
-    .mutation(({ ctx, input }) =>
-      processingService.updateSoaTableFootnotes(
+    .mutation(({ ctx, input }) => {
+      logger.warn("[deprecated] processing.updateSoaTableFootnotes called", {
+        tenantId: ctx.user.tenantId,
+        soaTableId: input.soaTableId,
+      });
+      return processingService.updateSoaTableFootnotes(
         ctx.user.tenantId,
         input.soaTableId,
         input.footnotes,
-      ),
-    ),
+      );
+    }),
 
   updateSectionStructureStatus: p
     .input(

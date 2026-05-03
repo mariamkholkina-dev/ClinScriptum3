@@ -3,6 +3,7 @@ import { authRouter } from "./auth.js";
 import { studyRouter } from "./study.js";
 import { documentRouter } from "./document.js";
 import { processingRouter } from "./processing.js";
+import { soaFootnoteRouter } from "./soa-footnote.js";
 import { comparisonRouter } from "./comparison.js";
 import { generationRouter } from "./generation.js";
 import { auditRouter } from "./audit.js";
@@ -22,6 +23,7 @@ export const appRouter = router({
   study: studyRouter,
   document: documentRouter,
   processing: processingRouter,
+  soaFootnote: soaFootnoteRouter,
   comparison: comparisonRouter,
   generation: generationRouter,
   audit: auditRouter,

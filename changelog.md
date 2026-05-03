@@ -2,6 +2,107 @@
 
 ## 2026-05-03
 
+### Спринт 1 SoA footnotes (commit 7/7): deprecation legacy endpoints + summary
+
+`apps/api/src/routers/processing.ts`:
+- Над процедурами `updateSoaCellFootnoteRefs` и `updateSoaTableFootnotes` поставлены JSDoc-комментарии `@deprecated` с указанием замены (`soaFootnote.linkAnchor`/`unlinkAnchor` и `soaFootnote.create`/`update`/`delete`) и target-спринта удаления (Sprint 5).
+- При каждом вызове старых endpoints пишется `logger.warn("[deprecated] ...")` с `tenantId` + ID ресурса — поможет в логах подсчитать оставшихся клиентов до удаления.
+
+**Sprint 1 SoA footnotes — итог по 7 коммитам:**
+
+| # | SHA | Что |
+|---|---|---|
+| 1 | `3e4f78d` | DB-модели `SoaFootnote` + `SoaFootnoteAnchor`, два enum, миграция `20260502205347_add_soa_footnotes`. Legacy-поля помечены `@deprecated`. |
+| 2 | `84a7a80` | Pure-функции `extractCellMarkers` / `extractFootnoteDefinitions` / `linkAnchorsToFootnotes` в doc-parser. 36 unit-тестов. |
+| 3 | `e39ea03` | `parseHtmlTableWithSpans` сохраняет `rawHtml` ячеек, `expandGridFromHtmlRows` строит `rawHtmlGrid`, `buildSoaResult` извлекает маркеры и анкоры, `persistSoaTables` пишет в нормализованные таблицы + sync legacy. 7 integration-тестов. |
+| 4 | `6bf2ca2` | Сервис + tRPC router `soaFootnote`, расширенный `getSoaData`, переписанные legacy shims. 13 service-тестов. |
+| 5 | `9a21da5` | Полный редизайн `FootnotesPanel` в rule-admin: реальные маркеры, bind cell/row/col, бейджи anchors. |
+| 6 | `ca71bf5` | Read-only список сносок в apps/web SoaTab под каждой SOA-таблицей. |
+| 7 | (this) | `@deprecated` JSDoc + `logger.warn` на legacy endpoints для удаления в Sprint 5. |
+
+Что покрыто конкретно по протоколам пользователя (см. примеры «4.2.2.1 Блок-схема клинического исследования»):
+- `Прием препарата²` — маркер `2` извлечён из rawHtml ячейки названия процедуры → `targetType='row'`, `rowIndex` соответствующей процедуры.
+- `X¹` в ячейке «Регистрация НЯ → Скрининг» — маркер `1` → `targetType='cell'`, cellId соответствующей ячейки.
+- Массовые `X*` в столбцах НВ/ДЗ — каждый получает свой `cell` anchor.
+- Блок «Примечание:» с разделителями em-dash (`* — по показаниям`, `1 — до введения...`) парсится `extractFootnoteDefinitions`. Многобуквенный глоссарий (`ТЗ – телефонный звонок`, `MFI-20 (...) - ...`) автоматически отсеивается по whitelist маркеров.
+
+Что не покрыто этим спринтом:
+- Графические маркеры (горизонтальные стрелки между ячейками для «Прием препарата²» / «Заполнение Дневника пациентом») — отдельный Sprint 3 «Drawing-derived cells» с XML-парсингом DOCX через JSZip + fast-xml-parser.
+- Continuation-таблицы (длинная SOA, разбитая на 2 части с повторённой шапкой) — отдельный Sprint «merge SoA continuations». Сейчас детектор их видит как две независимые SOA.
+- Удаление legacy полей и endpoints — Sprint 5 после унификации UI rule-admin/web в shared-компонент.
+
+Все 171 тест api и 132 теста doc-parser зелёные. Полный typecheck на 17 workspace зелёный. Lint без новых errors.
+
+### Спринт 1 SoA footnotes (commit 6/7): read-only список сносок в apps/web SoaTab
+
+`apps/web/src/app/(app)/documents/[versionId]/page.tsx` — медицинский писатель в основном UI впервые видит сноски, привязанные к каждой SOA-таблице.
+
+- Новый компонент `SoaFootnotesReadOnly` (типы `SoaFootnoteWithAnchors` и `SoaFootnoteAnchor` локально) рендерит блок «Сноски (N)» под существующим Score Info. Каждая сноска: маркер (`*`, `1`, `†`…) + текст + бейджи `N ячеек / N строк / N столбцов`. Если выбрана ячейка — соответствующие сноски подсвечиваются `bg-brand-50` (брендовая полоса).
+- Источник данных — `processing.getSoaData` (расширен в Коммите 4 чтобы возвращать `soaFootnotes[].anchors[]`).
+- В шапке блока подсказка `Info` иконкой: «Редактирование в rule-admin» — медицинский писатель в apps/web имеет read-only доступ; полный CRUD — на стороне `apps/rule-admin/.../soa-viewer/`.
+- Если у таблицы 0 сносок — блок не отображается совсем (без шумного «не обнаружено»).
+
+### Спринт 1 SoA footnotes (commit 5/7): редизайн FootnotesPanel в rule-admin
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx` — переписан целиком (~830 строк). Главные изменения:
+
+- Типы `SoaFootnote`, `SoaFootnoteAnchor`, `FootnoteMutations` добавлены, `SoaTable` расширен полем `soaFootnotes: SoaFootnote[]` (с массивом `anchors`). Старые поля `SoaTable.footnotes: string[]` и `SoaCell.footnoteRefs: number[]` помечены `@deprecated` в коде, но сохранены в типах для отображения суперскриптов в ячейках (рендерим реальные маркеры через `markerOrder → marker` карту).
+- `FootnotesPanel` переработан с нуля. Каждая строка сноски (`FootnoteRow`) показывает реальный маркер (`*`, `†`, `1`, `2`…), inline-редактирование marker и text через `soaFootnote.update` мутацию, кнопку удаления (с confirm) через `soaFootnote.delete`. Бейджи `Nc / Nr / Ncol` показывают сколько у сноски ячеек/строк/столбцов anchors.
+- При выбранной ячейке у каждой сноски появляется toggle-кнопка «Bind cell» — нажатие вызывает `soaFootnote.linkAnchor` (если ещё не привязана) или `soaFootnote.unlinkAnchor` (если есть anchor для этой ячейки). Подсветка `highlightedFootnoteIds` рассчитывается через фильтр `anchors.cellId === selectedCell.cellId`.
+- Новые режимы привязки «Строка» и «Столбец»: dropdown со списком процедур / визитов + dropdown со списком сносок → кнопка «Привязать» вызывает `linkAnchor` с `targetType='row'` / `'col'`. Этого не было — раньше можно было привязывать только к ячейкам.
+- Inline-форма «Создать сноску» (marker + text) внизу панели → `soaFootnote.create` с `source='manual'`.
+- Удалены старые мутации `updateSoaCellFootnoteRefs` и `updateSoaTableFootnotes` из UI — они остаются в API как legacy shim для backward compat (Коммит 4).
+
+E2E-тест для нового UI не добавлен в этом коммите (отдельный проход с Playwright Codegen, см. memory `feedback_e2e_workflow.md`). TypeScript + lint зелёные на всём монорепо.
+
+### Спринт 1 SoA footnotes (commit 4/7): tRPC router + service + расширенный getSoaData
+
+Новый домен `soaFootnote` в API:
+- `apps/api/src/services/soa-footnote.service.ts` (новый) — singleton с методами `listForTable`, `create`, `update`, `delete`, `linkAnchor`, `unlinkAnchor`. Каждый метод проходит `requireTenantResource()` через цепочку `soaTable.docVersion.document.study.tenantId`. `linkAnchor` валидирует что `cellId` принадлежит тому же `SoaTable` (защита от cross-table mixing). Внутри сервиса — sync legacy `SoaTable.footnotes` и `SoaCell.footnoteRefs` после каждой мутации, чтобы старый UI продолжал видеть актуальные данные.
+- `apps/api/src/routers/soa-footnote.ts` (новый) — тонкий tRPC router. Все procedures `protectedProcedure`, входы валидируются через `zod`. `linkAnchor` использует `z.discriminatedUnion("type", ...)` для типизированного target (cell/row/col).
+- Регистрация: `appRouter.soaFootnote = soaFootnoteRouter` в `apps/api/src/routers/index.ts`.
+
+`apps/api/src/services/processing.service.ts`:
+- `getSoaData` расширен — теперь `include` включает `soaFootnotes: { orderBy: markerOrder asc, include: anchors }`. Frontend получает нормализованные сноски с массивом anchors напрямую.
+- `updateSoaCellFootnoteRefs` (legacy `@deprecated`) переписан как **shim**: внутри транзакции удаляет существующие cell-anchors данной ячейки и создаёт новые `SoaFootnoteAnchor` рядом с обновлением legacy `SoaCell.footnoteRefs`. Старый клиент работает, новые данные пишутся куда нужно.
+- `updateSoaTableFootnotes` (legacy `@deprecated`) переписан: внутри транзакции `deleteMany SoaFootnote where soaTableId` (cascade удаляет анкоры), затем `createMany` с `marker = String(idx+1)`, `markerOrder = idx`, `source = 'manual'`. Параллельно обнуляет `SoaCell.footnoteRefs` потому что старые `markerOrder` ссылки больше невалидны.
+
+Тесты `apps/api/src/__tests__/integration/soa-footnote-service.test.ts` (новый) — 13 кейсов: create/list, cross-tenant FORBIDDEN, дубликат маркера → CONFLICT, linkAnchor cell/row/col, cellId из чужого SoaTable → DomainError, footnote чужого тенанта → NOT_FOUND, sync legacy footnoteRefs, cascade-delete anchors, legacy shim записывает анкоры в нормализованную таблицу. Все 171 тест api зелёные.
+
+### Спринт 1 SoA footnotes (commit 3/7): wiring детектора, persist в нормализованные таблицы
+
+`packages/shared/src/soa-detection-core.ts` — внутренняя ревизия детектора SoA, чтобы впервые реально извлекать сноски и привязки к ним из таблицы и сохранять их в `SoaFootnote` + `SoaFootnoteAnchor`.
+
+- Добавлено поле `rawHtml` в `HtmlCell`, поля `rawHtmlGrid` и `nextBlockHtml` в `TableCandidate`. `parseHtmlTableWithSpans` теперь через group-capture сохраняет содержимое каждой ячейки между `<td>...</td>`, чтобы маркеры `<sup>` и Unicode-надстрочные не терялись на этапе `stripHtmlTags`.
+- `expandGridFromHtmlRows` параллельно строит `rawHtmlGrid` — заполнение rowspan/colspan повторяет rawHtml исходной ячейки **только** для верхне-левого слота, остальные слоты пустые. Это критично, иначе маркеры дублировались бы для каждой объединённой ячейки.
+- `collectTableCandidates` ищет следующий блок `paragraph`/`list` в той же section и сохраняет его HTML — это будущий блок «Примечание:» под таблицей с определениями сносок.
+- `buildSoaResult` использует `extractCellMarkers`/`extractFootnoteDefinitions`/`linkAnchorsToFootnotes` (Коммит 2): извлекает маркеры из шапки → `targetType='col'`, из первого столбца → `targetType='row'`, из data-cells → `targetType='cell'`. `cleanText` идёт в `rawValue`, `procedures[i]`, `visits[c]` — таким образом ячейка `X<sup>1</sup>` нормализуется в `rawValue='X'` + якорь сноски `1` на эту ячейку.
+- `persistSoaTables` в той же транзакции (`timeout: 60_000`) после `createMany(cells)` строит `cellIdMap` через `findMany`, делает `tx.soaFootnote.createMany`, затем `tx.soaFootnoteAnchor.createMany` с резолвом `cellId` для cell-анкоров. Параллельно заполняет legacy `SoaTable.footnotes` (массив текстов) и `SoaCell.footnoteRefs` (массив `markerOrder` всех cell-анкоров данной ячейки) для backward-compat.
+- `packages/shared/package.json` — добавлена зависимость `@clinscriptum/doc-parser`.
+
+Интеграционный тест `apps/api/src/__tests__/integration/soa-footnotes.test.ts` (новый) — 7 кейсов: создаёт DocumentVersion + Section + ContentBlock с тестовой SoA-таблицей и блоком «Примечание», запускает `detectSoaForVersion`, проверяет создание `SoaFootnote`/`SoaFootnoteAnchor` правильных типов (cell/col), резолв `cellId`, очистку маркеров из `rawValue`/visit names, синк legacy-полей, cascade-delete. Все 158 тестов api-workspace зелёные.
+
+### Спринт 1 SoA footnotes (commit 2/7): inline-маркеры и определения сносок — pure-функции
+
+`packages/doc-parser/src/cell-markers.ts` (новый модуль). Три pure-функции, без зависимости от mammoth/Prisma — чисто работают со строками HTML:
+
+- **`extractCellMarkers(rawCellHtml)`** — возвращает `{cleanText, markers[]}`. Извлекает маркеры из:
+  - `<sup>...</sup>` (любой токен внутри, поддержка через запятую `<sup>1,2</sup>`);
+  - Unicode-надстрочных `¹²³⁰⁴⁵⁶⁷⁸⁹` (карта U+00B9 / U+00B2 / U+00B3 + U+2070..U+2079);
+  - символов `*†‡§¶#` в любом месте текста;
+  - чисел в скобках `(1)..(N)` где N≤30;
+  - HTML-entities (`&dagger;` → `†` и т.п.);
+  - стандалонной цифры в ячейке (`1`, `1.`) — вся ячейка трактуется как footnote-only.
+  Цифры в обычном тексте без контекста (`Day 1`) маркером **не считаются** — это ключевая эвристика.
+
+- **`extractFootnoteDefinitions(htmlBlockAfterTable)`** — парсит блок «Примечание:» под таблицей. Поддержка разделителей `):.\-–—\s+` (включая en-dash `–` U+2013 и em-dash `—` U+2014, что критично для русских протоколов: `* — по показаниям`, `1 – до введения...`). Whitelist маркеров — только `*†‡§¶#` или `1..30`; глоссарий аббревиатур (`ТЗ – телефонный звонок`, `MFI-20 (...) - ...`) автоматически отсеивается. Дубликаты маркера в одном блоке — берётся первый, второй пропускается с `console.warn`.
+
+- **`linkAnchorsToFootnotes(pendingAnchors, definitions)`** — резолвит маркеры якорей в итоговые `SoaFootnote`-объекты. Определения идут первыми (preserve order), маркеры якорей без определения добавляются потом как «orphan» c `text=""`.
+
+`packages/doc-parser/src/index.ts` — re-export новых функций и типов.
+
+Тесты: `packages/doc-parser/src/__tests__/cell-markers.test.ts` — 36 тестов (19 для extractCellMarkers, 12 для extractFootnoteDefinitions, 5 для linkAnchorsToFootnotes), включая Unicode, HTML-entities, дубликаты, em-dash, фильтр глоссария. Все 132 теста doc-parser зелёные.
+
 ### Sprint 5.2 + 5.3 — few-shot inject в LLM Check + eval-метрика
 
 `apps/workers/src/handlers/classify-sections.ts`, `apps/workers/src/handlers/run-evaluation.ts`, `apps/workers/src/handlers/__tests__/{classify-sections,run-evaluation}.test.ts`.
@@ -44,6 +145,20 @@
 Sprint 5.2 (подмешивание few-shot в LLM Check) и 5.3 (eval-метрика) пойдут отдельным PR-B после merge.
 
 ## 2026-05-02
+
+### Спринт 1 SoA footnotes (commit 1/7): нормализованная модель сносок — schema + migration
+
+Заменяем грубое хранение SoA-сносок (`SoaTable.footnotes: Json string[]` + `SoaCell.footnoteRefs: Json number[]`) на нормализованную M:N-модель с привязкой к ячейке/строке/столбцу. Старые поля помечены `/// @deprecated removed in Sprint 5` и пока остаются для backward-compat shim.
+
+`packages/db/prisma/schema.prisma`:
+- Добавлены два enum: `SoaFootnoteSource` (`detected | manual`), `SoaFootnoteAnchorTarget` (`cell | row | col`).
+- Добавлена модель `SoaFootnote` — текст сноски с произвольным маркером (`*`, `†`, `1`, `2`, `2a`…) и порядковым номером для устойчивой сортировки. `@@unique([soaTableId, marker])` защищает от дублей.
+- Добавлена модель `SoaFootnoteAnchor` — якорь сноски на одну из трёх целей: `cell` (через FK `cellId`), `row` (по `rowIndex`), `col` (по `colIndex`). Composite `@@unique([footnoteId, targetType, cellId, rowIndex, colIndex])` + индексы по `footnoteId`, `(soaTableId, targetType)`, `cellId`. Все FK с `ON DELETE CASCADE`.
+- Обратные relations добавлены в `SoaTable.soaFootnotes`/`footnoteAnchors` и `SoaCell.footnoteAnchors`.
+
+Миграция: `packages/db/prisma/migrations/20260502205347_add_soa_footnotes/` (2 enum, 2 таблицы, 5 индексов, 4 FK).
+
+Дальнейшие коммиты спринта (см. `~/.claude/plans/spicy-tinkering-pearl.md`): извлечение inline-маркеров из HTML mammoth, persist в новые таблицы, API endpoints, переработка `FootnotesPanel` в rule-admin, read-only список в apps/web, deprecation legacy.
 
 ### Fix taxonomy: legacy zone-keys заменены везде в production коде
 

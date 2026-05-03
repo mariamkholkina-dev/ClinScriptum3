@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import {
   Loader2,
@@ -16,6 +16,7 @@ import {
   Save,
   Plus,
   Trash2,
+  Link2,
 } from "lucide-react";
 
 /* ═══════════════ Types ═══════════════ */
@@ -31,7 +32,30 @@ interface SoaCell {
   normalizedValue: string;
   manualValue: string | null;
   confidence: number;
+  /** @deprecated kept for legacy rendering of marker superscripts in cells */
   footnoteRefs: number[];
+}
+
+interface SoaFootnoteAnchor {
+  id: string;
+  footnoteId: string;
+  soaTableId: string;
+  targetType: "cell" | "row" | "col";
+  cellId: string | null;
+  rowIndex: number | null;
+  colIndex: number | null;
+  confidence: number;
+  source: "detected" | "manual";
+}
+
+interface SoaFootnote {
+  id: string;
+  soaTableId: string;
+  marker: string;
+  markerOrder: number;
+  text: string;
+  source: "detected" | "manual";
+  anchors: SoaFootnoteAnchor[];
 }
 
 interface SoaTable {
@@ -41,8 +65,10 @@ interface SoaTable {
   status: string;
   headerData: { visits: string[]; headerRows?: { text: string; span: number }[][] };
   rawMatrix: string[][];
+  /** @deprecated string[] kept for backward-compat; new UI reads `soaFootnotes` */
   footnotes: string[];
   cells: SoaCell[];
+  soaFootnotes: SoaFootnote[];
   sourceHtml: string | null;
 }
 
@@ -138,6 +164,12 @@ function buildSourceGrid(parsedRows: ParsedHtmlCell[][]): (ParsedHtmlCell | null
   return grid;
 }
 
+function buildOrderToMarker(footnotes: SoaFootnote[]): Map<number, string> {
+  const map = new Map<number, string>();
+  for (const f of footnotes) map.set(f.markerOrder, f.marker);
+  return map;
+}
+
 /* ═══════════════ Parsed Table ═══════════════ */
 
 function ParsedSoaTable({
@@ -153,6 +185,7 @@ function ParsedSoaTable({
 }) {
   const visits = table.headerData.visits;
   const headerRows = table.headerData.headerRows ?? [];
+  const orderToMarker = useMemo(() => buildOrderToMarker(table.soaFootnotes ?? []), [table.soaFootnotes]);
 
   const procMap = useMemo(() => {
     const map = new Map<number, string>();
@@ -172,8 +205,6 @@ function ParsedSoaTable({
     for (const c of table.cells) m.set(`${c.rowIndex}:${c.colIndex}`, c);
     return m;
   }, [table.cells]);
-
-  const [editingCellId, setEditingCellId] = useState<string | null>(null);
 
   const cycleValue = useCallback(
     (cell: SoaCell) => {
@@ -247,7 +278,10 @@ function ParsedSoaTable({
                     selectedCell.rowIndex === rowIdx &&
                     selectedCell.colIndex === colIdx;
                   const lowConf = cell.confidence < 0.8;
-                  const hasFootnote = Array.isArray(cell.footnoteRefs) && cell.footnoteRefs.length > 0;
+                  const refs = (cell.footnoteRefs ?? []) as number[];
+                  const markerSup = refs
+                    .map((order) => orderToMarker.get(order) ?? String(order + 1))
+                    .join(",");
 
                   let bgClass = "";
                   if (isSelected) bgClass = "bg-brand-100 ring-2 ring-brand-500 ring-inset";
@@ -274,9 +308,9 @@ function ParsedSoaTable({
                           <AlertTriangle size={9} />
                         </span>
                       )}
-                      {hasFootnote && (
+                      {markerSup && (
                         <sup className="absolute bottom-0 right-0.5 text-[8px] text-blue-600 font-bold">
-                          {(cell.footnoteRefs as number[]).join(",")}
+                          {markerSup}
                         </sup>
                       )}
                     </td>
@@ -338,7 +372,7 @@ function SourceHtmlTable({
                         isHighlighted ? "bg-brand-200 ring-2 ring-brand-500 ring-inset font-bold" : ""
                       }`}
                     >
-                      {cell || " "}
+                      {cell || " "}
                     </td>
                   );
                 })}
@@ -389,7 +423,7 @@ function SourceHtmlTable({
                         cell.isHeader ? "font-medium text-gray-700" : "text-gray-600"
                       } ${isHighlighted ? "bg-brand-200 ring-2 ring-brand-500 ring-inset font-bold" : ""}`}
                     >
-                      {cell.text || " "}
+                      {cell.text || " "}
                     </td>
                   );
                 })}
@@ -402,80 +436,248 @@ function SourceHtmlTable({
   );
 }
 
-/* ═══════════════ Footnotes Panel ═══════════════ */
+/* ═══════════════ Footnotes Panel (normalized) ═══════════════ */
+
+interface FootnoteMutations {
+  create: ReturnType<typeof trpc.soaFootnote.create.useMutation>;
+  update: ReturnType<typeof trpc.soaFootnote.update.useMutation>;
+  delete: ReturnType<typeof trpc.soaFootnote.delete.useMutation>;
+  linkAnchor: ReturnType<typeof trpc.soaFootnote.linkAnchor.useMutation>;
+  unlinkAnchor: ReturnType<typeof trpc.soaFootnote.unlinkAnchor.useMutation>;
+}
+
+function anchorBadges(footnote: SoaFootnote): { cells: number; rows: number; cols: number } {
+  let cells = 0;
+  let rows = 0;
+  let cols = 0;
+  for (const a of footnote.anchors) {
+    if (a.targetType === "cell") cells++;
+    else if (a.targetType === "row") rows++;
+    else if (a.targetType === "col") cols++;
+  }
+  return { cells, rows, cols };
+}
+
+function FootnoteRow({
+  footnote,
+  table,
+  selectedCell,
+  isHighlighted,
+  mutations,
+}: {
+  footnote: SoaFootnote;
+  table: SoaTable;
+  selectedCell: SelectedCell | null;
+  isHighlighted: boolean;
+  mutations: FootnoteMutations;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [marker, setMarker] = useState(footnote.marker);
+  const [text, setText] = useState(footnote.text);
+
+  useEffect(() => {
+    setMarker(footnote.marker);
+    setText(footnote.text);
+  }, [footnote.marker, footnote.text]);
+
+  const cellAnchorForSelected = useMemo(() => {
+    if (!selectedCell || selectedCell.tableId !== table.id) return null;
+    return (
+      footnote.anchors.find(
+        (a) => a.targetType === "cell" && a.cellId === selectedCell.cellId,
+      ) ?? null
+    );
+  }, [footnote.anchors, selectedCell, table.id]);
+
+  const isLinkedToSelected = cellAnchorForSelected != null;
+
+  const handleSave = useCallback(() => {
+    const nextMarker = marker.trim();
+    const nextText = text;
+    const patch: { marker?: string; text?: string } = {};
+    if (nextMarker && nextMarker !== footnote.marker) patch.marker = nextMarker;
+    if (nextText !== footnote.text) patch.text = nextText;
+    if (Object.keys(patch).length > 0) {
+      mutations.update.mutate({ footnoteId: footnote.id, ...patch });
+    }
+    setEditing(false);
+  }, [marker, text, footnote.id, footnote.marker, footnote.text, mutations.update]);
+
+  const toggleCellLink = useCallback(() => {
+    if (!selectedCell || selectedCell.tableId !== table.id) return;
+    if (cellAnchorForSelected) {
+      mutations.unlinkAnchor.mutate({ anchorId: cellAnchorForSelected.id });
+    } else {
+      mutations.linkAnchor.mutate({
+        footnoteId: footnote.id,
+        target: { type: "cell", cellId: selectedCell.cellId },
+      });
+    }
+  }, [cellAnchorForSelected, selectedCell, table.id, footnote.id, mutations.linkAnchor, mutations.unlinkAnchor]);
+
+  const badges = anchorBadges(footnote);
+
+  return (
+    <div
+      className={`flex items-start gap-2 rounded px-2 py-1 text-xs ${
+        isHighlighted ? "bg-brand-100 ring-1 ring-brand-400" : "bg-gray-50"
+      }`}
+    >
+      {selectedCell?.tableId === table.id && !editing && (
+        <button
+          onClick={toggleCellLink}
+          className={`mt-0.5 shrink-0 rounded border ${
+            isLinkedToSelected
+              ? "border-brand-500 bg-brand-500 text-white"
+              : "border-gray-300 text-transparent hover:border-brand-400"
+          }`}
+          title={isLinkedToSelected ? "Отвязать сноску от ячейки" : "Привязать сноску к ячейке"}
+        >
+          <Check size={10} />
+        </button>
+      )}
+      {editing ? (
+        <>
+          <input
+            value={marker}
+            onChange={(e) => setMarker(e.target.value)}
+            className="w-10 shrink-0 rounded border border-gray-300 px-1 py-0.5 text-xs font-bold text-center"
+            maxLength={8}
+          />
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            className="flex-1 rounded border border-gray-300 px-1.5 py-0.5 text-xs"
+            placeholder="Текст сноски..."
+          />
+          <button
+            onClick={handleSave}
+            className="text-brand-600 hover:text-brand-700"
+            title="Сохранить"
+          >
+            <Save size={11} />
+          </button>
+          <button
+            onClick={() => {
+              setMarker(footnote.marker);
+              setText(footnote.text);
+              setEditing(false);
+            }}
+            className="text-gray-400 hover:text-gray-600"
+            title="Отмена"
+          >
+            <X size={11} />
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="shrink-0 font-bold text-gray-600 w-6 text-center">{footnote.marker}</span>
+          <span className="flex-1 text-gray-700">{footnote.text || <em className="text-gray-400">(без текста)</em>}</span>
+          <span className="shrink-0 flex items-center gap-1 text-[10px] text-gray-500">
+            {badges.cells > 0 && (
+              <span className="rounded bg-blue-100 px-1 py-0.5 text-blue-700" title="Ячеек">
+                {badges.cells}c
+              </span>
+            )}
+            {badges.rows > 0 && (
+              <span className="rounded bg-purple-100 px-1 py-0.5 text-purple-700" title="Строк">
+                {badges.rows}r
+              </span>
+            )}
+            {badges.cols > 0 && (
+              <span className="rounded bg-amber-100 px-1 py-0.5 text-amber-700" title="Столбцов">
+                {badges.cols}col
+              </span>
+            )}
+          </span>
+          <button
+            onClick={() => setEditing(true)}
+            className="text-gray-400 hover:text-brand-600"
+            title="Редактировать"
+          >
+            <Edit3 size={11} />
+          </button>
+          <button
+            onClick={() => {
+              if (confirm(`Удалить сноску '${footnote.marker}'?`)) {
+                mutations.delete.mutate({ footnoteId: footnote.id });
+              }
+            }}
+            className="text-gray-400 hover:text-red-500"
+            title="Удалить"
+          >
+            <Trash2 size={11} />
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
 
 function FootnotesPanel({
   table,
   selectedCell,
-  highlightedFootnotes,
-  onUpdateFootnoteRefs,
-  onUpdateFootnotes,
+  highlightedFootnoteIds,
+  mutations,
 }: {
   table: SoaTable;
   selectedCell: SelectedCell | null;
-  highlightedFootnotes: number[];
-  onUpdateFootnoteRefs: (cellId: string, refs: number[]) => void;
-  onUpdateFootnotes: (tableId: string, footnotes: string[]) => void;
+  highlightedFootnoteIds: string[];
+  mutations: FootnoteMutations;
 }) {
-  const footnotes = (table.footnotes ?? []) as string[];
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedFootnotes, setEditedFootnotes] = useState(footnotes);
-  const [newFootnote, setNewFootnote] = useState("");
+  const footnotes = table.soaFootnotes ?? [];
+  const [newMarker, setNewMarker] = useState("");
+  const [newText, setNewText] = useState("");
+  const [bindMode, setBindMode] = useState<"row" | "col" | null>(null);
+  const [bindFootnoteId, setBindFootnoteId] = useState<string>("");
+  const [bindIndex, setBindIndex] = useState<number>(0);
 
-  useEffect(() => {
-    setEditedFootnotes(footnotes);
-  }, [footnotes.length]);
-
-  const selectedCellData = useMemo(() => {
-    if (!selectedCell || selectedCell.tableId !== table.id) return null;
-    return table.cells.find(
-      (c) => c.rowIndex === selectedCell.rowIndex && c.colIndex === selectedCell.colIndex,
+  const handleAdd = useCallback(() => {
+    const m = newMarker.trim();
+    if (!m) return;
+    mutations.create.mutate(
+      { soaTableId: table.id, marker: m, text: newText },
+      {
+        onSuccess: () => {
+          setNewMarker("");
+          setNewText("");
+        },
+      },
     );
-  }, [selectedCell, table]);
+  }, [newMarker, newText, table.id, mutations.create]);
 
-  const cellFootnoteRefs: number[] = useMemo(() => {
-    if (!selectedCellData) return [];
-    return (selectedCellData.footnoteRefs ?? []) as number[];
-  }, [selectedCellData]);
-
-  const toggleFootnoteRef = useCallback(
-    (index: number) => {
-      if (!selectedCellData) return;
-      const current = [...cellFootnoteRefs];
-      const pos = current.indexOf(index);
-      if (pos >= 0) current.splice(pos, 1);
-      else current.push(index);
-      current.sort((a, b) => a - b);
-      onUpdateFootnoteRefs(selectedCellData.id, current);
-    },
-    [selectedCellData, cellFootnoteRefs, onUpdateFootnoteRefs],
-  );
-
-  const handleSaveFootnotes = useCallback(() => {
-    const cleaned = editedFootnotes.filter((f) => f.trim().length > 0);
-    onUpdateFootnotes(table.id, cleaned);
-    setIsEditing(false);
-  }, [editedFootnotes, table.id, onUpdateFootnotes]);
-
-  const addFootnote = useCallback(() => {
-    if (!newFootnote.trim()) return;
-    setEditedFootnotes((prev) => [...prev, newFootnote.trim()]);
-    setNewFootnote("");
-  }, [newFootnote]);
-
-  if (footnotes.length === 0 && !isEditing) {
-    return (
-      <div className="flex items-center gap-2 text-xs text-gray-400 italic">
-        <span>Сноски не обнаружены.</span>
-        <button
-          onClick={() => setIsEditing(true)}
-          className="text-brand-600 hover:text-brand-700 not-italic"
-        >
-          Добавить вручную
-        </button>
-      </div>
+  const handleBind = useCallback(() => {
+    if (!bindMode || !bindFootnoteId) return;
+    mutations.linkAnchor.mutate(
+      {
+        footnoteId: bindFootnoteId,
+        target:
+          bindMode === "row"
+            ? { type: "row", rowIndex: bindIndex }
+            : { type: "col", colIndex: bindIndex },
+      },
+      {
+        onSuccess: () => {
+          setBindMode(null);
+          setBindFootnoteId("");
+          setBindIndex(0);
+        },
+      },
     );
-  }
+  }, [bindMode, bindFootnoteId, bindIndex, mutations.linkAnchor]);
+
+  const visits = table.headerData.visits;
+  const procedureNames = useMemo(() => {
+    const seen = new Set<number>();
+    const out: { rowIndex: number; name: string }[] = [];
+    for (const c of table.cells) {
+      if (seen.has(c.rowIndex)) continue;
+      seen.add(c.rowIndex);
+      out.push({ rowIndex: c.rowIndex, name: c.procedureName });
+    }
+    out.sort((a, b) => a.rowIndex - b.rowIndex);
+    return out;
+  }, [table.cells]);
 
   return (
     <div className="space-y-2">
@@ -483,86 +685,105 @@ function FootnotesPanel({
         <span className="text-xs font-medium text-gray-600">
           Сноски ({footnotes.length})
         </span>
-        <button
-          onClick={() => {
-            if (isEditing) handleSaveFootnotes();
-            else setIsEditing(true);
-          }}
-          className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700"
-        >
-          {isEditing ? <><Save size={11} /> Сохранить</> : <><Edit3 size={11} /> Редактировать</>}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setBindMode(bindMode === "row" ? null : "row")}
+            className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] ${
+              bindMode === "row" ? "border-purple-400 bg-purple-50 text-purple-700" : "border-gray-200 text-gray-500 hover:border-purple-300"
+            }`}
+            title="Привязать сноску к строке (процедуре)"
+          >
+            <Link2 size={10} /> Строка
+          </button>
+          <button
+            onClick={() => setBindMode(bindMode === "col" ? null : "col")}
+            className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] ${
+              bindMode === "col" ? "border-amber-400 bg-amber-50 text-amber-700" : "border-gray-200 text-gray-500 hover:border-amber-300"
+            }`}
+            title="Привязать сноску к столбцу (визиту)"
+          >
+            <Link2 size={10} /> Столбец
+          </button>
+        </div>
       </div>
-      <div className="space-y-1">
-        {(isEditing ? editedFootnotes : footnotes).map((fn, idx) => {
-          const isHighlighted = highlightedFootnotes.includes(idx);
-          const isLinked = cellFootnoteRefs.includes(idx);
 
-          return (
-            <div
-              key={idx}
-              className={`flex items-start gap-2 rounded px-2 py-1 text-xs ${
-                isHighlighted ? "bg-brand-100 ring-1 ring-brand-400" : "bg-gray-50"
-              }`}
-            >
-              {selectedCellData && !isEditing && (
-                <button
-                  onClick={() => toggleFootnoteRef(idx)}
-                  className={`mt-0.5 shrink-0 rounded border ${
-                    isLinked
-                      ? "border-brand-500 bg-brand-500 text-white"
-                      : "border-gray-300 text-transparent hover:border-brand-400"
-                  }`}
-                  title={isLinked ? "Отвязать сноску" : "Привязать сноску к ячейке"}
-                >
-                  <Check size={10} />
-                </button>
-              )}
-              <span className="shrink-0 font-bold text-gray-500 w-5 text-right">
-                {idx + 1}.
-              </span>
-              {isEditing ? (
-                <div className="flex flex-1 items-center gap-1">
-                  <input
-                    value={editedFootnotes[idx]}
-                    onChange={(e) => {
-                      const next = [...editedFootnotes];
-                      next[idx] = e.target.value;
-                      setEditedFootnotes(next);
-                    }}
-                    className="flex-1 rounded border border-gray-300 px-1.5 py-0.5 text-xs"
-                  />
-                  <button
-                    onClick={() => setEditedFootnotes((prev) => prev.filter((_, i) => i !== idx))}
-                    className="text-red-400 hover:text-red-600"
-                  >
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              ) : (
-                <span className="text-gray-700">{fn}</span>
-              )}
-            </div>
-          );
-        })}
-        {isEditing && (
-          <div className="flex items-center gap-1 pt-1">
-            <input
-              value={newFootnote}
-              onChange={(e) => setNewFootnote(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addFootnote()}
-              placeholder="Новая сноска..."
-              className="flex-1 rounded border border-gray-300 px-1.5 py-0.5 text-xs"
-            />
-            <button
-              onClick={addFootnote}
-              disabled={!newFootnote.trim()}
-              className="rounded bg-brand-600 px-2 py-0.5 text-xs text-white hover:bg-brand-700 disabled:opacity-40"
-            >
-              <Plus size={11} />
-            </button>
-          </div>
+      {bindMode && (
+        <div className="flex items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-[10px]">
+          <select
+            value={bindFootnoteId}
+            onChange={(e) => setBindFootnoteId(e.target.value)}
+            className="flex-1 rounded border border-gray-300 px-1 py-0.5"
+          >
+            <option value="">— выберите сноску —</option>
+            {footnotes.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.marker} — {f.text.slice(0, 30) || "(без текста)"}
+              </option>
+            ))}
+          </select>
+          <select
+            value={bindIndex}
+            onChange={(e) => setBindIndex(parseInt(e.target.value, 10))}
+            className="flex-1 rounded border border-gray-300 px-1 py-0.5"
+          >
+            {(bindMode === "row" ? procedureNames : visits.map((v, i) => ({ rowIndex: i, name: v }))).map(
+              (item) => (
+                <option key={item.rowIndex} value={item.rowIndex}>
+                  {item.name}
+                </option>
+              ),
+            )}
+          </select>
+          <button
+            onClick={handleBind}
+            disabled={!bindFootnoteId}
+            className="rounded bg-brand-600 px-2 py-0.5 text-white hover:bg-brand-700 disabled:opacity-40"
+          >
+            Привязать
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-1">
+        {footnotes.length === 0 && (
+          <span className="text-xs text-gray-400 italic">
+            Сноски не обнаружены — добавьте вручную через форму ниже.
+          </span>
         )}
+        {footnotes.map((f) => (
+          <FootnoteRow
+            key={f.id}
+            footnote={f}
+            table={table}
+            selectedCell={selectedCell}
+            isHighlighted={highlightedFootnoteIds.includes(f.id)}
+            mutations={mutations}
+          />
+        ))}
+      </div>
+
+      <div className="flex items-center gap-1 pt-1">
+        <input
+          value={newMarker}
+          onChange={(e) => setNewMarker(e.target.value)}
+          placeholder="*"
+          maxLength={8}
+          className="w-12 rounded border border-gray-300 px-1 py-0.5 text-xs font-bold text-center"
+        />
+        <input
+          value={newText}
+          onChange={(e) => setNewText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+          placeholder="Текст сноски..."
+          className="flex-1 rounded border border-gray-300 px-1.5 py-0.5 text-xs"
+        />
+        <button
+          onClick={handleAdd}
+          disabled={!newMarker.trim()}
+          className="rounded bg-brand-600 px-2 py-0.5 text-xs text-white hover:bg-brand-700 disabled:opacity-40"
+        >
+          <Plus size={11} />
+        </button>
       </div>
     </div>
   );
@@ -624,17 +845,15 @@ function SingleSoaTableViewer({
   selectedCell,
   onCellSelect,
   updateCellMutation,
-  updateFootnoteRefsMutation,
-  updateFootnotesMutation,
   setStatusMutation,
+  footnoteMutations,
 }: {
   table: SoaTable;
   selectedCell: SelectedCell | null;
   onCellSelect: (cell: SelectedCell | null) => void;
   updateCellMutation: ReturnType<typeof trpc.processing.updateSoaCell.useMutation>;
-  updateFootnoteRefsMutation: ReturnType<typeof trpc.processing.updateSoaCellFootnoteRefs.useMutation>;
-  updateFootnotesMutation: ReturnType<typeof trpc.processing.updateSoaTableFootnotes.useMutation>;
   setStatusMutation: ReturnType<typeof trpc.processing.setSoaTableStatus.useMutation>;
+  footnoteMutations: FootnoteMutations;
 }) {
   const [showSource, setShowSource] = useState(true);
   const [showFootnotes, setShowFootnotes] = useState(true);
@@ -653,10 +872,16 @@ function SingleSoaTableViewer({
     );
   }, [selectedCell, table]);
 
-  const highlightedFootnotes = useMemo(() => {
+  const highlightedFootnoteIds = useMemo(() => {
     if (!selectedCellData) return [];
-    return (selectedCellData.footnoteRefs ?? []) as number[];
-  }, [selectedCellData]);
+    const ids = new Set<string>();
+    for (const f of table.soaFootnotes ?? []) {
+      for (const a of f.anchors) {
+        if (a.targetType === "cell" && a.cellId === selectedCellData.id) ids.add(f.id);
+      }
+    }
+    return Array.from(ids);
+  }, [selectedCellData, table.soaFootnotes]);
 
   const lowConfCount = useMemo(
     () => table.cells.filter((c) => c.confidence < 0.8).length,
@@ -668,20 +893,6 @@ function SingleSoaTableViewer({
       updateCellMutation.mutate({ cellId, manualValue: value });
     },
     [updateCellMutation],
-  );
-
-  const handleFootnoteRefsUpdate = useCallback(
-    (cellId: string, refs: number[]) => {
-      updateFootnoteRefsMutation.mutate({ cellId, footnoteRefs: refs });
-    },
-    [updateFootnoteRefsMutation],
-  );
-
-  const handleFootnotesUpdate = useCallback(
-    (tableId: string, footnotes: string[]) => {
-      updateFootnotesMutation.mutate({ soaTableId: tableId, footnotes });
-    },
-    [updateFootnotesMutation],
   );
 
   return (
@@ -789,9 +1000,8 @@ function SingleSoaTableViewer({
               <FootnotesPanel
                 table={table}
                 selectedCell={selectedCell?.tableId === table.id ? selectedCell : null}
-                highlightedFootnotes={highlightedFootnotes}
-                onUpdateFootnoteRefs={handleFootnoteRefsUpdate}
-                onUpdateFootnotes={handleFootnotesUpdate}
+                highlightedFootnoteIds={highlightedFootnoteIds}
+                mutations={footnoteMutations}
               />
             )}
           </div>
@@ -817,21 +1027,21 @@ export default function SoaStageViewer({
 
   const [selectedCell, setSelectedCell] = useState<SelectedCell | null>(null);
 
-  const updateCellMutation = trpc.processing.updateSoaCell.useMutation({
-    onSuccess: () => utils.processing.getSoaData.invalidate({ docVersionId: versionId }),
-  });
+  const invalidate = useCallback(
+    () => utils.processing.getSoaData.invalidate({ docVersionId: versionId }),
+    [utils, versionId],
+  );
 
-  const updateFootnoteRefsMutation = trpc.processing.updateSoaCellFootnoteRefs.useMutation({
-    onSuccess: () => utils.processing.getSoaData.invalidate({ docVersionId: versionId }),
-  });
+  const updateCellMutation = trpc.processing.updateSoaCell.useMutation({ onSuccess: invalidate });
+  const setStatusMutation = trpc.processing.setSoaTableStatus.useMutation({ onSuccess: invalidate });
 
-  const updateFootnotesMutation = trpc.processing.updateSoaTableFootnotes.useMutation({
-    onSuccess: () => utils.processing.getSoaData.invalidate({ docVersionId: versionId }),
-  });
-
-  const setStatusMutation = trpc.processing.setSoaTableStatus.useMutation({
-    onSuccess: () => utils.processing.getSoaData.invalidate({ docVersionId: versionId }),
-  });
+  const footnoteMutations: FootnoteMutations = {
+    create: trpc.soaFootnote.create.useMutation({ onSuccess: invalidate }),
+    update: trpc.soaFootnote.update.useMutation({ onSuccess: invalidate }),
+    delete: trpc.soaFootnote.delete.useMutation({ onSuccess: invalidate }),
+    linkAnchor: trpc.soaFootnote.linkAnchor.useMutation({ onSuccess: invalidate }),
+    unlinkAnchor: trpc.soaFootnote.unlinkAnchor.useMutation({ onSuccess: invalidate }),
+  };
 
   if (q.isLoading) {
     return (
@@ -881,9 +1091,8 @@ export default function SoaStageViewer({
           selectedCell={selectedCell}
           onCellSelect={setSelectedCell}
           updateCellMutation={updateCellMutation}
-          updateFootnoteRefsMutation={updateFootnoteRefsMutation}
-          updateFootnotesMutation={updateFootnotesMutation}
           setStatusMutation={setStatusMutation}
+          footnoteMutations={footnoteMutations}
         />
       ))}
 
@@ -899,9 +1108,8 @@ export default function SoaStageViewer({
               selectedCell={selectedCell}
               onCellSelect={setSelectedCell}
               updateCellMutation={updateCellMutation}
-              updateFootnoteRefsMutation={updateFootnoteRefsMutation}
-              updateFootnotesMutation={updateFootnotesMutation}
               setStatusMutation={setStatusMutation}
+              footnoteMutations={footnoteMutations}
             />
           ))}
         </div>

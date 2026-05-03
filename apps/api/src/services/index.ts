@@ -2,6 +2,7 @@ export { DomainError, type DomainErrorCode } from "./errors.js";
 export { requireTenantResource } from "./tenant-guard.js";
 export { documentService } from "./document.service.js";
 export { processingService } from "./processing.service.js";
+export { soaFootnoteService } from "./soa-footnote.service.js";
 export { auditService } from "./audit.service.js";
 export { studyService } from "./study.service.js";
 export { generationService } from "./generation.service.js";
