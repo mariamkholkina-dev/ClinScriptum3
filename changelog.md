@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-05-04
+
+### Спринт 6 SoA detection robustness (commit 2/8): wire mapDrawingsToCells в pipeline
+
+Sprint 3's `mapDrawingsToCells` (`packages/shared/src/soa-detection-core.ts:994`) был pure helper готов с того спринта, но никогда не вызывался — не было источника cell EMU coordinates. Sprint 6 commit 1 добавил geometry parser; этот commit подключает его в pipeline и фактически записывает данные в БД.
+
+Schema:
+- `SoaTable.cellGeometry: Json?` — EMU geometry ячеек в canonical (visits-cols) layout. Json shape: `(CellRect | null)[][]`. Заполняется в момент detection.
+- Миграция `20260504100000_add_soa_cell_geometry`. Применена в dev и test БД.
+
+`packages/doc-parser/src/parser.ts`:
+- Один `JSZip.loadAsync(buffer)` теперь парсит `word/document.xml` дважды — для drawings (existing) и для table geometries (new). Один pass экономит I/O.
+- `ParsedDocument.tableGeometries: TableGeometry[]` — новое required поле. Пустой массив если parser вызван без DOCX buffer (HTML-only тесты).
+- `metadata.totalTableGeometries` для observability.
+
+`packages/shared/src/soa-detection-core.ts:detectSoaForVersion`:
+- Загружает `version.digitalTwin.drawings` + `version.digitalTwin.tableGeometries`. parse-document сохраняет ParsedDocument целиком в digitalTwin (Sprint 1 поведение), теперь оттуда читаем drawings и geometries.
+- Для каждой обнаруженной SoA таблицы (по positional index в `candidates`) — берём соответствующую geometry. Если orientation='visits_rows' — транспонируем geometry (новый helper `transposeGeometry`).
+- Slice'ем geometry по `headerRowCount` и убираем первую колонку (procedure-name) — получаем data-rows × visits-only grid; reindex'им rowIndex/colIndex.
+- Вызываем `mapDrawingsToCells(allDrawings, flatCells, 0.6)`. Для каждого override:
+  - Добавляем `'arrow'`/`'line'`/`'bracket'` в `SoaCellData.markerSources` (additive — `'text'` сохраняется).
+  - Если `normalizedValue === ''` — устанавливаем `'X'` с `confidence=0.85`. Никогда не перезаписываем существующий X / dash.
+- `persistSoaTables` пишет `SoaTable.cellGeometry` (canonical) и `SoaTable.drawings` (фильтрованные `tableDrawings`).
+
+Helpers:
+- **`transposeGeometry(geom)`** — swap rows ↔ cols, x ↔ y, cx ↔ cy. Merged cells flatten'ятся (transposed SoA не используют merge на практике).
+- **`flattenGeometryToCellRects(geom)`** — обходит grid, дропает null slots (merged-into), возвращает плоский `CellRect[]` для `mapDrawingsToCells`.
+
+5 integration тестов в `apps/api/src/__tests__/integration/soa-drawings-wire.test.ts`:
+1. Empty digitalTwin → no crash, cellGeometry null, drawings []
+2. Geometry persists in `SoaTable.cellGeometry` JSON column
+3. Horizontal arrow over Drug administration row → cells получают `markerSources: ['arrow']` + `normalizedValue='X'` с confidence 0.85
+4. Arrow над уже X-ячейками → markerSources additive (`['text', 'arrow']`), normalizedValue остаётся 'X', confidence не понижается
+5. Image drawings игнорируются — markerSources остаются `['text']`
+
+Все 24 SoA api тестов зелёные, full monorepo typecheck чист.
+
 ## 2026-05-03
 
 ### Спринт 6 SoA detection robustness (commit 1/8): table-geometry парсер

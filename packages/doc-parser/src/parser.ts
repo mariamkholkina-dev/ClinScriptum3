@@ -3,7 +3,9 @@ import { randomUUID } from "crypto";
 import { detectHeading, type DetectedHeading } from "./heading-detector.js";
 import { parseHtmlTable, isSOATable } from "./table-parser.js";
 import { extractFootnotes } from "./footnote-extractor.js";
-import { extractDrawings, type Drawing } from "./drawing-parser.js";
+import JSZip from "jszip";
+import { extractDrawingsFromDocumentXml, type Drawing } from "./drawing-parser.js";
+import { extractTableGeometry, type TableGeometry } from "./table-geometry.js";
 import type {
   ParsedDocument,
   ParsedSection,
@@ -115,11 +117,21 @@ export async function parseDocx(
 
   const title = extractTitle(rawText, headings);
 
+  // Open the DOCX zip once and extract both drawings and table geometry
+  // from the same document.xml — saves one JSZip.loadAsync + parse.
   let drawings: Drawing[] = [];
+  let tableGeometries: TableGeometry[] = [];
   try {
-    drawings = await extractDrawings(buffer);
+    const zip = await JSZip.loadAsync(buffer);
+    const docXmlEntry = zip.file("word/document.xml");
+    if (docXmlEntry) {
+      const xml = await docXmlEntry.async("text");
+      drawings = extractDrawingsFromDocumentXml(xml);
+      tableGeometries = extractTableGeometry(xml);
+    }
   } catch {
-    // Drawing extraction is best-effort; don't fail the whole parse.
+    // OOXML extraction is best-effort; don't fail the whole parse if
+    // the buffer isn't a valid DOCX or word/document.xml is missing.
   }
 
   return {
@@ -129,12 +141,14 @@ export async function parseDocx(
     soaTable,
     footnotes,
     drawings,
+    tableGeometries,
     metadata: {
       totalParagraphs: String(elements.length),
       totalSections: String(countSections(sections)),
       totalTables: String(tables.length),
       totalFootnotes: String(footnotes.length),
       totalDrawings: String(drawings.length),
+      totalTableGeometries: String(tableGeometries.length),
       warnings: JSON.stringify(result.messages),
     },
   };

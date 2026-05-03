@@ -14,6 +14,8 @@ import {
   type PendingAnchor,
   type ResolvedFootnote,
   type ResolvedAnchor,
+  type CellRect as DocParserCellRect,
+  type TableGeometry,
 } from "@clinscriptum/doc-parser";
 
 export interface SoaLogger {
@@ -67,6 +69,26 @@ interface SoaDetectionResult {
   footnoteAnchors: ResolvedAnchor[];
   orientation: SoaOrientation;
   orientationConflict: boolean;
+  /**
+   * EMU geometry of cells in canonical (visits-cols) layout. Set when
+   * detectSoaForVersion has access to `tableGeometries` in the
+   * DocumentVersion.digitalTwin and the matching table-by-index
+   * resolves. Persisted as `SoaTable.cellGeometry` so the UI can later
+   * render an SVG overlay without re-parsing the DOCX.
+   */
+  cellGeometry: (DocParserCellRect | null)[][] | null;
+  /**
+   * Drawings that overlay this specific SoA table — already filtered
+   * down from the full `digitalTwin.drawings` by area intersection.
+   * Persisted as `SoaTable.drawings`.
+   */
+  tableDrawings: Array<{
+    type: "arrow" | "line" | "bracket" | "image" | "shape";
+    position: { xEmu: number; yEmu: number; cxEmu: number; cyEmu: number };
+    direction?: "horizontal" | "vertical";
+    paragraphIndex?: number;
+    prstGeom?: string;
+  }>;
 }
 
 type MarkerSource = "text" | "arrow" | "line" | "bracket";
@@ -174,9 +196,28 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
 
   if (candidates.length === 0) return;
 
+  // Pull drawings + table geometries from the digitalTwin if parse-document
+  // ran a DOCX through parseDocx. Both fields are arrays — empty when the
+  // parse used non-DOCX input (e.g. integration tests with raw HTML
+  // ContentBlocks). Indexing is positional: the N-th SoA table candidate
+  // corresponds to the N-th `<w:tbl>` in document order.
+  const digitalTwin = (version.digitalTwin ?? {}) as {
+    drawings?: Array<{
+      type: "arrow" | "line" | "bracket" | "image" | "shape";
+      position: { xEmu: number; yEmu: number; cxEmu: number; cyEmu: number };
+      direction?: "horizontal" | "vertical";
+      paragraphIndex?: number;
+      prstGeom?: string;
+    }>;
+    tableGeometries?: TableGeometry[];
+  };
+  const allDrawings = digitalTwin.drawings ?? [];
+  const allGeometries = digitalTwin.tableGeometries ?? [];
+
   const soaTables: SoaDetectionResult[] = [];
 
-  for (const candidate of candidates) {
+  for (let candidateIdx = 0; candidateIdx < candidates.length; candidateIdx++) {
+    const candidate = candidates[candidateIdx];
     // Decide orientation BEFORE scoring — scoring assumes visits-in-columns
     // (it inspects the first row for visit signals and the first column for
     // procedure patterns). For `visits_rows` candidates we transpose first
@@ -200,10 +241,67 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
     });
 
     const result = buildSoaResult(workingCandidate, scoring);
-    if (result) {
-      result.orientation = orientation;
-      soaTables.push(result);
+    if (!result) continue;
+    result.orientation = orientation;
+
+    // Resolve geometry & drawings for this table by positional index
+    // and apply mapDrawingsToCells overrides.
+    const rawGeometry = allGeometries[candidateIdx]?.cells ?? null;
+    if (rawGeometry) {
+      const geometryCanonical =
+        orientation === "visits_rows" ? transposeGeometry(rawGeometry) : rawGeometry;
+      result.cellGeometry = geometryCanonical;
+
+      // Drawings filter: ratio test discards those that don't overlap
+      // the table's bounds, so we can pass everything in. Image/shape
+      // are ignored inside mapDrawingsToCells.
+      result.tableDrawings = allDrawings.map((d) => ({
+        type: d.type,
+        position: d.position,
+        direction: d.direction,
+        paragraphIndex: d.paragraphIndex,
+        prstGeom: d.prstGeom,
+      }));
+
+      // Geometry includes header rows; result.matrix is data-rows only.
+      // Slice and re-index so override rowIndex aligns with matrix
+      // rowIndex. Also drop the first column (procedure-name column)
+      // so override colIndex aligns with visits index.
+      const headerRowCount = detectHeaderRowCount(workingCandidate.rows);
+      const dataGeometry = geometryCanonical.slice(headerRowCount).map((row) =>
+        row.slice(1).map((cell, c) => {
+          if (!cell) return null;
+          return { ...cell, colIndex: c };
+        }),
+      );
+      // Re-index rowIndex so it matches matrix coords.
+      const dataGeometryReindexed = dataGeometry.map((row, r) =>
+        row.map((cell) => (cell ? { ...cell, rowIndex: r } : null)),
+      );
+      const flatCells = flattenGeometryToCellRects(dataGeometryReindexed);
+      const overrides = mapDrawingsToCells(allDrawings, flatCells, 0.6);
+      for (const ov of overrides) {
+        const cellRow = result.matrix[ov.rowIndex];
+        const cell = cellRow?.[ov.colIndex];
+        if (!cell) continue;
+        if (!cell.markerSources.includes(ov.source)) {
+          cell.markerSources = [...cell.markerSources, ov.source];
+        }
+        // Promote to positive mark only when the cell had no textual
+        // value yet — never overwrite an explicit X or dash.
+        if (cell.normalizedValue === "") {
+          cell.normalizedValue = "X";
+          cell.confidence = 0.85;
+        }
+      }
+
+      log.info("[soa] Drawings → cells override applied", {
+        tableIndex: candidateIdx,
+        overrides: overrides.length,
+      });
     }
+
+    soaTables.push(result);
   }
 
   // Mixed-orientation guard. If at least one detected SoA is `visits_cols`
@@ -522,6 +620,8 @@ function buildSoaResult(
     // Defaults — overwritten by detectSoaForVersion if needed.
     orientation: "visits_cols",
     orientationConflict: false,
+    cellGeometry: null,
+    tableDrawings: [],
   };
 }
 
@@ -903,6 +1003,58 @@ export interface CellMarkerOverride {
  *
  * Image drawings are ignored — they're not markers.
  */
+/**
+ * Transpose a geometry grid: swap rows ↔ cols so the data lines up with
+ * a canonical visits-cols layout when the source table had visits in
+ * rows. Width and height also swap. Merged cells are flattened to
+ * single-slot for simplicity — transposed SoA tables in real protocols
+ * don't use merges (same constraint as `transposeCandidate`).
+ */
+export function transposeGeometry(
+  geometry: (DocParserCellRect | null)[][],
+): (DocParserCellRect | null)[][] {
+  const numRows = geometry.length;
+  if (numRows === 0) return [];
+  const numCols = Math.max(...geometry.map((r) => r.length));
+  const out: (DocParserCellRect | null)[][] = Array.from({ length: numCols }, () =>
+    Array<DocParserCellRect | null>(numRows).fill(null),
+  );
+  for (let r = 0; r < numRows; r++) {
+    for (let c = 0; c < numCols; c++) {
+      const src = geometry[r][c];
+      if (!src) continue;
+      out[c][r] = {
+        rowIndex: c,
+        colIndex: r,
+        xEmu: src.yEmu,
+        yEmu: src.xEmu,
+        cxEmu: src.cyEmu,
+        cyEmu: src.cxEmu,
+        colSpan: 1,
+        rowSpan: 1,
+      };
+    }
+  }
+  return out;
+}
+
+/**
+ * Flatten geometry grid into the array shape `mapDrawingsToCells`
+ * expects. Drops nulls (merged-into slots — they're already covered by
+ * their top-left CellRect, no need to test them again).
+ */
+export function flattenGeometryToCellRects(
+  geometry: (DocParserCellRect | null)[][],
+): CellRect[] {
+  const out: CellRect[] = [];
+  for (const row of geometry) {
+    for (const cell of row) {
+      if (cell) out.push(cell);
+    }
+  }
+  return out;
+}
+
 export function mapDrawingsToCells(
   drawings: DrawingForMapping[],
   cells: CellRect[],
@@ -979,6 +1131,10 @@ async function persistSoaTables(
             orientationConflict: soa.orientationConflict,
             headerData: { visits: soa.visits, headerRows: soa.headerRows },
             rawMatrix: soa.rawMatrix,
+            drawings: soa.tableDrawings as object,
+            cellGeometry: soa.cellGeometry === null
+              ? undefined
+              : (soa.cellGeometry as unknown as object),
           },
         });
 

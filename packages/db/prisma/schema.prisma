@@ -464,6 +464,11 @@ model SoaTable {
   /// table (arrows, lines, brackets). Each item: { type, position: {xEmu, yEmu, cxEmu, cyEmu}, direction? }.
   /// Used by the UI to render an SVG overlay.
   drawings            Json            @default("[]") @db.JsonB
+  /// EMU-bounding-boxes of cells in this SoA table after canonicalization
+  /// (visits-cols layout). Shape: (CellRect | null)[][]. Populated from
+  /// extractTableGeometry at detect time. Used together with `drawings`
+  /// to render arrows over cells in the UI without re-parsing the DOCX.
+  cellGeometry        Json?           @map("cell_geometry") @db.JsonB
   createdAt           DateTime        @default(now()) @map("created_at")
 
   docVersion       DocumentVersion     @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
