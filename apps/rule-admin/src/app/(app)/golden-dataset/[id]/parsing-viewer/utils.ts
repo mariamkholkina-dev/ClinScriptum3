@@ -216,6 +216,28 @@ export function hasChildren(section: Section, sections: Section[]): boolean {
   return sections[idx + 1].level > section.level;
 }
 
+/**
+ * Возвращает цепочку родителей секции от корня к ближайшему предку.
+ * Не включает саму секцию. Sections должны быть отсортированы по `order`.
+ *
+ * Логика: parent — это ближайшая предыдущая секция с `level` строго меньше,
+ * чем у нас. Поднимаемся вверх пока level не дойдёт до 0.
+ */
+export function getParentChain(sectionId: string, sections: Section[]): Section[] {
+  const idx = sections.findIndex((s) => s.id === sectionId);
+  if (idx < 0) return [];
+  const result: Section[] = [];
+  let currentLevel = sections[idx].level;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (sections[i].level < currentLevel) {
+      result.unshift(sections[i]);
+      currentLevel = sections[i].level;
+      if (currentLevel === 0) break;
+    }
+  }
+  return result;
+}
+
 export const ANOMALY_LABELS: Record<AnomalyType, string> = {
   empty: "Пустая секция",
   orphaned: "Нет родителя",

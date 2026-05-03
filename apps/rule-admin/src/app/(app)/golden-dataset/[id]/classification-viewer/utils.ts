@@ -7,7 +7,7 @@ import type {
   ExpectedClassificationResults,
 } from "./types";
 
-export { buildNumbering, detectAnomalies, getVisibleSectionIds, hasChildren, ANOMALY_LABELS } from "../parsing-viewer/utils";
+export { buildNumbering, detectAnomalies, getVisibleSectionIds, getParentChain, hasChildren, ANOMALY_LABELS } from "../parsing-viewer/utils";
 
 export function sortSections(sections: Section[], key: SortKey): Section[] {
   const copy = [...sections];

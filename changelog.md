@@ -2,6 +2,15 @@
 
 ## 2026-05-03
 
+### UX: breadcrumb родителей в Diff overlay (Парсинг и Классификация)
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/utils.ts`:
+- Новая функция `getParentChain(sectionId, sections): Section[]` — возвращает цепочку родителей секции от корня. Re-export'нута в classification-viewer/utils.
+
+`ParsingTreeViewer.tsx` + `ClassificationTreeViewer.tsx`:
+- В каждой строке Diff overlay над label («Лишняя» / «Пропущено» / «Неверный уровень» / «Неверная секция») добавлен breadcrumb родителей через `›`. Помогает эксперту быстро понять контекст: например, «ОБОСНОВАНИЕ ИССЛЕДОВАНИЯ › Литературные источники» → строка «1 шаг титрации».
+- Для `missing` entries breadcrumb недоступен (секции в документе нет).
+
 ### UX: убрать disabled-блокировку quick-fix кнопок в Diff overlay
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx` + `classification-viewer/ClassificationTreeViewer.tsx`:

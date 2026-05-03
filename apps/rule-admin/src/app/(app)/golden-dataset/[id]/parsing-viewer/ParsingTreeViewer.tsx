@@ -42,6 +42,7 @@ import {
   filterSections,
   diffWithExpected,
   getVisibleSectionIds,
+  getParentChain,
   hasChildren,
   ANOMALY_LABELS,
 } from "./utils";
@@ -247,10 +248,22 @@ function ParsingDiffOverlay({
           const labelText =
             e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверный уровень";
 
+          // Цепочка родителей для контекста (extra и wrong_level — берём из реальной
+          // секции; missing — секции в документе нет, breadcrumb недоступен).
+          const parentChain = matchedSection ? getParentChain(matchedSection.id, sections) : [];
+          const parentBreadcrumb = parentChain.length > 0
+            ? parentChain.map((p) => p.title || "(без названия)").join(" › ")
+            : null;
+
           return (
             <div key={rowKey} className={`rounded-md border px-3 py-2 text-xs ${borderBg}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
+                  {parentBreadcrumb && (
+                    <div className="mb-0.5 truncate text-[10px] text-gray-500" title={parentBreadcrumb}>
+                      {parentBreadcrumb}
+                    </div>
+                  )}
                   <span className={`font-medium ${labelColor}`}>{labelText}</span>
                   {sectionNumber && (
                     <span className="ml-1 inline-block rounded bg-white px-1 font-mono text-[10px] text-gray-500" title="Номер секции в дереве (для дубликатов title)">

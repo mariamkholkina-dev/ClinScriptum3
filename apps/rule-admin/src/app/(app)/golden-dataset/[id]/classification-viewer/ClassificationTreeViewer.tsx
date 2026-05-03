@@ -46,6 +46,7 @@ import {
   filterSections,
   diffClassificationWithExpected,
   getVisibleSectionIds,
+  getParentChain,
   hasChildren,
   ANOMALY_LABELS,
 } from "./utils";
@@ -310,6 +311,13 @@ function ClassificationDiffOverlay({
           // Для extra/wrong_section — select предлагает варианты, кнопка всегда активна.
           const showSelect = e.type !== "missing";
 
+          // Цепочка родителей для контекста (extra/wrong_section — берём из реальной
+          // секции; missing — секция в документе отсутствует, breadcrumb недоступен).
+          const parentChain = matchedSection ? getParentChain(matchedSection.id, sections) : [];
+          const parentBreadcrumb = parentChain.length > 0
+            ? parentChain.map((p) => p.title || "(без названия)").join(" › ")
+            : null;
+
           return (
             <div
               key={rowKey}
@@ -323,6 +331,11 @@ function ClassificationDiffOverlay({
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
+                  {parentBreadcrumb && (
+                    <div className="mb-0.5 truncate text-[10px] text-gray-500" title={parentBreadcrumb}>
+                      {parentBreadcrumb}
+                    </div>
+                  )}
                   <span
                     className={`font-medium ${
                       e.type === "missing"
