@@ -63,8 +63,6 @@ interface SoaDetectionResult {
   procedures: string[];
   matrix: SoaCellData[][];
   rawMatrix: string[][];
-  /// @deprecated removed in Sprint 5 — use `footnoteDefs` instead.
-  footnotes: string[];
   footnoteDefs: ResolvedFootnote[];
   footnoteAnchors: ResolvedAnchor[];
   orientation: SoaOrientation;
@@ -519,7 +517,6 @@ function buildSoaResult(
     procedures,
     matrix,
     rawMatrix,
-    footnotes: footnoteDefs.map((f) => f.text),
     footnoteDefs,
     footnoteAnchors,
     // Defaults — overwritten by detectSoaForVersion if needed.
@@ -971,22 +968,6 @@ async function persistSoaTables(
       await tx.soaTable.deleteMany({ where: { docVersionId: versionId } });
 
       for (const soa of soaTables) {
-        // Pre-compute legacy footnoteRefs per-cell so the cell-create knows
-        // which markerOrder values to write into the deprecated Json field.
-        const cellFootnoteRefs = new Map<string, number[]>();
-        const markerToOrder = new Map<string, number>();
-        for (const f of soa.footnoteDefs) markerToOrder.set(f.marker, f.markerOrder);
-        for (const a of soa.footnoteAnchors) {
-          if (a.targetType !== "cell") continue;
-          if (a.rowIndex == null || a.colIndex == null) continue;
-          const key = `${a.rowIndex}:${a.colIndex}`;
-          const order = markerToOrder.get(a.footnoteMarker);
-          if (order == null) continue;
-          const existing = cellFootnoteRefs.get(key) ?? [];
-          if (!existing.includes(order)) existing.push(order);
-          cellFootnoteRefs.set(key, existing);
-        }
-
         const table = await tx.soaTable.create({
           data: {
             docVersionId: versionId,
@@ -998,8 +979,6 @@ async function persistSoaTables(
             orientationConflict: soa.orientationConflict,
             headerData: { visits: soa.visits, headerRows: soa.headerRows },
             rawMatrix: soa.rawMatrix,
-            // Legacy field — kept in sync until Sprint 5 cleanup.
-            footnotes: soa.footnotes,
           },
         });
 
@@ -1016,14 +995,12 @@ async function persistSoaTables(
           normalizedValue: string;
           confidence: number;
           markerSources: MarkerSource[];
-          footnoteRefs: number[];
         }> = [];
 
         for (let row = 0; row < soa.procedures.length; row++) {
           for (let col = 0; col < soa.visits.length; col++) {
             const cell = soa.matrix[row]?.[col];
             if (!cell) continue;
-            const key = `${row}:${col}`;
             cellsData.push({
               soaTableId: table.id,
               rowIndex: row,
@@ -1034,7 +1011,6 @@ async function persistSoaTables(
               normalizedValue: cell.normalizedValue ?? "",
               confidence: cell.confidence,
               markerSources: cell.markerSources ?? ["text"],
-              footnoteRefs: cellFootnoteRefs.get(key) ?? [],
             });
           }
         }

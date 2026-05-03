@@ -32,8 +32,6 @@ interface SoaCell {
   normalizedValue: string;
   manualValue: string | null;
   confidence: number;
-  /** @deprecated kept for legacy rendering of marker superscripts in cells */
-  footnoteRefs: number[];
   markerSources: ("text" | "arrow" | "line" | "bracket")[];
 }
 
@@ -183,12 +181,6 @@ function buildSourceGrid(parsedRows: ParsedHtmlCell[][]): (ParsedHtmlCell | null
   return grid;
 }
 
-function buildOrderToMarker(footnotes: SoaFootnote[]): Map<number, string> {
-  const map = new Map<number, string>();
-  for (const f of footnotes) map.set(f.markerOrder, f.marker);
-  return map;
-}
-
 /* ═══════════════ Parsed Table ═══════════════ */
 
 function ParsedSoaTable({
@@ -204,8 +196,6 @@ function ParsedSoaTable({
 }) {
   const visits = table.headerData.visits;
   const headerRows = table.headerData.headerRows ?? [];
-  const orderToMarker = useMemo(() => buildOrderToMarker(table.soaFootnotes ?? []), [table.soaFootnotes]);
-
   const procMap = useMemo(() => {
     const map = new Map<number, string>();
     for (const c of table.cells) {
@@ -224,6 +214,25 @@ function ParsedSoaTable({
     for (const c of table.cells) m.set(`${c.rowIndex}:${c.colIndex}`, c);
     return m;
   }, [table.cells]);
+
+  // Map cellId → array of markers (sorted by markerOrder) for cells that have
+  // cell-typed anchors. Used to render the marker superscript on each cell
+  // now that legacy footnoteRefs is gone.
+  const cellIdToMarkers = useMemo(() => {
+    const m = new Map<string, string[]>();
+    const orderedFootnotes = [...(table.soaFootnotes ?? [])].sort(
+      (a, b) => a.markerOrder - b.markerOrder,
+    );
+    for (const f of orderedFootnotes) {
+      for (const a of f.anchors) {
+        if (a.targetType !== "cell" || !a.cellId) continue;
+        const arr = m.get(a.cellId) ?? [];
+        arr.push(f.marker);
+        m.set(a.cellId, arr);
+      }
+    }
+    return m;
+  }, [table.soaFootnotes]);
 
   const cycleValue = useCallback(
     (cell: SoaCell) => {
@@ -297,10 +306,7 @@ function ParsedSoaTable({
                     selectedCell.rowIndex === rowIdx &&
                     selectedCell.colIndex === colIdx;
                   const lowConf = cell.confidence < 0.8;
-                  const refs = (cell.footnoteRefs ?? []) as number[];
-                  const markerSup = refs
-                    .map((order) => orderToMarker.get(order) ?? String(order + 1))
-                    .join(",");
+                  const markerSup = (cellIdToMarkers.get(cell.id) ?? []).join(",");
 
                   let bgClass = "";
                   if (isSelected) bgClass = "bg-brand-100 ring-2 ring-brand-500 ring-inset";
