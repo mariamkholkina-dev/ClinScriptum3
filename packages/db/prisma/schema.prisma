@@ -27,7 +27,7 @@ model Tenant {
 model TenantConfig {
   id                      String   @id @default(uuid()) @db.Uuid
   tenantId                String   @unique @map("tenant_id") @db.Uuid
-  excludedSectionPrefixes String[] @default(["overview", "admin", "appendix", "ip.preclinical_data"]) @map("excluded_section_prefixes")
+  excludedSectionPrefixes String[] @default(["overview", "admin", "appendix", "ip.preclinical_clinical_data"]) @map("excluded_section_prefixes")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 

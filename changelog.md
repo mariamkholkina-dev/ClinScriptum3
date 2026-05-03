@@ -2,6 +2,24 @@
 
 ## 2026-05-03
 
+### Fix: рудимент `ip.preclinical_data` в Tenant default + БД cleanup
+
+`packages/db/prisma/schema.prisma`:
+- Default для `TenantConfig.excludedSectionPrefixes` сменён с `ip.preclinical_data` на `ip.preclinical_clinical_data` (zone была переименована в PR-9, default остался старый).
+
+Миграция `20260503190000_rename_excluded_prefix_preclinical`:
+- `ALTER TABLE tenant_configs ALTER COLUMN excluded_section_prefixes SET DEFAULT [...preclinical_clinical_data]` для новых tenants.
+- `UPDATE tenant_configs / studies SET array_replace(...)` — обновляет существующие записи.
+- `DELETE FROM rules WHERE pattern LIKE 'ip.preclinical_data%'` — убирает stale записи в `RuleSet`, чтобы help-dialog в rule-admin не показывал старый ключ. Свежие записи вернутся при следующем seed taxonomy (`npm run db:seed`).
+
+После deploy на dev обязательно выполнить:
+```bash
+docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate
+docker compose -f docker-compose.prod.yml exec api npm run seed --workspace=@clinscriptum/db
+```
+
+Проверены все остальные актуальные зоны: `visit_schedule`, `preclinical_clinical_data`, `comparator`, `contraception_requirements` (parent procedures), `lifestyle` — все корректны в `taxonomy.yaml` и используются в коде с актуальными ключами.
+
 ### UX: optimistic update в Classification Diff overlay
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/classification-viewer/ClassificationTreeViewer.tsx`:
