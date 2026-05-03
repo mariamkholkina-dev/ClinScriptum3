@@ -144,6 +144,10 @@ export const processingRouter = router({
       processingService.getSoaData(ctx.user.tenantId, input.docVersionId),
     ),
 
+  listSoaTablesOverview: p.query(({ ctx }) =>
+    processingService.listSoaTablesOverview(ctx.user.tenantId),
+  ),
+
   updateSoaCell: p
     .input(z.object({ cellId: z.string().uuid(), manualValue: z.string() }))
     .mutation(({ ctx, input }) =>

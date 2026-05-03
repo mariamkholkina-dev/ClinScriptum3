@@ -423,6 +423,60 @@ export const processingService = {
     });
   },
 
+  async listSoaTablesOverview(tenantId: string) {
+    const tables = await prisma.soaTable.findMany({
+      where: { docVersion: { document: { study: { tenantId } } } },
+      include: {
+        docVersion: {
+          select: {
+            id: true,
+            versionNumber: true,
+            versionLabel: true,
+            document: {
+              select: {
+                id: true,
+                title: true,
+                type: true,
+                study: { select: { id: true, title: true } },
+              },
+            },
+          },
+        },
+        _count: { select: { cells: true, soaFootnotes: true, footnoteAnchors: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return tables.map((t) => {
+      const headerData = t.headerData as { visits?: string[] } | null;
+      const drawings = Array.isArray(t.drawings) ? (t.drawings as unknown[]) : [];
+      return {
+        id: t.id,
+        title: t.title,
+        soaScore: t.soaScore,
+        status: t.status,
+        orientation: t.orientation,
+        orientationConflict: t.orientationConflict,
+        verificationLevel: t.verificationLevel,
+        llmConfidence: t.llmConfidence,
+        cellCount: t._count.cells,
+        footnoteCount: t._count.soaFootnotes,
+        anchorCount: t._count.footnoteAnchors,
+        drawingCount: drawings.length,
+        visitCount: headerData?.visits?.length ?? 0,
+        document: {
+          id: t.docVersion.document.id,
+          title: t.docVersion.document.title,
+          type: t.docVersion.document.type,
+          versionId: t.docVersion.id,
+          versionNumber: t.docVersion.versionNumber,
+          versionLabel: t.docVersion.versionLabel,
+          study: t.docVersion.document.study,
+        },
+        createdAt: t.createdAt,
+      };
+    });
+  },
+
   async getSoaData(tenantId: string, docVersionId: string) {
     const version = await prisma.documentVersion.findUnique({
       where: { id: docVersionId },
