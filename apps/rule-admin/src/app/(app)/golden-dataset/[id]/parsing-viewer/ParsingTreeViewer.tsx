@@ -302,7 +302,6 @@ function ParsingDiffOverlay({
                           level: matchedSection.level,
                         })
                       }
-                      disabled={fixPending}
                       className="rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                       title="Добавить запись в expected_results"
                     >
@@ -317,7 +316,6 @@ function ParsingDiffOverlay({
                           sectionTitle: e.sectionTitle,
                         })
                       }
-                      disabled={fixPending}
                       className="flex items-center gap-1 rounded bg-gray-700 px-2 py-0.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
                       title="Пометить секцию как ложный заголовок (исключить из всех diff)"
                     >
@@ -330,8 +328,7 @@ function ParsingDiffOverlay({
                   <button
                     type="button"
                     onClick={() => onQuickFix({ kind: "remove_missing", sectionTitle: e.sectionTitle })}
-                    disabled={fixPending}
-                    className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                    className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700"
                     title="Удалить запись из expected_results"
                   >
                     Удалить из эталона
@@ -351,7 +348,6 @@ function ParsingDiffOverlay({
                         });
                       }}
                       className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs"
-                      disabled={fixPending}
                     >
                       {[0, 1, 2, 3, 4, 5].map((lvl) => (
                         <option key={lvl} value={lvl}>
@@ -368,7 +364,6 @@ function ParsingDiffOverlay({
                           newLevel: pendingLevels.get(rowKey) ?? e.actual!.level,
                         })
                       }
-                      disabled={fixPending}
                       className="rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                       title="Обновить уровень в expected_results"
                     >

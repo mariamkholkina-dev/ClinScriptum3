@@ -2,6 +2,12 @@
 
 ## 2026-05-03
 
+### UX: убрать disabled-блокировку quick-fix кнопок в Diff overlay
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx` + `classification-viewer/ClassificationTreeViewer.tsx`:
+- Удалён `disabled={fixPending}` со всех per-row кнопок и select'ов в Diff overlay (5 мест в parsing, 2 в classification).
+- При активной мутации UI больше не серится и не блокирует следующие клики. Optimistic update уже даёт мгновенный feedback, а tRPC/React Query параллельно обрабатывает несколько `mutate()` вызовов без побочных эффектов.
+
 ### Fix: рудимент `ip.preclinical_data` в Tenant default + БД cleanup
 
 `packages/db/prisma/schema.prisma`:
