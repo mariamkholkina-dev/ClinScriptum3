@@ -2,6 +2,13 @@
 
 ## 2026-05-03
 
+### UX: группировка zone select в Diff overlay Классификации
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/classification-viewer/ClassificationTreeViewer.tsx`:
+- Добавлен helper `GroupedZoneOptions` — рендерит `<optgroup>` per-zone с алфавитной сортировкой subzones внутри (русская локаль).
+- Применён в двух местах: select на строке Diff overlay (был flat-список всех zones+subzones подряд) и в `SectionClassificationEditor` (был optgroup без сортировки).
+- Зоны без subzones показываются как одиночные `<option>` без optgroup-обёртки, чтобы не было пустых групп.
+
 ### Fix: исключить isFalseHeading из генерации эталонного JSON
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx`:
