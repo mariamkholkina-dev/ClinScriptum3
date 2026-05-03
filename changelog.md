@@ -2,6 +2,25 @@
 
 ## 2026-05-03
 
+### Спринт 3 SoA drawings (commit 2/4): парсер DrawingML в doc-parser
+
+`packages/doc-parser/src/drawing-parser.ts` (новый модуль). Извлекает графические объекты из `word/document.xml` — стрелки, линии, скобки, картинки. Использует `JSZip` для распаковки DOCX и `fast-xml-parser` для XML (новые dependencies).
+
+API:
+- **`extractDrawings(buffer): Promise<Drawing[]>`** — топ-уровневый вход: `JSZip.loadAsync` → читает `word/document.xml` → парсит → возвращает массив.
+- **`extractDrawingsFromDocumentXml(xml): Drawing[]`** — pure-функция; принимает строку XML, возвращает drawings. Используется для unit-тестов с inline фикстурами.
+
+Каждый `Drawing`:
+- `type`: `'arrow' | 'line' | 'bracket' | 'image' | 'shape'` — классифицируется по `<a:prstGeom prst="...">`. Whitelist'ы для arrow (`rightArrow`, `leftRightArrow`, `bentArrow`, …), line (`straightConnector1`, `bentConnector*`), bracket (`leftBracket`, `bracePair`, …).
+- `position: { xEmu, yEmu, cxEmu, cyEmu }` — координаты в EMU (English Metric Units, 914400 на дюйм). Для floating-объектов (`<wp:anchor>`) берутся из `<a:off>`/`<a:ext>`, для inline — `<wp:extent>` плюс runtime-baseline (offset = 0).
+- `direction: 'horizontal' | 'vertical' | undefined` — на основе соотношения cx/cy (≥2× → доминирующая ось).
+- `paragraphIndex: number` — индекс родительского `<w:p>`, для будущей привязки к таблице.
+- `prstGeom?: string` — raw OOXML preset name для отладки.
+
+Поддержано: DrawingML (`<wp:anchor>`/`<wp:inline>` → `<a:graphic>` → `wps:wsp`/`pic:pic`), `<mc:AlternateContent>/Choice` (DrawingML branch), вложенность в `<w:tbl>`. VML (`<v:shape>`) детектируется но не разворачивается — DrawingML ветка содержит ту же геометрию.
+
+Тесты `packages/doc-parser/src/__tests__/drawing-parser.test.ts` — 12 кейсов: пустой/невалидный XML, отсутствие drawings, rightArrow/leftRightArrow/straightConnector/leftBracket/pic:pic, paragraph index, вложенность в таблицу, DrawingML branch в AlternateContent, fallback на `<wp:extent>` при отсутствии `<a:xfrm>`. Все 144 теста doc-parser зелёные.
+
 ### Спринт 3 SoA drawings (commit 1/4): schema для графических маркеров
 
 `packages/db/prisma/schema.prisma`:
