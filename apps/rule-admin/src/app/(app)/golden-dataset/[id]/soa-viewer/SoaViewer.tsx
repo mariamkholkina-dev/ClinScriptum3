@@ -63,6 +63,8 @@ interface SoaTable {
   title: string;
   soaScore: number;
   status: string;
+  orientation: "visits_cols" | "visits_rows" | "unknown";
+  orientationConflict: boolean;
   headerData: { visits: string[]; headerRows?: { text: string; span: number }[][] };
   rawMatrix: string[][];
   /** @deprecated string[] kept for backward-compat; new UI reads `soaFootnotes` */
@@ -913,6 +915,30 @@ function SingleSoaTableViewer({
               Подтверждена
             </span>
           )}
+          {table.orientation === "visits_rows" && (
+            <span
+              className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700"
+              title="Визиты были в строках в исходном документе — таблица автоматически транспонирована к каноническому виду"
+            >
+              Транспонирована
+            </span>
+          )}
+          {table.orientation === "unknown" && (
+            <span
+              className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600"
+              title="Ориентацию не удалось определить однозначно — проверьте вручную"
+            >
+              Ориентация ?
+            </span>
+          )}
+          {table.orientationConflict && (
+            <span
+              className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+              title="В документе есть SoA с разной ориентацией — приоритет дан таблице с визитами в столбцах"
+            >
+              Конфликт ориентации
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 text-xs text-gray-500">
           {lowConfCount > 0 && (
@@ -1083,6 +1109,22 @@ export default function SoaStageViewer({
           Двойной клик по ячейке — переключить значение
         </span>
       </div>
+
+      {soaTables.some((t) => t.orientationConflict) && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <div>
+            <strong className="font-medium">Конфликт ориентации SoA-таблиц.</strong>
+            <span className="ml-1">
+              В документе обнаружены таблицы с разной ориентацией (визиты в
+              столбцах vs визиты в строках). Приоритет отдан таблицам с
+              визитами в столбцах — остальные помечены бейджем «Конфликт
+              ориентации» и могут отражать данные неточно. Проверьте их
+              вручную.
+            </span>
+          </div>
+        </div>
+      )}
 
       {soaTables.map((table) => (
         <SingleSoaTableViewer

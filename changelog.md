@@ -2,6 +2,18 @@
 
 ## 2026-05-03
 
+### Спринт 2 SoA orientation (commit 3/3): UI бейджи и conflict-алёрт
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx`:
+- Тип `SoaTable` дополнен полями `orientation` и `orientationConflict`.
+- Бейджи в шапке `SingleSoaTableViewer`: «Транспонирована» (фиолетовый, `visits_rows`), «Ориентация ?» (серый, `unknown`), «Конфликт ориентации» (янтарный, `orientationConflict=true`). У каждого `title=...` с пояснением.
+- Алёрт уровня документа в `SoaStageViewer`: если хотя бы у одной видимой SoA-таблицы `orientationConflict=true`, показывается янтарный блок с иконкой `AlertTriangle` — «В документе обнаружены таблицы с разной ориентацией; приоритет отдан таблицам с визитами в столбцах».
+
+`apps/web/src/app/(app)/documents/[versionId]/page.tsx`:
+- Под заголовком «Валидация SoA» каждой таблицы — те же три бейджа orientation в компактном виде, с теми же подсказками.
+
+Все 17 typecheck-задач зелёные, lint без новых errors.
+
 ### Спринт 2 SoA orientation (commit 2/3): детектор + транспонирование в каноническую форму
 
 `packages/shared/src/soa-detection-core.ts`:
