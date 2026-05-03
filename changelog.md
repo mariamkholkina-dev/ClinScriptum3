@@ -2,6 +2,21 @@
 
 ## 2026-05-03
 
+### Спринт 3 SoA drawings (commit 3/4): mapDrawingsToCells helper + integration
+
+`packages/doc-parser/src/parser.ts` — `parseDocx` теперь после mammoth-обработки вызывает `extractDrawings(buffer)` (best-effort, ошибки не валят парс) и кладёт результат в `ParsedDocument.drawings: Drawing[]`. `metadata.totalDrawings` добавлено для observability.
+
+`packages/shared/src/soa-detection-core.ts`:
+- Тип `MarkerSource = 'text' | 'arrow' | 'line' | 'bracket'`. `SoaCellData` расширен `markerSources: MarkerSource[]` — список сигналов, которые внесли вклад в маркировку ячейки. По умолчанию `['text']`, не меняет существующее поведение детектора.
+- `persistSoaTables` теперь пишет `markerSources` в `SoaCell.markerSources` JSON-колонку.
+- **`mapDrawingsToCells(drawings, cells, overlapThreshold=0.6)`** — новая pure-функция (export). Принимает массив `DrawingForMapping` и `CellRect[]` (EMU bounding boxes ячеек), возвращает `CellMarkerOverride[]` — пары `(rowIndex, colIndex, source)`. Правило перекрытия: ячейка считается покрытой когда ≥60% её площади в bounding box drawing. Image и shape игнорируются.
+
+Привязка drawings к ячейкам не активирована в pipeline в этом коммите — это контракт для будущего Sprint 3.5/4: чтобы вызвать функцию, нужны EMU-координаты ячеек таблицы, которые требуют отдельного парсинга `<w:tblGrid>` + `<w:trHeight>`. Pure-функция готова и протестирована mentally; integration с реальным DOCX откладывается.
+
+`ParsedDocument` теперь содержит `drawings: Drawing[]` (новое обязательное поле). Worker `parse_document` будет передавать этот массив в `detectSoaForVersion` после Sprint 3.5 — пока поле проходит транзитом.
+
+192/192 теста doc-parser зелёные, full monorepo typecheck зелёный.
+
 ### Спринт 3 SoA drawings (commit 2/4): парсер DrawingML в doc-parser
 
 `packages/doc-parser/src/drawing-parser.ts` (новый модуль). Извлекает графические объекты из `word/document.xml` — стрелки, линии, скобки, картинки. Использует `JSZip` для распаковки DOCX и `fast-xml-parser` для XML (новые dependencies).

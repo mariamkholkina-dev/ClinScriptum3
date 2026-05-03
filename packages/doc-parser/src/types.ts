@@ -1,9 +1,19 @@
+import type { Drawing } from "./drawing-parser.js";
+
 export interface ParsedDocument {
   title: string;
   sections: ParsedSection[];
   synopsis: ParsedSection | null;
   soaTable: ParsedTable | null;
   footnotes: ParsedFootnote[];
+  /**
+   * Graphic shapes (arrows, lines, brackets, images) extracted from
+   * `word/document.xml`. Empty when the parser is invoked without a
+   * DOCX buffer (e.g. unit tests on plain HTML). Used by SoA detection
+   * to find cells that are marked by an overlaying arrow rather than
+   * a text X.
+   */
+  drawings: Drawing[];
   metadata: Record<string, string>;
 }
 

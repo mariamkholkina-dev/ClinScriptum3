@@ -71,11 +71,14 @@ interface SoaDetectionResult {
   orientationConflict: boolean;
 }
 
+type MarkerSource = "text" | "arrow" | "line" | "bracket";
+
 interface SoaCellData {
   rawValue: string;
   normalizedValue: string;
   confidence: number;
   markers: string[];
+  markerSources: MarkerSource[];
 }
 
 /* ═══════════════════════ Constants ═══════════════════════ */
@@ -494,6 +497,7 @@ function buildSoaResult(
         normalizedValue: normalized,
         confidence,
         markers: cellMarkers,
+        markerSources: ["text"],
       });
     }
     matrix.push(cellRow);
@@ -860,6 +864,91 @@ export function transposeCandidate(candidate: TableCandidate): TableCandidate {
   };
 }
 
+/* ═══════════════════════ Drawings → cells mapping ═══════════════════════ */
+
+export interface CellRect {
+  rowIndex: number;
+  colIndex: number;
+  /** Inclusive EMU bounds. */
+  xEmu: number;
+  yEmu: number;
+  cxEmu: number;
+  cyEmu: number;
+}
+
+export interface DrawingForMapping {
+  type: "arrow" | "line" | "bracket" | "image" | "shape";
+  position: { xEmu: number; yEmu: number; cxEmu: number; cyEmu: number };
+  direction?: "horizontal" | "vertical";
+}
+
+export interface CellMarkerOverride {
+  rowIndex: number;
+  colIndex: number;
+  source: MarkerSource;
+}
+
+/**
+ * Pure helper for mapping drawing bounding boxes to cells of a SoA table.
+ *
+ * The detection pipeline doesn't yet know cell EMU coordinates — that
+ * requires parsing `<w:tblGrid>` plus per-row heights, which is outside
+ * the scope of Sprint 3. This function is the contract used by Sprint 3.5
+ * (or whoever wires the coordinates): given a list of drawings and a
+ * list of cell rectangles, return the cells each drawing covers and the
+ * source kind it contributes ('arrow' | 'line' | 'bracket').
+ *
+ * Overlap rule: a cell counts as covered when at least 60% of its area
+ * intersects the drawing's bounding box. Threshold tuned conservatively
+ * — it lets a horizontal arrow that starts halfway through cell A and
+ * ends halfway through cell D mark all four cells without sweeping in
+ * neighbours that are merely grazed.
+ *
+ * Image drawings are ignored — they're not markers.
+ */
+export function mapDrawingsToCells(
+  drawings: DrawingForMapping[],
+  cells: CellRect[],
+  overlapThreshold = 0.6,
+): CellMarkerOverride[] {
+  const out: CellMarkerOverride[] = [];
+
+  for (const drawing of drawings) {
+    if (drawing.type === "image" || drawing.type === "shape") continue;
+
+    const dx0 = drawing.position.xEmu;
+    const dy0 = drawing.position.yEmu;
+    const dx1 = dx0 + drawing.position.cxEmu;
+    const dy1 = dy0 + drawing.position.cyEmu;
+
+    for (const cell of cells) {
+      const cx0 = cell.xEmu;
+      const cy0 = cell.yEmu;
+      const cx1 = cx0 + cell.cxEmu;
+      const cy1 = cy0 + cell.cyEmu;
+
+      const ix0 = Math.max(dx0, cx0);
+      const iy0 = Math.max(dy0, cy0);
+      const ix1 = Math.min(dx1, cx1);
+      const iy1 = Math.min(dy1, cy1);
+
+      if (ix1 <= ix0 || iy1 <= iy0) continue;
+      const intersection = (ix1 - ix0) * (iy1 - iy0);
+      const cellArea = cell.cxEmu * cell.cyEmu;
+      if (cellArea <= 0) continue;
+      if (intersection / cellArea < overlapThreshold) continue;
+
+      out.push({
+        rowIndex: cell.rowIndex,
+        colIndex: cell.colIndex,
+        source: drawing.type,
+      });
+    }
+  }
+
+  return out;
+}
+
 /* ═══════════════════════ Persistence ═══════════════════════ */
 
 async function persistSoaTables(
@@ -926,6 +1015,7 @@ async function persistSoaTables(
           rawValue: string;
           normalizedValue: string;
           confidence: number;
+          markerSources: MarkerSource[];
           footnoteRefs: number[];
         }> = [];
 
@@ -943,6 +1033,7 @@ async function persistSoaTables(
               rawValue: cell.rawValue,
               normalizedValue: cell.normalizedValue ?? "",
               confidence: cell.confidence,
+              markerSources: cell.markerSources ?? ["text"],
               footnoteRefs: cellFootnoteRefs.get(key) ?? [],
             });
           }
