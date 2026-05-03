@@ -200,6 +200,116 @@ describe("extractDrawingsFromDocumentXml", () => {
     expect(drawings[0].type).toBe("arrow");
   });
 
+  it("falls back to mc:Fallback VML when mc:Choice is missing", () => {
+    const xml = wrap(`
+      <w:p><w:r>
+        <mc:AlternateContent>
+          <mc:Fallback>
+            <w:pict>
+              <v:shape type="#_x0000_t13" style="position:absolute;left:50pt;top:20pt;width:200pt;height:10pt"/>
+            </w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r></w:p>`);
+    const drawings = extractDrawingsFromDocumentXml(xml);
+    expect(drawings).toHaveLength(1);
+    expect(drawings[0].type).toBe("arrow");
+    expect(drawings[0].position.xEmu).toBe(50 * 12700);
+    expect(drawings[0].position.cxEmu).toBe(200 * 12700);
+    expect(drawings[0].direction).toBe("horizontal");
+  });
+
+  it("VML <v:line> always classified as line", () => {
+    const xml = wrap(`
+      <w:p><w:r>
+        <mc:AlternateContent>
+          <mc:Fallback>
+            <w:pict>
+              <v:line style="position:absolute;left:0pt;top:5pt;width:300pt;height:1pt"/>
+            </w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r></w:p>`);
+    const drawings = extractDrawingsFromDocumentXml(xml);
+    expect(drawings).toHaveLength(1);
+    expect(drawings[0].type).toBe("line");
+  });
+
+  it("VML t76 (bracket) is classified as bracket with vertical direction", () => {
+    const xml = wrap(`
+      <w:p><w:r>
+        <mc:AlternateContent>
+          <mc:Fallback>
+            <w:pict>
+              <v:shape type="#_x0000_t76" style="position:absolute;left:5pt;top:0pt;width:5pt;height:200pt"/>
+            </w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r></w:p>`);
+    const drawings = extractDrawingsFromDocumentXml(xml);
+    expect(drawings[0].type).toBe("bracket");
+    expect(drawings[0].direction).toBe("vertical");
+  });
+
+  it("VML unknown type maps to 'shape'", () => {
+    const xml = wrap(`
+      <w:p><w:r>
+        <mc:AlternateContent>
+          <mc:Fallback>
+            <w:pict>
+              <v:shape type="#_x0000_t99" style="position:absolute;left:0pt;top:0pt;width:50pt;height:50pt"/>
+            </w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r></w:p>`);
+    const drawings = extractDrawingsFromDocumentXml(xml);
+    expect(drawings[0].type).toBe("shape");
+  });
+
+  it("when both Choice and Fallback present, only DrawingML Choice wins", () => {
+    const xml = wrap(`
+      <w:p><w:r>
+        <mc:AlternateContent>
+          <mc:Choice Requires="wps">
+            <w:drawing><wp:anchor>
+              <wp:extent cx="3500000" cy="120000"/>
+              <a:graphic><a:graphicData>
+                <wps:wsp>
+                  <wps:spPr>
+                    <a:xfrm><a:off x="0" y="0"/><a:ext cx="3500000" cy="120000"/></a:xfrm>
+                    <a:prstGeom prst="rightArrow"/>
+                  </wps:spPr>
+                </wps:wsp>
+              </a:graphicData></a:graphic>
+            </wp:anchor></w:drawing>
+          </mc:Choice>
+          <mc:Fallback>
+            <w:pict>
+              <v:shape type="#_x0000_t13" style="position:absolute;left:0pt;top:0pt;width:100pt;height:5pt"/>
+            </w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r></w:p>`);
+    const drawings = extractDrawingsFromDocumentXml(xml);
+    expect(drawings).toHaveLength(1);
+    expect(drawings[0].position.cxEmu).toBe(3500000);
+  });
+
+  it("VML zero-sized drawing is skipped", () => {
+    const xml = wrap(`
+      <w:p><w:r>
+        <mc:AlternateContent>
+          <mc:Fallback>
+            <w:pict>
+              <v:shape type="#_x0000_t13" style="position:absolute;left:0pt;top:0pt"/>
+            </w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r></w:p>`);
+    const drawings = extractDrawingsFromDocumentXml(xml);
+    expect(drawings).toHaveLength(0);
+  });
+
   it("returns shape (no specific type) for unknown prstGeom", () => {
     const xml = wrap(`
       <w:p><w:r><w:drawing><wp:anchor>
