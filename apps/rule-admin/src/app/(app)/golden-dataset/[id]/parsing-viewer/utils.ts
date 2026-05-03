@@ -222,6 +222,11 @@ export function hasChildren(section: Section, sections: Section[]): boolean {
  *
  * Логика: parent — это ближайшая предыдущая секция с `level` строго меньше,
  * чем у нас. Поднимаемся вверх пока level не дойдёт до 0.
+ *
+ * Секции, помеченные экспертом как `isFalseHeading=true`, пропускаются —
+ * они не должны выступать родителями в иерархии (концептуально это абзацы,
+ * которые парсер ошибочно поднял в заголовки). Без этого фильтра ложный
+ * родитель просачивается в breadcrumb и сбивает эксперта.
  */
 export function getParentChain(sectionId: string, sections: Section[]): Section[] {
   const idx = sections.findIndex((s) => s.id === sectionId);
@@ -229,6 +234,7 @@ export function getParentChain(sectionId: string, sections: Section[]): Section[
   const result: Section[] = [];
   let currentLevel = sections[idx].level;
   for (let i = idx - 1; i >= 0; i--) {
+    if (sections[i].isFalseHeading) continue;
     if (sections[i].level < currentLevel) {
       result.unshift(sections[i]);
       currentLevel = sections[i].level;
