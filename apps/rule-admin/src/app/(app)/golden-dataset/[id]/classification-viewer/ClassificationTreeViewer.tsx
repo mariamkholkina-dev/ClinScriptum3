@@ -378,7 +378,6 @@ function ClassificationDiffOverlay({
                       });
                     }}
                     className="flex-1 min-w-0 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs"
-                    disabled={fixPending}
                   >
                     <option value="">— null —</option>
                     <GroupedZoneOptions options={taxonomyOptions} />
@@ -394,8 +393,7 @@ function ClassificationDiffOverlay({
                       newZone: e.type === "missing" ? null : (currentValue === "" ? null : currentValue),
                     })
                   }
-                  disabled={fixPending}
-                  className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium text-white disabled:opacity-50 ${
+                  className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium text-white ${
                     e.type === "missing" ? "bg-red-600 hover:bg-red-700" : "bg-brand-600 hover:bg-brand-700"
                   }`}
                   title={applyMeta.title}
