@@ -2,6 +2,26 @@
 
 ## 2026-05-03
 
+### Спринт 6 SoA detection robustness (commit 1/8): table-geometry парсер
+
+`packages/doc-parser/src/table-geometry.ts` (новый, ~230 строк). Извлекает EMU-координаты ячеек из `word/document.xml` для будущего вызова `mapDrawingsToCells` (Sprint 3 helper, готов с того спринта но не имел источника координат).
+
+API:
+- **`extractTableGeometry(documentXml: string): TableGeometry[]`** — pure-функция, принимает raw XML строку, возвращает массив с одной записью на каждый top-level `<w:tbl>` в порядке появления в документе. Каждая запись = `{ tableIndex, cells: (CellRect | null)[][] }`.
+- Тип **`CellRect`** — `{ rowIndex, colIndex, xEmu, yEmu, cxEmu, cyEmu, colSpan?, rowSpan? }`. Структурно совместим с `CellRect` в `@clinscriptum/shared` (Sprint 3) для последующего вызова `mapDrawingsToCells`.
+
+Что парсит:
+- `<w:tblGrid>` → `<w:gridCol w:w="DXA">` для x-координат колонок (DXA → EMU = `× 635`).
+- `<w:tr>` → `<w:trHeight w:val="..." w:hRule="auto|exact|atLeast">` для y-координат. При отсутствии или `hRule="auto"` без значения — fallback на `14pt × 12700 EMU/pt`.
+- `<w:tc>` → `<w:gridSpan>` для colspan; `<w:vMerge w:val="restart|continue">` для rowspan. Top-left ячейка получает полный bounding box на весь span; covered slots = `null`.
+- Nested tables в `<w:tc>` — игнорируются (drawings внутри nested table останутся attribut'ами outer table в Sprint 6 commit 2 wire-up).
+
+Tests `packages/doc-parser/src/__tests__/table-geometry.test.ts` — 11 кейсов: malformed XML, no tables, 5-col tblGrid с разными widths, missing trHeight (fallback на default), mixed exact/auto rows, nested table skip + sequential top-level tables, gridSpan colspan (top-left + nulls), vMerge rowspan (restart + continuation null), multi-row y-stacking, empty tblGrid, корректность row/col indices.
+
+Re-export через `packages/doc-parser/src/index.ts`. Все 200+ doc-parser тестов проходят, typecheck чист.
+
+Sprint 6 commit 2 wire-up `mapDrawingsToCells` в `detectSoaForVersion` использует эту функцию.
+
 ### UX: breadcrumb родителей в Diff overlay (Парсинг и Классификация)
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/utils.ts`:

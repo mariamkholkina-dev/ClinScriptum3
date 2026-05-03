@@ -7,6 +7,8 @@ export {
   extractFootnoteDefinitions,
   linkAnchorsToFootnotes,
 } from "./cell-markers.js";
+export { extractTableGeometry } from "./table-geometry.js";
+export type { CellRect, TableGeometry } from "./table-geometry.js";
 export type {
   CellMarkerExtraction,
   FootnoteDefinition,
