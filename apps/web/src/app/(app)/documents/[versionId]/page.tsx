@@ -1455,6 +1455,33 @@ function SoaTab({ versionId }: { versionId: string }) {
                   <span className="text-gray-700 font-medium">Валидация SoA</span>
                 </div>
                 <h2 className="text-xl font-bold text-gray-900 mt-1">Валидация SoA</h2>
+                <div className="mt-1 flex items-center gap-2 text-[11px]">
+                  {table.orientation === "visits_rows" && (
+                    <span
+                      className="rounded bg-purple-100 px-2 py-0.5 font-medium text-purple-700"
+                      title="Визиты были в строках в исходном документе — таблица автоматически транспонирована к каноническому виду"
+                    >
+                      Транспонирована
+                    </span>
+                  )}
+                  {table.orientation === "unknown" && (
+                    <span
+                      className="rounded bg-gray-100 px-2 py-0.5 font-medium text-gray-600"
+                      title="Ориентацию не удалось определить однозначно"
+                    >
+                      Ориентация ?
+                    </span>
+                  )}
+                  {table.orientationConflict && (
+                    <span
+                      className="rounded bg-amber-100 px-2 py-0.5 font-medium text-amber-700 inline-flex items-center gap-1"
+                      title="Несколько SoA с разной ориентацией — приоритет дан таблицам с визитами в столбцах"
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      Конфликт ориентации
+                    </span>
+                  )}
+                </div>
               </div>
 
               {!isValidated && (

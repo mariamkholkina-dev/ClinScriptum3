@@ -441,17 +441,19 @@ enum ProcessingStepStatus {
 // ─── SOA (Schedule of Activities) ────────────────────────
 
 model SoaTable {
-  id            String    @id @default(uuid()) @db.Uuid
-  docVersionId  String    @map("doc_version_id") @db.Uuid
-  sourceBlockId String?   @map("source_block_id") @db.Uuid
-  title         String    @default("")
-  soaScore      Float     @default(0) @map("soa_score")
-  status        SoaStatus @default(detected)
-  headerData    Json      @map("header_data") @db.JsonB
-  rawMatrix     Json      @map("raw_matrix") @db.JsonB
+  id                  String          @id @default(uuid()) @db.Uuid
+  docVersionId        String          @map("doc_version_id") @db.Uuid
+  sourceBlockId       String?         @map("source_block_id") @db.Uuid
+  title               String          @default("")
+  soaScore            Float           @default(0) @map("soa_score")
+  status              SoaStatus       @default(detected)
+  orientation         SoaOrientation  @default(visits_cols)
+  orientationConflict Boolean         @default(false) @map("orientation_conflict")
+  headerData          Json            @map("header_data") @db.JsonB
+  rawMatrix           Json            @map("raw_matrix") @db.JsonB
   /// @deprecated removed in Sprint 5; use relation `footnotes` (SoaFootnote[]) instead.
-  footnotes     Json      @default("[]") @db.JsonB
-  createdAt     DateTime  @default(now()) @map("created_at")
+  footnotes           Json            @default("[]") @db.JsonB
+  createdAt           DateTime        @default(now()) @map("created_at")
 
   docVersion       DocumentVersion     @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
   cells            SoaCell[]
@@ -488,6 +490,12 @@ enum SoaStatus {
   detected
   validated
   not_soa
+}
+
+enum SoaOrientation {
+  visits_cols
+  visits_rows
+  unknown
 }
 
 enum SoaFootnoteSource {

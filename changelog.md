@@ -2,6 +2,45 @@
 
 ## 2026-05-03
 
+### Спринт 2 SoA orientation (commit 3/3): UI бейджи и conflict-алёрт
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx`:
+- Тип `SoaTable` дополнен полями `orientation` и `orientationConflict`.
+- Бейджи в шапке `SingleSoaTableViewer`: «Транспонирована» (фиолетовый, `visits_rows`), «Ориентация ?» (серый, `unknown`), «Конфликт ориентации» (янтарный, `orientationConflict=true`). У каждого `title=...` с пояснением.
+- Алёрт уровня документа в `SoaStageViewer`: если хотя бы у одной видимой SoA-таблицы `orientationConflict=true`, показывается янтарный блок с иконкой `AlertTriangle` — «В документе обнаружены таблицы с разной ориентацией; приоритет отдан таблицам с визитами в столбцах».
+
+`apps/web/src/app/(app)/documents/[versionId]/page.tsx`:
+- Под заголовком «Валидация SoA» каждой таблицы — те же три бейджа orientation в компактном виде, с теми же подсказками.
+
+Все 17 typecheck-задач зелёные, lint без новых errors.
+
+### Спринт 2 SoA orientation (commit 2/3): детектор + транспонирование в каноническую форму
+
+`packages/shared/src/soa-detection-core.ts`:
+
+- **`detectOrientation(rows)`** — pure-функция, эвристика на основе тех же `HEADER_SIGNALS` и `PROCEDURE_ROW_PATTERNS`, что используются в scoring. Считает visit-сигналы и procedure-сигналы отдельно для первой строки и первого столбца, сравнивает суммы `(visitsInRow + proceduresInCol)` vs `(visitsInCol + proceduresInRow)`. Margin меньше 30% от total → возвращает `unknown`. Иначе возвращает доминирующую ориентацию.
+- **`transposeCandidate(candidate)`** — возвращает новую `TableCandidate` с транспонированными `rows`, `rawHtmlGrid`, `htmlRows`. Colspan/rowspan уплощаются до 1×1 — для transposed SoA-таблиц merged cells на практике не встречаются.
+- **Интеграция в `detectSoaForVersion`**: для каждого кандидата сначала `detectOrientation`, затем при `visits_rows` — `transposeCandidate`, и только потом `scoreTable` + `buildSoaResult` (которые предполагают канонический layout). `result.orientation` хранит **исходную** ориентацию (для UI бейджа "Транспонировано автоматически" в Sprint 2.3).
+- **Mixed-orientation guard**: после сбора всех `SoaDetectionResult`-ов, если в наборе есть и `visits_cols` и `visits_rows` (и не только `unknown`) — `orientationConflict=true` для всех **не-`visits_cols`** таблиц. UI покажет алёрт «несколько SoA с разной ориентацией, выбрана с visits в колонках».
+- `persistSoaTables` записывает оба новых поля в БД.
+
+Интеграционный тест `apps/api/src/__tests__/integration/soa-orientation.test.ts` (новый) — 5 кейсов:
+- canonical layout сохраняет `orientation='visits_cols'`, `orientationConflict=false`;
+- transposed layout детектируется как `visits_rows`, транспонируется в каноническую форму (визиты попадают в `headerData.visits`, процедуры — на ось ячеек);
+- mixed-orientation документ → `orientationConflict=true` для visits_rows таблицы, false для visits_cols.
+
+Все 176 api тестов зелёные, full monorepo typecheck и lint без новых errors.
+
+### Спринт 2 SoA orientation (commit 1/3): schema + migration
+
+`packages/db/prisma/schema.prisma`:
+- Новый enum `SoaOrientation` со значениями `visits_cols | visits_rows | unknown`.
+- В `SoaTable` добавлены поля `orientation: SoaOrientation @default(visits_cols)` (каноническая ориентация для всех downstream-консьюмеров) и `orientationConflict: Boolean @default(false)` — флаг для UI чтобы показать алёрт «несколько SOA с разной ориентацией, выбрана с визитами в колонках».
+
+Миграция `20260502231259_add_soa_orientation`: `CREATE TYPE` + `ALTER TABLE soa_tables ADD COLUMN`. Применена в dev и test БД.
+
+Цель спринта (по плану в `~/.claude/plans/spicy-tinkering-pearl.md`): автоматически распознавать таблицы с visits в строках вместо колонок, транспонировать в каноническую форму для дальнейшего pipeline; при наличии нескольких SoA с разной ориентацией — выбирать с visits в колонках, остальные помечать `orientationConflict=true`. Логика детектирования и transpose — следующий коммит.
+
 ### Спринт 1 SoA footnotes (commit 7/7): deprecation legacy endpoints + summary
 
 `apps/api/src/routers/processing.ts`:
