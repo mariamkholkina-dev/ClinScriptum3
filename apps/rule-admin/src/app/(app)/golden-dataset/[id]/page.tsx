@@ -1042,7 +1042,15 @@ function StageDataViewer({
 
   switch (stageKey) {
     case "parsing":
-      return <ParsingTreeViewer versionId={vid} expectedResults={expectedResults} />;
+      return (
+        <ParsingTreeViewer
+          versionId={vid}
+          expectedResults={expectedResults}
+          goldenSampleId={goldenSampleId}
+          stageKey={stageKey}
+          stageStatus={currentStatus}
+        />
+      );
     case "classification":
       return (
         <ClassificationTreeViewer

@@ -205,6 +205,7 @@ model Section {
   classificationStatus SectionStatus @default(not_validated) @map("classification_status")
   structureComment      String?       @map("structure_comment")
   classificationComment String?       @map("classification_comment")
+  isFalseHeading  Boolean       @default(false) @map("is_false_heading")
   sourceAnchor    Json          @map("source_anchor") @db.JsonB
 
   docVersion    DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)

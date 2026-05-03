@@ -21,6 +21,7 @@ export interface Section {
   structureStatus: "validated" | "not_validated" | "requires_rework";
   classificationStatus: "validated" | "not_validated" | "requires_rework";
   classificationComment: string | null;
+  isFalseHeading: boolean;
   contentBlocks: ContentBlock[];
 }
 

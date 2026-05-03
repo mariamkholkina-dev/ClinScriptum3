@@ -16,6 +16,7 @@ export interface Section {
   order: number;
   structureStatus: "validated" | "not_validated" | "requires_rework";
   classificationStatus: "validated" | "not_validated" | "requires_rework";
+  isFalseHeading: boolean;
   contentBlocks: ContentBlock[];
 }
 

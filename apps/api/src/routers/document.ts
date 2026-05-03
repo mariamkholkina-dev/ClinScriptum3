@@ -99,5 +99,20 @@ export const documentRouter = router({
       ),
     ),
 
+  markSectionFalseHeading: p
+    .input(
+      z.object({
+        sectionId: z.string().uuid(),
+        isFalseHeading: z.boolean(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      documentService.markSectionFalseHeading(
+        ctx.user.tenantId,
+        input.sectionId,
+        input.isFalseHeading,
+      ),
+    ),
+
   getTaxonomy: p.query(({ ctx }) => documentService.getTaxonomy(ctx.user.tenantId)),
 });

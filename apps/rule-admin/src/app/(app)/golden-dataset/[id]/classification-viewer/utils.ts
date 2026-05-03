@@ -75,10 +75,15 @@ export function diffClassificationWithExpected(
   const expected = expectedResults as ExpectedClassificationResults;
   if (!Array.isArray(expected.sections)) return [];
 
+  // Каскад от Парсинга: секции, помеченные как «не заголовок», игнорируем
+  // во всех структурных diff — иначе они дадут extra даже после того, как
+  // эксперт уже отверг их на этапе парсинга.
+  const realSections = sections.filter((s) => !s.isFalseHeading);
+
   const entries: DiffEntry[] = [];
 
   const actualByTitle = new Map<string, Section>();
-  for (const s of sections) {
+  for (const s of realSections) {
     actualByTitle.set(s.title.trim().toLowerCase(), s);
   }
 
@@ -109,7 +114,7 @@ export function diffClassificationWithExpected(
     }
   }
 
-  for (const s of sections) {
+  for (const s of realSections) {
     if (!matchedActual.has(s.id)) {
       entries.push({
         type: "extra",

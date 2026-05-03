@@ -126,11 +126,16 @@ export function diffWithExpected(
   const expected = expectedResults as ExpectedResults;
   if (!Array.isArray(expected.sections)) return [];
 
+  // Секции, помеченные экспертом как «не заголовок», исключаем из diff —
+  // тогда они не дают ни extra, ни wrong_level. Это каскадно применяется
+  // и в diff Классификации (filter там же).
+  const realSections = sections.filter((s) => !s.isFalseHeading);
+
   const entries: DiffEntry[] = [];
   const flatExpected = flattenExpected(expected.sections);
 
   const actualByTitle = new Map<string, Section[]>();
-  for (const s of sections) {
+  for (const s of realSections) {
     const key = s.title.trim().toLowerCase();
     if (!actualByTitle.has(key)) actualByTitle.set(key, []);
     actualByTitle.get(key)!.push(s);
@@ -172,7 +177,7 @@ export function diffWithExpected(
     }
   }
 
-  for (const s of sections) {
+  for (const s of realSections) {
     if (!matchedActual.has(s.id)) {
       entries.push({
         type: "extra",

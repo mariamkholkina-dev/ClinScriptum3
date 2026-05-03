@@ -14,17 +14,17 @@ import {
   ChevronRight,
   ChevronDown,
   AlertTriangle,
-  Copy,
-  Check,
   ChevronsUpDown,
   Filter,
   Columns2,
   GitCompareArrows,
   CheckSquare,
   Square,
-  MinusSquare,
   Keyboard,
   X,
+  CornerDownRight,
+  EyeOff,
+  Eye,
 } from "lucide-react";
 
 import type {
@@ -148,9 +148,43 @@ function ContentBlockPanel({ blocks }: { blocks: Section["contentBlocks"] }) {
   );
 }
 
-/* ═══════════════ DiffOverlay ═══════════════ */
+/* ═══════════════ ParsingDiffOverlay ═══════════════ */
 
-function DiffOverlay({ entries }: { entries: DiffEntry[] }) {
+type ParsingQuickFix =
+  // extra → принять заголовок в эталон (добавить запись в expected.sections)
+  | { kind: "accept_extra"; sectionId: string; sectionTitle: string; level: number }
+  // extra → пометить как ложный заголовок (Section.isFalseHeading=true). Каскадно скрывает
+  // секцию из diff Парсинга и Классификации.
+  | { kind: "mark_false_heading"; sectionId: string; sectionTitle: string }
+  // missing → эксперт согласен, что в эталоне этой записи быть не должно
+  | { kind: "remove_missing"; sectionTitle: string }
+  // wrong_level → синхронизировать уровень в эталоне с фактическим (правим эталон, не секцию)
+  | { kind: "apply_level"; sectionTitle: string; newLevel: number };
+
+interface ParsingDiffOverlayProps {
+  entries: DiffEntry[];
+  sections: Section[];
+  onQuickFix: (fix: ParsingQuickFix) => void;
+  onJumpToSection: (sectionId: string) => void;
+  fixPending: boolean;
+}
+
+function ParsingDiffOverlay({
+  entries,
+  sections,
+  onQuickFix,
+  onJumpToSection,
+  fixPending,
+}: ParsingDiffOverlayProps) {
+  const titleToSection = useMemo(() => {
+    const m = new Map<string, Section>();
+    for (const s of sections) m.set(s.title.trim().toLowerCase(), s);
+    return m;
+  }, [sections]);
+
+  // Локальный per-row выбор уровня для wrong_level — initial = expected.level.
+  const [pendingLevels, setPendingLevels] = useState<Map<string, number>>(new Map());
+
   if (entries.length === 0) {
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
@@ -163,43 +197,164 @@ function DiffOverlay({ entries }: { entries: DiffEntry[] }) {
   const extra = entries.filter((e) => e.type === "extra");
   const wrongLevel = entries.filter((e) => e.type === "wrong_level");
 
+  const getRowKey = (e: DiffEntry, idx: number) => `${e.type}:${e.sectionTitle}:${idx}`;
+
   return (
     <div className="space-y-3">
       <div className="flex gap-3 text-xs font-medium">
-        <span className="rounded bg-red-100 px-2 py-1 text-red-700">
-          Пропущено: {missing.length}
-        </span>
-        <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">
-          Лишних: {extra.length}
-        </span>
-        <span className="rounded bg-blue-100 px-2 py-1 text-blue-700">
-          Неверный уровень: {wrongLevel.length}
-        </span>
+        <span className="rounded bg-red-100 px-2 py-1 text-red-700">Пропущено: {missing.length}</span>
+        <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">Лишних: {extra.length}</span>
+        <span className="rounded bg-blue-100 px-2 py-1 text-blue-700">Неверный уровень: {wrongLevel.length}</span>
       </div>
-      <div className="max-h-60 overflow-y-auto space-y-1.5">
-        {entries.map((e, i) => (
-          <div
-            key={i}
-            className={`rounded-md border px-3 py-2 text-xs ${
-              e.type === "missing"
-                ? "border-red-200 bg-red-50 text-red-700"
-                : e.type === "extra"
-                  ? "border-amber-200 bg-amber-50 text-amber-700"
-                  : "border-blue-200 bg-blue-50 text-blue-700"
-            }`}
-          >
-            <span className="font-medium">
-              {e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверный уровень"}
-            </span>
-            {": "}
-            {e.sectionTitle}
-            {e.type === "wrong_level" && e.expected && e.actual && (
-              <span className="ml-1 text-gray-500">
-                (ожидался L{e.expected.level}, получен L{e.actual.level})
-              </span>
-            )}
-          </div>
-        ))}
+
+      <div className="max-h-80 overflow-y-auto space-y-1.5">
+        {entries.map((e, i) => {
+          const rowKey = getRowKey(e, i);
+          const matchedSection = titleToSection.get(e.sectionTitle.trim().toLowerCase());
+
+          const borderBg =
+            e.type === "missing"
+              ? "border-red-200 bg-red-50"
+              : e.type === "extra"
+                ? "border-amber-200 bg-amber-50"
+                : "border-blue-200 bg-blue-50";
+          const labelColor =
+            e.type === "missing"
+              ? "text-red-700"
+              : e.type === "extra"
+                ? "text-amber-700"
+                : "text-blue-700";
+          const labelText =
+            e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверный уровень";
+
+          return (
+            <div key={rowKey} className={`rounded-md border px-3 py-2 text-xs ${borderBg}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <span className={`font-medium ${labelColor}`}>{labelText}</span>
+                  <span className="ml-1 text-gray-900" title={e.sectionTitle}>
+                    {e.sectionTitle}
+                  </span>
+                  {e.type === "wrong_level" && e.expected && e.actual && (
+                    <div className="mt-0.5 text-gray-500">
+                      ожидался L{e.expected.level}, получен L{e.actual.level}
+                    </div>
+                  )}
+                  {e.type === "extra" && e.actual && (
+                    <div className="mt-0.5 text-gray-500">
+                      L{e.actual.level} в документе, нет в эталоне
+                    </div>
+                  )}
+                  {e.type === "missing" && e.expected && (
+                    <div className="mt-0.5 text-gray-500">
+                      ожидался L{e.expected.level}, нет в документе
+                    </div>
+                  )}
+                </div>
+                {matchedSection && (
+                  <button
+                    type="button"
+                    onClick={() => onJumpToSection(matchedSection.id)}
+                    className="shrink-0 rounded border border-gray-300 bg-white p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                    title="Перейти к строке в дереве"
+                  >
+                    <CornerDownRight size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* Кнопки действий — разные для разных типов */}
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {e.type === "extra" && matchedSection && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onQuickFix({
+                          kind: "accept_extra",
+                          sectionId: matchedSection.id,
+                          sectionTitle: e.sectionTitle,
+                          level: matchedSection.level,
+                        })
+                      }
+                      disabled={fixPending}
+                      className="rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                      title="Добавить запись в expected_results"
+                    >
+                      Принять в эталон
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onQuickFix({
+                          kind: "mark_false_heading",
+                          sectionId: matchedSection.id,
+                          sectionTitle: e.sectionTitle,
+                        })
+                      }
+                      disabled={fixPending}
+                      className="flex items-center gap-1 rounded bg-gray-700 px-2 py-0.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                      title="Пометить секцию как ложный заголовок (исключить из всех diff)"
+                    >
+                      <EyeOff size={11} /> Не заголовок
+                    </button>
+                  </>
+                )}
+
+                {e.type === "missing" && (
+                  <button
+                    type="button"
+                    onClick={() => onQuickFix({ kind: "remove_missing", sectionTitle: e.sectionTitle })}
+                    disabled={fixPending}
+                    className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                    title="Удалить запись из expected_results"
+                  >
+                    Удалить из эталона
+                  </button>
+                )}
+
+                {e.type === "wrong_level" && e.actual && e.expected && (
+                  <>
+                    <select
+                      value={pendingLevels.get(rowKey) ?? e.actual.level}
+                      onChange={(ev) => {
+                        const v = Number(ev.target.value);
+                        setPendingLevels((prev) => {
+                          const next = new Map(prev);
+                          next.set(rowKey, v);
+                          return next;
+                        });
+                      }}
+                      className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs"
+                      disabled={fixPending}
+                    >
+                      {[0, 1, 2, 3, 4, 5].map((lvl) => (
+                        <option key={lvl} value={lvl}>
+                          Уровень {lvl + 1}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onQuickFix({
+                          kind: "apply_level",
+                          sectionTitle: e.sectionTitle,
+                          newLevel: pendingLevels.get(rowKey) ?? e.actual!.level,
+                        })
+                      }
+                      disabled={fixPending}
+                      className="rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                      title="Обновить уровень в expected_results"
+                    >
+                      Применить уровень в эталон
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -569,6 +724,8 @@ function SectionTreeRow({
   onToggleCollapse,
   onToggleExpand,
   onToggleSelect,
+  onToggleFalseHeading,
+  falseHeadingPending,
   rowRef,
 }: {
   section: Section;
@@ -583,9 +740,18 @@ function SectionTreeRow({
   onToggleCollapse: () => void;
   onToggleExpand: () => void;
   onToggleSelect: () => void;
+  onToggleFalseHeading: () => void;
+  falseHeadingPending: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
 }) {
-  const diffBg = diffType === "extra" ? "bg-amber-50/60" : diffType === "wrong_level" ? "bg-blue-50/60" : "";
+  const isFalse = section.isFalseHeading;
+  const diffBg = isFalse
+    ? "bg-gray-100/70"
+    : diffType === "extra"
+      ? "bg-amber-50/60"
+      : diffType === "wrong_level"
+        ? "bg-blue-50/60"
+        : "";
 
   return (
     <div ref={rowRef}>
@@ -618,17 +784,24 @@ function SectionTreeRow({
         )}
 
         {/* Numbering */}
-        <span className="shrink-0 font-mono text-xs text-gray-400 w-12 text-right">
+        <span className={`shrink-0 font-mono text-xs w-12 text-right ${isFalse ? "text-gray-300 line-through" : "text-gray-400"}`}>
           {numbering}
         </span>
 
         {/* Title */}
         <span
-          className="flex-1 min-w-0 truncate text-sm text-gray-900 font-medium"
+          className={`flex-1 min-w-0 truncate text-sm font-medium ${isFalse ? "text-gray-400 line-through" : "text-gray-900"}`}
           title={section.title || "(без названия)"}
         >
           {section.title || "(без названия)"}
         </span>
+
+        {/* False-heading badge */}
+        {isFalse && (
+          <span className="shrink-0 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-700" title="Эксперт пометил как ложный заголовок — исключено из diff">
+            Не заголовок
+          </span>
+        )}
 
         {/* Anomaly icons */}
         {anomalies.map((a) => (
@@ -654,6 +827,16 @@ function SectionTreeRow({
           {section.contentBlocks.length} бл.
         </span>
 
+        {/* Toggle false-heading */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleFalseHeading(); }}
+          disabled={falseHeadingPending}
+          className="shrink-0 text-gray-400 hover:text-gray-700 disabled:opacity-40"
+          title={isFalse ? "Восстановить как заголовок" : "Пометить как ложный заголовок"}
+        >
+          {isFalse ? <Eye size={13} /> : <EyeOff size={13} />}
+        </button>
+
         {/* Expand indicator */}
         <ChevronDown
           size={13}
@@ -672,9 +855,17 @@ function SectionTreeRow({
 export default function ParsingTreeViewer({
   versionId,
   expectedResults,
+  goldenSampleId,
+  stageKey = "parsing",
+  stageStatus = "draft",
 }: {
   versionId: string;
   expectedResults?: unknown;
+  /** Опционально — нужен для quick-fix действий с expected_results JSON.
+      Если не передан, доступна только пометка isFalseHeading на секции. */
+  goldenSampleId?: string;
+  stageKey?: string;
+  stageStatus?: string;
 }) {
   const q = trpc.document.getVersion.useQuery(
     { versionId },
@@ -757,6 +948,80 @@ export default function ParsingTreeViewer({
       });
     },
     [selectedIds, bulkStructureMutation],
+  );
+
+  const markFalseHeading = trpc.document.markSectionFalseHeading.useMutation({
+    onSuccess: () => {
+      utils.document.getVersion.invalidate({ versionId });
+    },
+  });
+
+  const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
+    onSuccess: () => {
+      if (goldenSampleId) {
+        utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
+      }
+    },
+  });
+
+  // Quick-fix для строки diff overlay. Логика по типу:
+  //  - accept_extra: добавить запись в expected.sections (берём level из секции)
+  //  - mark_false_heading: только Section.isFalseHeading=true (без правок эталона)
+  //  - remove_missing: убрать запись из expected.sections
+  //  - apply_level: обновить level у существующей записи в expected.sections
+  const handleQuickFix = useCallback(
+    (fix: ParsingQuickFix) => {
+      if (fix.kind === "mark_false_heading") {
+        markFalseHeading.mutate({ sectionId: fix.sectionId, isFalseHeading: true });
+        return;
+      }
+
+      // Остальные действия требуют контекст golden-sample (правка эталона).
+      if (!goldenSampleId) return;
+
+      const current = (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
+      const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
+
+      const findIdx = (title: string) => {
+        const lower = title.trim().toLowerCase();
+        return sectionsArr.findIndex(
+          (s) => String(s.title ?? "").trim().toLowerCase() === lower,
+        );
+      };
+
+      let nextSections: Array<Record<string, unknown>> = sectionsArr;
+      if (fix.kind === "accept_extra") {
+        const idx = findIdx(fix.sectionTitle);
+        if (idx >= 0) {
+          nextSections = sectionsArr.map((s, i) =>
+            i === idx ? { ...s, title: fix.sectionTitle, level: fix.level } : s,
+          );
+        } else {
+          nextSections = [...sectionsArr, { title: fix.sectionTitle, level: fix.level }];
+        }
+      } else if (fix.kind === "remove_missing") {
+        const idx = findIdx(fix.sectionTitle);
+        if (idx < 0) return;
+        nextSections = sectionsArr.filter((_, i) => i !== idx);
+      } else if (fix.kind === "apply_level") {
+        const idx = findIdx(fix.sectionTitle);
+        if (idx < 0) return;
+        nextSections = sectionsArr.map((s, i) =>
+          i === idx ? { ...s, level: fix.newLevel } : s,
+        );
+      }
+
+      updateExpected.mutate({
+        goldenSampleId,
+        stage: stageKey,
+        status: (stageStatus === "not_set" ? "draft" : stageStatus) as
+          | "draft"
+          | "in_review"
+          | "approved",
+        expectedResults: { ...current, sections: nextSections },
+      });
+    },
+    [markFalseHeading, updateExpected, expectedResults, goldenSampleId, stageKey, stageStatus],
   );
 
   // Toggle helpers
@@ -886,6 +1151,16 @@ export default function ParsingTreeViewer({
     focusedRowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [focusedIdx]);
 
+  // Синхронизация focusedIdx с activeSectionId — нужна для onJumpToSection
+  // из ParsingDiffOverlay: setActiveSectionId(id) сам по себе не двигает focusedIdx,
+  // и scrollIntoView выше зависит от focusedIdx.
+  useEffect(() => {
+    if (!activeSectionId) return;
+    const idx = visibleSections.findIndex((s) => s.id === activeSectionId);
+    if (idx >= 0 && idx !== focusedIdx) {
+      setFocusedIdx(idx);
+    }
+  }, [activeSectionId, visibleSections, focusedIdx]);
 
   /* ── Loading ── */
   if (q.isLoading) {
@@ -941,7 +1216,23 @@ export default function ParsingTreeViewer({
       />
 
       {/* Diff results */}
-      {showDiff && <DiffOverlay entries={diffEntries} />}
+      {showDiff && (
+        <ParsingDiffOverlay
+          entries={diffEntries}
+          sections={rawSections}
+          onQuickFix={handleQuickFix}
+          onJumpToSection={(sectionId) => {
+            // Сброс фильтров — иначе целевая строка может быть отфильтрована.
+            setFilters(EMPTY_FILTERS);
+            // Раскрываем все parent'ы.
+            setCollapsedIds(new Set());
+            // Активируем секцию — useEffect на activeSectionId сделает scrollIntoView.
+            setActiveSectionId(sectionId);
+            requestAnimationFrame(() => containerRef.current?.focus());
+          }}
+          fixPending={markFalseHeading.isPending || updateExpected.isPending}
+        />
+      )}
 
       {/* Keyboard hint */}
       <div className="flex items-center gap-1 text-[10px] text-gray-400">
@@ -978,6 +1269,10 @@ export default function ParsingTreeViewer({
                   onToggleCollapse={() => toggleCollapse(s.id)}
                   onToggleExpand={() => toggleExpand(s.id)}
                   onToggleSelect={() => toggleSelect(s.id)}
+                  onToggleFalseHeading={() =>
+                    markFalseHeading.mutate({ sectionId: s.id, isFalseHeading: !s.isFalseHeading })
+                  }
+                  falseHeadingPending={markFalseHeading.isPending}
                   rowRef={i === focusedIdx ? focusedRowRef : undefined}
                 />
               ))}

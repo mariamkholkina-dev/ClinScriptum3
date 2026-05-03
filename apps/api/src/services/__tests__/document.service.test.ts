@@ -18,6 +18,10 @@ vi.mock("@clinscriptum/db", () => ({
     ruleSet: {
       findFirst: vi.fn(),
     },
+    section: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
   },
 }));
 
@@ -50,6 +54,10 @@ const mockDocument = prisma.document as unknown as {
 };
 const mockRuleSet = prisma.ruleSet as unknown as {
   findFirst: ReturnType<typeof vi.fn>;
+};
+const mockSection = prisma.section as unknown as {
+  findUnique: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
 };
 
 const TENANT_A = "tenant-aaa";
@@ -205,6 +213,56 @@ describe("documentService", () => {
       expect(tenantIds).toContain(TENANT_A);
       expect(tenantIds).toContain(null);
       expect(tenantIds).not.toContain(TENANT_B);
+    });
+  });
+
+  describe("markSectionFalseHeading", () => {
+    const SECTION_ID = "sec-001";
+    const sectionForTenantA = {
+      id: SECTION_ID,
+      docVersion: { document: { study: { tenantId: TENANT_A } } },
+    };
+
+    it("sets isFalseHeading=true for tenant-owned section", async () => {
+      mockSection.findUnique.mockResolvedValue(sectionForTenantA);
+      mockSection.update.mockResolvedValue({ id: SECTION_ID, isFalseHeading: true });
+
+      const result = await documentService.markSectionFalseHeading(TENANT_A, SECTION_ID, true);
+
+      expect(mockSection.update).toHaveBeenCalledWith({
+        where: { id: SECTION_ID },
+        data: { isFalseHeading: true },
+      });
+      expect(result.isFalseHeading).toBe(true);
+    });
+
+    it("clears isFalseHeading=false (toggle back)", async () => {
+      mockSection.findUnique.mockResolvedValue(sectionForTenantA);
+      mockSection.update.mockResolvedValue({ id: SECTION_ID, isFalseHeading: false });
+
+      await documentService.markSectionFalseHeading(TENANT_A, SECTION_ID, false);
+
+      expect(mockSection.update).toHaveBeenCalledWith({
+        where: { id: SECTION_ID },
+        data: { isFalseHeading: false },
+      });
+    });
+
+    it("rejects cross-tenant access", async () => {
+      mockSection.findUnique.mockResolvedValue(sectionForTenantA);
+
+      await expect(
+        documentService.markSectionFalseHeading(TENANT_B, SECTION_ID, true),
+      ).rejects.toThrow(DomainError);
+      expect(mockSection.update).not.toHaveBeenCalled();
+    });
+
+    it("throws NOT_FOUND when section missing", async () => {
+      mockSection.findUnique.mockResolvedValue(null);
+
+      await expect(
+        documentService.markSectionFalseHeading(TENANT_A, SECTION_ID, true),
+      ).rejects.toThrow(DomainError);
     });
   });
 });

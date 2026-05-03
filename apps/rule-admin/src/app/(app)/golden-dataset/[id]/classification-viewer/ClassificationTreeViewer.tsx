@@ -948,7 +948,14 @@ function SectionTreeRow({
   classificationPending: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
 }) {
-  const diffBg = diffType === "extra" ? "bg-amber-50/60" : diffType === "wrong_section" ? "bg-purple-50/60" : "";
+  const isFalse = section.isFalseHeading;
+  const diffBg = isFalse
+    ? "bg-gray-100/70"
+    : diffType === "extra"
+      ? "bg-amber-50/60"
+      : diffType === "wrong_section"
+        ? "bg-purple-50/60"
+        : "";
   const disagreement = section.algoSection !== section.llmSection && section.algoSection != null && section.llmSection != null;
 
   return (
@@ -988,11 +995,18 @@ function SectionTreeRow({
 
         {/* Title */}
         <span
-          className="flex-1 min-w-0 truncate text-sm text-gray-900 font-medium"
+          className={`flex-1 min-w-0 truncate text-sm font-medium ${isFalse ? "text-gray-400 line-through" : "text-gray-900"}`}
           title={section.title || "(без названия)"}
         >
           {section.title || "(без названия)"}
         </span>
+
+        {/* False-heading badge (помечено в Парсинге) */}
+        {isFalse && (
+          <span className="shrink-0 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-700" title="Помечено как ложный заголовок в Парсинге — исключено из diff">
+            Не заголовок
+          </span>
+        )}
 
         {/* Anomaly icons */}
         {anomalies.map((a) => (

@@ -2,6 +2,31 @@
 
 ## 2026-05-03
 
+### Интерактивный Diff с эталоном на этапе Парсинг
+
+`packages/db/prisma/schema.prisma` + миграция `20260503150000_add_section_false_heading`:
+- `Section.isFalseHeading: Boolean @default(false)` — флаг «парсер ошибочно выделил абзац как заголовок». Каскадно скрывает секцию из всех структурных diff (Парсинг + Классификация).
+
+`apps/api/src/services/document.service.ts` + `routers/document.ts`:
+- Новый сервисный метод `markSectionFalseHeading(tenantId, sectionId, value)` с `requireTenantResource()`.
+- Новая tRPC процедура `document.markSectionFalseHeading`.
+- `getVersion` (Prisma + raw fallback) теперь возвращает поле `isFalseHeading`.
+- 4 сервисных теста: установка/снятие флага, cross-tenant rejection, NOT_FOUND.
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/`:
+- `utils.ts.diffWithExpected` — отфильтровывает `isFalseHeading=true` секции из `extra` и `wrong_level`.
+- `ParsingTreeViewer.tsx` — `DiffOverlay` переписан как **`ParsingDiffOverlay`** с inline-действиями:
+  - **Лишние**: «Принять в эталон» (добавить запись в `expected_results.sections`) или «Не заголовок» (Section.isFalseHeading=true).
+  - **Пропущенные**: «Удалить из эталона» (убрать запись).
+  - **Неверный уровень**: select уровней + «Применить уровень в эталон» (синхронизировать `expected.level` с фактическим).
+  - На каждой строке кнопка `CornerDownRight` — прыжок к строке в основной структуре документа (сброс фильтров → раскрытие parent'ов → scroll + focus).
+- В `SectionTreeRow`: для `isFalseHeading=true` — серый стиль с line-through, бейдж «Не заголовок», кнопка-тоггл (Eye / EyeOff) для отката решения.
+- `goldenSampleId / stageKey / stageStatus` пропсы пробрасываются из `StageDataViewer`, нужны для `goldenDataset.updateStageStatus` мутации.
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/classification-viewer/`:
+- `utils.ts.diffClassificationWithExpected` — то же фильтр `!isFalseHeading` (каскад от Парсинга).
+- `ClassificationTreeViewer.tsx` — секции с `isFalseHeading` тоже серятся в дереве с бейджем.
+
 ### Спринт 4 SoA LLM verification (commit 2/2): pipeline-интеграция
 
 `apps/workers/src/lib/soa-llm-verification.ts` (новый):
@@ -29,8 +54,6 @@ Sprint 4 завершён.
 Миграция `20260503140000_add_soa_verification_level` — `CREATE TYPE` + `ALTER TABLE`. Применена в dev и test БД.
 
 Цель спринта: добавить LLM-уровни проверки SoA по образцу того, что уже работает для классификации секций. Pipeline-интеграция — следующий коммит.
-
-
 
 ### Спринт 3 SoA drawings (commit 4/4): UI бейджи и индикаторы графических маркеров
 
