@@ -1260,9 +1260,37 @@ export default function ClassificationTreeViewer({
   );
 
   // Individual classification update
+  // Optimistic update: правка standardSection отражается в кеше getVersion сразу.
+  // Invalidate только на onError (та же логика что в parsing-viewer — refetch после
+  // быстрых параллельных кликов мог перезаписывать кеш данными до применения мутаций).
   const updateClassification = trpc.document.updateSectionClassification.useMutation({
-    onSuccess: () => {
+    onMutate: async ({ sectionId, standardSection, classificationStatus }) => {
+      await utils.document.getVersion.cancel({ versionId });
+      const prev = utils.document.getVersion.getData({ versionId });
+      utils.document.getVersion.setData({ versionId }, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          sections: old.sections.map((s) =>
+            s.id === sectionId
+              ? {
+                  ...s,
+                  standardSection,
+                  ...(classificationStatus
+                    ? { classificationStatus: classificationStatus as typeof s.classificationStatus }
+                    : {}),
+                }
+              : s,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.document.getVersion.setData({ versionId }, ctx.prev);
       utils.document.getVersion.invalidate({ versionId });
+    },
+    onSuccess: () => {
       setEditingSectionId(null);
     },
   });
@@ -1281,10 +1309,34 @@ export default function ClassificationTreeViewer({
   // Мутация обновления expected_results JSON (для extra/missing в diff overlay).
   // Используется когда нужно добавить/изменить/удалить запись секции в эталоне,
   // а не только её standardSection в БД.
+  // Optimistic update для эталона: патч goldenDataset.getSample в кеше,
+  // родительский page.tsx через useQuery подхватит свежий expectedResults.
+  // Invalidate только на onError (см. parsing-viewer для подробностей race-fix'а).
   const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onSuccess: () => {
-      // Перепроверяем sample целиком чтобы page.tsx state и StagePanel synced
-      if (goldenSampleId) {
+    onMutate: async (input) => {
+      if (!goldenSampleId) return undefined;
+      await utils.goldenDataset.getSample.cancel({ id: goldenSampleId });
+      const prev = utils.goldenDataset.getSample.getData({ id: goldenSampleId });
+      utils.goldenDataset.getSample.setData({ id: goldenSampleId }, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          stageStatuses: old.stageStatuses.map((ss) =>
+            ss.stage === input.stage
+              ? {
+                  ...ss,
+                  expectedResults: (input.expectedResults ?? {}) as typeof ss.expectedResults,
+                  status: input.status as typeof ss.status,
+                }
+              : ss,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev && goldenSampleId) {
+        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
         utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
       }
     },
