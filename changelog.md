@@ -2,6 +2,19 @@
 
 ## 2026-05-03
 
+### Спринт 4 SoA LLM verification (commit 1/2): schema для уровней проверки
+
+`packages/db/prisma/schema.prisma`:
+- Новый enum `SoaVerificationLevel`: `deterministic` | `llm_check` | `llm_qa`. Это пятизуровневая модель из CLAUDE.md, применённая к SoA-этапу: уровень меняется по мере того как pipeline проходит проверки.
+- `SoaTable.verificationLevel: SoaVerificationLevel` (default `deterministic`) — высший уровень, на котором подтверждена данная SoA-таблица.
+- `SoaTable.llmConfidence: Float?` — уверенность, отчётливая LLM Check шагом (0..1). Null до того как llm_check отработал.
+
+Миграция `20260503140000_add_soa_verification_level` — `CREATE TYPE` + `ALTER TABLE`. Применена в dev и test БД.
+
+Цель спринта: добавить LLM-уровни проверки SoA по образцу того, что уже работает для классификации секций. Pipeline-интеграция — следующий коммит.
+
+
+
 ### Спринт 3 SoA drawings (commit 4/4): UI бейджи и индикаторы графических маркеров
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx`:
