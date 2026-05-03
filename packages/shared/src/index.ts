@@ -13,6 +13,7 @@ export { renderTableMarkdown, type TableAstLike } from "./utils/markdown.js";
 export { chunkWithOverlap, type ChunkOptions } from "./utils/chunking.js";
 export {
   parseLlmJson,
+  parseLlmJsonWithRetry,
   findJsonSpan,
   FactExtractionItemSchema,
   FactExtractionArraySchema,

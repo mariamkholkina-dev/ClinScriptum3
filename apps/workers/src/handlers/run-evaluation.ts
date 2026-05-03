@@ -95,6 +95,9 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
             }
           }
 
+          const confidenceMetrics =
+            stage === "extraction" ? computeConfidenceMetrics(expected, actual) : null;
+
           await prisma.evaluationResult.create({
             data: {
               evaluationRunId: run.id,
@@ -109,6 +112,7 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
               f1,
               latencyMs: Date.now() - stageStart,
               ...(coverageByFactKey ? { coverageByFactKey: coverageByFactKey as object } : {}),
+              ...(confidenceMetrics ? { confidenceMetrics: confidenceMetrics as object } : {}),
             },
           });
 
@@ -334,6 +338,59 @@ interface FactCoverageEntry {
   expected: number;
   extracted: number;
   matched: number;
+}
+
+/**
+ * Phase 5 fact-extraction roadmap: confidence quality metrics.
+ *
+ * For each extracted fact we know:
+ *   - the model's predicted confidence (in `actual.facts[].confidence`)
+ *   - the ground-truth correctness (matched against `expected.facts[]` by
+ *     factKey + value)
+ *
+ * This lets us compute the Brier score: mean squared error between
+ * predicted probability and the 0/1 outcome. Lower is better; well-
+ * calibrated models score < 0.10.
+ *
+ * Returns `null` if we have no predictions to score.
+ */
+export function computeConfidenceMetrics(
+  expected: Record<string, unknown>,
+  actual: Record<string, unknown>,
+): { brierScore: number; sampleSize: number } | null {
+  const expFacts = Array.isArray(expected.facts) ? (expected.facts as unknown[]) : [];
+  const actFacts = Array.isArray(actual.facts) ? (actual.facts as unknown[]) : [];
+  if (actFacts.length === 0) return null;
+
+  const expByKey = new Map<string, Set<string>>();
+  for (const f of expFacts) {
+    if (typeof f !== "object" || f === null) continue;
+    const obj = f as Record<string, unknown>;
+    const k = obj.factKey != null ? String(obj.factKey) : null;
+    if (!k) continue;
+    const v = obj.value != null ? String(obj.value).trim().toLowerCase() : "";
+    const set = expByKey.get(k) ?? new Set<string>();
+    set.add(v);
+    expByKey.set(k, set);
+  }
+
+  let sumSq = 0;
+  let n = 0;
+  for (const f of actFacts) {
+    if (typeof f !== "object" || f === null) continue;
+    const obj = f as Record<string, unknown>;
+    const k = obj.factKey != null ? String(obj.factKey) : null;
+    if (!k) continue;
+    const v = obj.value != null ? String(obj.value).trim().toLowerCase() : "";
+    const conf = typeof obj.confidence === "number" ? obj.confidence : null;
+    if (conf === null || conf < 0 || conf > 1) continue;
+    const expSet = expByKey.get(k);
+    const correct = expSet?.has(v) ? 1 : 0;
+    sumSq += (conf - correct) * (conf - correct);
+    n++;
+  }
+  if (n === 0) return null;
+  return { brierScore: sumSq / n, sampleSize: n };
 }
 
 export function computeFactCoverage(

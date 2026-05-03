@@ -13,7 +13,12 @@ import { RulesEngine, detectContradictions, toFactExtractionRules, extractRawFro
 import type { ExtractedFact, AggregatedFact, TableAst } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
-import { parseLlmJson, findJsonSpan, TargetedFactSchema } from "./utils/llm-json.js";
+import {
+  parseLlmJson,
+  parseLlmJsonWithRetry,
+  findJsonSpan,
+  TargetedFactSchema,
+} from "./utils/llm-json.js";
 
 export const EXCLUDED_SECTION_PREFIXES = ["overview", "admin", "ip.preclinical_clinical_data"];
 export const LOW_CONFIDENCE_THRESHOLD = 0.6;
@@ -182,6 +187,29 @@ async function loadFactSectionPriors(
   return map.size > 0 ? map : null;
 }
 
+/**
+ * Load CalibrationCoefficients from the active `confidence_calibration`
+ * RuleSet. Returns null when no coefficients have been seeded — in that
+ * case the caller falls back to the raw aggregated confidence (no
+ * calibration applied).
+ *
+ * Gated by env `CALIBRATE_CONFIDENCE=true` so that the new calibration
+ * path can be rolled out per-environment without changing baselines.
+ */
+async function loadCalibration(
+  bundleId: string | null,
+): Promise<import("@clinscriptum/rules-engine").CalibrationCoefficients | null> {
+  if ((process.env.CALIBRATE_CONFIDENCE ?? "").toLowerCase() !== "true") return null;
+  const resolved = await loadRulesForType(bundleId, "confidence_calibration");
+  if (!resolved || resolved.rules.length === 0) return null;
+  const cfg = (resolved.rules[0].config ?? {}) as Record<string, unknown>;
+  const alpha = typeof cfg.alpha === "number" ? cfg.alpha : 1.0;
+  const beta = typeof cfg.beta === "number" ? cfg.beta : 0.3;
+  const gamma = typeof cfg.gamma === "number" ? cfg.gamma : 0.15;
+  const prior = (cfg.prior ?? {}) as Partial<Record<string, Partial<Record<string, number>>>>;
+  return { alpha, beta, gamma, prior };
+}
+
 function factMatchesSectionPriors(
   fact: ExtractedFact,
   priors: Map<string, Set<string>>,
@@ -253,7 +281,17 @@ export async function runDeterministic(
   const filtered = sectionPriors
     ? rawCombined.filter((f) => factMatchesSectionPriors(f, sectionPriors, titleToStandard))
     : rawCombined;
-  const extracted: AggregatedFact[] = aggregateByCanonical(filtered);
+  const calibration = await loadCalibration(ctx.bundleId);
+  const extracted: AggregatedFact[] = aggregateByCanonical(
+    filtered,
+    calibration
+      ? {
+          calibration,
+          sectionTypeOf: (src) =>
+            src.sectionTitle ? titleToStandard.get(src.sectionTitle) ?? null : null,
+        }
+      : undefined,
+  );
   const contradictions = detectContradictions(extracted);
 
   const groupedByKey = new Map<string, typeof extracted>();
@@ -482,7 +520,17 @@ ${section.text}`;
         temperature,
       });
       totalTokens += response.usage.totalTokens;
-      const result = parseLlmJson(response.content, TargetedFactSchema);
+      const result = await parseLlmJsonWithRetry(response.content, TargetedFactSchema, async (hint) => {
+        const retryResp = await gateway.generate({
+          system: `${sys}\n\n${hint}`,
+          messages: [{ role: "user", content: user }],
+          maxTokens: llmConfig.maxTokens,
+          responseFormat: "json",
+          temperature,
+        });
+        totalTokens += retryResp.usage.totalTokens;
+        return retryResp.content;
+      });
       if (!result.ok) {
         parseErrors++;
         log.warn("[facts:targeted] Parse error", {
@@ -620,7 +668,21 @@ ${section.text}`;
     recovered.push(factKey);
   }
 
-  const aggregated = aggregateByCanonical(allRaw);
+  const titleToStandardTargeted = new Map<string, string>();
+  for (const s of sections) {
+    if (s.standardSection && s.title) titleToStandardTargeted.set(s.title, s.standardSection);
+  }
+  const calibrationTargeted = await loadCalibration(ctx.bundleId);
+  const aggregated = aggregateByCanonical(
+    allRaw,
+    calibrationTargeted
+      ? {
+          calibration: calibrationTargeted,
+          sectionTypeOf: (src) =>
+            src.sectionTitle ? titleToStandardTargeted.get(src.sectionTitle) ?? null : null,
+        }
+      : undefined,
+  );
 
   // Persist as Fact rows; merge with existing deterministic rows by factKey.
   const existingFacts = await prisma.fact.findMany({ where: { docVersionId: ctx.docVersionId } });
@@ -749,7 +811,13 @@ export async function runLlmCheck(
     })
     .join("\n");
 
-  const systemPrompt = `Ты — эксперт по клиническим протоколам. Извлеки факты из раздела документа.
+  const systemRule = registryRules.find((r) => r.pattern === "system_prompt");
+  const customTemplate = systemRule?.promptTemplate;
+  const fewShotExamples = ((systemRule?.config as Record<string, unknown> | null) ?? {})
+    .fewShotExamples as Record<string, Array<{ input: string; output: string }>> | undefined;
+  const systemPrompt = customTemplate
+    ? customTemplate.replace(/\{\{registryList\}\}/g, registryList)
+    : `Ты — эксперт по клиническим протоколам. Извлеки факты из раздела документа.
 
 Тебе дан реестр известных фактов и текст одного раздела документа.
 Найди значения фактов из реестра, присутствующие в этом разделе.
@@ -808,6 +876,15 @@ ${registryList}
       .map((s) => `[РАЗДЕЛ: ${s.title}]\n${s.text}`)
       .join("\n\n");
 
+    const groupSectionType = group.find((s) => s.standardSection)?.standardSection ?? null;
+    const groupExamples = (groupSectionType && fewShotExamples?.[groupSectionType]) || null;
+    const fewShotBlock = groupExamples && groupExamples.length > 0
+      ? `\n\nПРИМЕРЫ ИЗВЛЕЧЕНИЯ ДЛЯ ПОДОБНОГО РАЗДЕЛА:\n${groupExamples
+          .map((ex, i) => `Пример ${i + 1}:\nВХОД:\n${ex.input}\nВЫХОД:\n${ex.output}`)
+          .join("\n\n")}`
+      : "";
+    const callSystemPrompt = systemPrompt + fewShotBlock;
+
     const userMessage = `РАЗДЕЛ ДОКУМЕНТА: ${group.map((s) => s.title).join(" → ")}
 
 ${sectionText}`;
@@ -820,7 +897,7 @@ ${sectionText}`;
         }
 
         const response = await gateway.generate({
-          system: systemPrompt,
+          system: callSystemPrompt,
           messages: [{ role: "user", content: userMessage }],
           maxTokens: llmConfig.maxTokens,
           responseFormat: "json",
@@ -1040,7 +1117,11 @@ export async function runLlmQa(
     })
     .join("\n");
 
-  const systemPrompt = `Ты — QA-аудитор извлечения фактов из клинического протокола.
+  const qaResolved = await loadRulesForType(ctx.bundleId, "fact_extraction_qa");
+  const qaTemplate = qaResolved?.rules.find((r) => r.pattern === "system_prompt")?.promptTemplate;
+  const systemPrompt =
+    qaTemplate ??
+    `Ты — QA-аудитор извлечения фактов из клинического протокола.
 Тебе даны факты с низкой уверенностью или расхождением между алгоритмом и LLM.
 Для каждого факта:
 1. Проверь правильность значения по тексту документа.

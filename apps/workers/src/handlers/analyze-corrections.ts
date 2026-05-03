@@ -1,4 +1,5 @@
 import { prisma } from "@clinscriptum/db";
+import type { RecommendationType } from "@prisma/client";
 import { logger } from "../lib/logger.js";
 
 const MIN_FREQUENCY_THRESHOLD = 3;
@@ -30,6 +31,8 @@ export async function handleAnalyzeCorrections(data: { tenantId: string }) {
       patternKey: string;
       correctionIds: string[];
       suggestedChange: string;
+      recommendationType: RecommendationType;
+      suggestedChangeData: Record<string, unknown>;
     }
   >();
 
@@ -44,6 +47,12 @@ export async function handleAnalyzeCorrections(data: { tenantId: string }) {
     if (existing) {
       existing.correctionIds.push(correction.id);
     } else {
+      const classification = classifyRecommendation(
+        correction.stage,
+        correction.entityType,
+        correction.originalValue as Record<string, unknown>,
+        correction.correctedValue as Record<string, unknown>,
+      );
       groups.set(groupKey, {
         stage: correction.stage,
         entityType: correction.entityType,
@@ -53,6 +62,8 @@ export async function handleAnalyzeCorrections(data: { tenantId: string }) {
           correction.originalValue as Record<string, unknown>,
           correction.correctedValue as Record<string, unknown>,
         ),
+        recommendationType: classification.type,
+        suggestedChangeData: classification.data,
       });
     }
   }
@@ -96,6 +107,8 @@ export async function handleAnalyzeCorrections(data: { tenantId: string }) {
             pattern: group.patternKey,
             frequency: group.correctionIds.length,
             suggestedChange: group.suggestedChange,
+            recommendationType: group.recommendationType,
+            suggestedChangeData: group.suggestedChangeData as any,
             status: "pending",
           },
         });
@@ -168,6 +181,77 @@ function derivePatternKey(
   });
 
   return parts.join("|");
+}
+
+/**
+ * Phase 5 fact-extraction roadmap: classify a correction so the rule-admin
+ * UI can offer a typed apply-button. Heuristics:
+ *   - extraction stage + value-only change with the new value containing a
+ *     keyword absent from `fact_anchors` for that factKey → `anchor_keyword`
+ *   - extraction stage + same factKey but different normalised value
+ *     → `synonym` (suggests adding a canonicalize alias)
+ *   - extraction stage + change of `standardSection` or section assignment
+ *     → `section_prior`
+ *   - any LLM-stage change → `prompt_template`
+ *   - everything else → `other`
+ *
+ * All branches return `data` containing the structured fields needed to
+ * apply the change (e.g. { factKey, keyword } for anchor_keyword), which
+ * the UI consumes verbatim. We avoid hitting the DB here to keep this
+ * handler hot-loop fast — anchor lookup, etc., happens at apply-time.
+ */
+function classifyRecommendation(
+  stage: string,
+  entityType: string,
+  original: Record<string, unknown>,
+  corrected: Record<string, unknown>,
+): { type: RecommendationType; data: Record<string, unknown> } {
+  const isExtraction = stage === "fact_extraction" || stage === "extraction";
+  const factKey =
+    typeof corrected.factKey === "string"
+      ? (corrected.factKey as string)
+      : typeof original.factKey === "string"
+        ? (original.factKey as string)
+        : undefined;
+
+  if (isExtraction && factKey) {
+    const origVal = typeof original.value === "string" ? original.value : "";
+    const corrVal = typeof corrected.value === "string" ? corrected.value : "";
+    const origSection = original.standardSection ?? original.sectionStandardCode;
+    const corrSection = corrected.standardSection ?? corrected.sectionStandardCode;
+
+    if (origSection !== corrSection && corrSection) {
+      return {
+        type: "section_prior",
+        data: { factKey, expectedSections: [String(corrSection)] },
+      };
+    }
+    if (origVal && corrVal && origVal.toLowerCase() === corrVal.toLowerCase()) {
+      return { type: "other", data: { factKey } };
+    }
+    if (corrVal && !origVal) {
+      const tokens = corrVal
+        .toLowerCase()
+        .split(/[\s,;:.()/-]+/)
+        .filter((t) => t.length >= 4);
+      return {
+        type: "anchor_keyword",
+        data: { factKey, suggestedKeywords: tokens.slice(0, 5) },
+      };
+    }
+    if (origVal && corrVal) {
+      return {
+        type: "synonym",
+        data: { factKey, from: origVal, to: corrVal },
+      };
+    }
+  }
+
+  if (stage.includes("llm") || entityType === "prompt") {
+    return { type: "prompt_template", data: { stage, entityType } };
+  }
+
+  return { type: "other", data: {} };
 }
 
 /**

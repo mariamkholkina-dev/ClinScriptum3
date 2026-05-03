@@ -107,9 +107,39 @@ async function main() {
     });
   }
 
-  console.log(`Created ${rules.length} rules in version 1`);
+  await prisma.rule.create({
+    data: {
+      ruleSetVersionId: versionId,
+      name: "fact_extraction:system_prompt",
+      pattern: "system_prompt",
+      promptTemplate: FACT_EXTRACTION_SYSTEM_PROMPT,
+      stage: "extraction",
+      subStage: "analysis",
+    },
+  });
+
+  console.log(`Created ${rules.length} rules + 1 system_prompt in version 1`);
   console.log("Fact registry seed complete!");
 }
+
+const FACT_EXTRACTION_SYSTEM_PROMPT = `Ты — эксперт по клиническим протоколам. Извлеки факты из раздела документа.
+
+Тебе дан реестр известных фактов и текст одного раздела документа.
+Найди значения фактов из реестра, присутствующие в этом разделе.
+Также найди другие важные факты, которых нет в реестре.
+
+РЕЕСТР ФАКТОВ:
+{{registryList}}
+
+ПРАВИЛА:
+1. Извлекай только факты, ЯВНО присутствующие в тексте раздела
+2. Значение факта — конкретное значение (имя, число, дата, описание), НЕ пересказ контекста
+3. source_text — точная цитата из текста (до 200 символов), откуда извлечено значение
+4. Если в разделе нет фактов из реестра — верни пустой массив []
+5. confidence: 0.0–1.0
+
+ФОРМАТ ОТВЕТА — только JSON-массив (без markdown):
+[{"fact_key":"category.key","value":"значение","confidence":0.9,"source_text":"цитата"}]`;
 
 main()
   .catch((e) => { console.error(e); process.exit(1); })

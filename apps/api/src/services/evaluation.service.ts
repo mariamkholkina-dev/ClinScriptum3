@@ -256,6 +256,8 @@ export const evaluationService = {
     const failed = results.filter((r) => r.status === "fail").length;
     const errors = results.filter((r) => r.status === "error").length;
 
+    const factCoverage = aggregateFactCoverage(results);
+
     return {
       evaluationRunId,
       totalResults,
@@ -264,6 +266,7 @@ export const evaluationService = {
       errors,
       overallPassRate: totalResults > 0 ? passed / totalResults : 0,
       stages: byStage,
+      factCoverage,
     };
   },
 
@@ -439,6 +442,54 @@ function aggregateByStage(
 
 function avg(nums: number[]): number {
   return nums.reduce((s, n) => s + n, 0) / nums.length;
+}
+
+export interface CoverageEntry {
+  expected: number;
+  extracted: number;
+  matched: number;
+}
+
+/**
+ * Aggregate per-factKey coverage across all evaluation results in a run.
+ * Reads `coverageByFactKey` (set by the workers' fact_extraction stage),
+ * sums expected/extracted/matched per factKey, derives recall = matched /
+ * expected. Returns null when no result carries coverage data — keeps
+ * the dashboard's "no fact-extraction stage in this run" branch obvious.
+ */
+function aggregateFactCoverage(
+  results: Array<{ stage: string; coverageByFactKey?: unknown }>,
+): { byFactKey: Record<string, CoverageEntry & { recall: number }>; overallRecall: number } | null {
+  const byKey = new Map<string, CoverageEntry>();
+  let any = false;
+  for (const r of results) {
+    const cov = r.coverageByFactKey as Record<string, CoverageEntry> | null | undefined;
+    if (!cov || typeof cov !== "object") continue;
+    any = true;
+    for (const [key, v] of Object.entries(cov)) {
+      if (!v || typeof v !== "object") continue;
+      const cur = byKey.get(key) ?? { expected: 0, extracted: 0, matched: 0 };
+      cur.expected += v.expected ?? 0;
+      cur.extracted += v.extracted ?? 0;
+      cur.matched += v.matched ?? 0;
+      byKey.set(key, cur);
+    }
+  }
+  if (!any) return null;
+
+  const out: Record<string, CoverageEntry & { recall: number }> = {};
+  let totalExpected = 0;
+  let totalMatched = 0;
+  for (const [key, v] of byKey) {
+    const recall = v.expected > 0 ? v.matched / v.expected : 0;
+    out[key] = { ...v, recall };
+    totalExpected += v.expected;
+    totalMatched += v.matched;
+  }
+  return {
+    byFactKey: out,
+    overallRecall: totalExpected > 0 ? totalMatched / totalExpected : 0,
+  };
 }
 
 function safeDelta(a: number | null, b: number | null): number | null {

@@ -1129,7 +1129,8 @@ model EvaluationResult {
   latencyMs  Int?     @map("latency_ms")
   tokenCost  Float?   @map("token_cost")
 
-  coverageByFactKey Json? @map("coverage_by_fact_key") @db.JsonB
+  coverageByFactKey  Json? @map("coverage_by_fact_key") @db.JsonB
+  confidenceMetrics  Json? @map("confidence_metrics") @db.JsonB
 
   evaluationRun EvaluationRun @relation(fields: [evaluationRunId], references: [id], onDelete: Cascade)
   goldenSample  GoldenSample  @relation(fields: [goldenSampleId], references: [id], onDelete: Cascade)
@@ -1178,18 +1179,20 @@ model CorrectionRecord {
 }
 
 model CorrectionRecommendation {
-  id              String                       @id @default(uuid()) @db.Uuid
-  tenantId        String                       @map("tenant_id") @db.Uuid
-  stage           String
-  pattern         String
-  frequency       Int                          @default(0)
-  suggestedChange String                       @map("suggested_change")
-  affectedRuleId  String?                      @map("affected_rule_id") @db.Uuid
-  status          CorrectionRecommendationStatus @default(pending)
-  reviewedById    String?                      @map("reviewed_by_id") @db.Uuid
-  reviewedAt      DateTime?                    @map("reviewed_at")
-  comment         String?
-  createdAt       DateTime                     @default(now()) @map("created_at")
+  id                  String                       @id @default(uuid()) @db.Uuid
+  tenantId            String                       @map("tenant_id") @db.Uuid
+  stage               String
+  pattern             String
+  frequency           Int                          @default(0)
+  suggestedChange     String                       @map("suggested_change")
+  recommendationType  RecommendationType?          @map("recommendation_type")
+  suggestedChangeData Json?                        @map("suggested_change_data") @db.JsonB
+  affectedRuleId      String?                      @map("affected_rule_id") @db.Uuid
+  status              CorrectionRecommendationStatus @default(pending)
+  reviewedById        String?                      @map("reviewed_by_id") @db.Uuid
+  reviewedAt          DateTime?                    @map("reviewed_at")
+  comment             String?
+  createdAt           DateTime                     @default(now()) @map("created_at")
 
   reviewedBy  User?              @relation("RecommendationReviewer", fields: [reviewedById], references: [id])
   corrections CorrectionRecord[]
@@ -1204,6 +1207,14 @@ enum CorrectionRecommendationStatus {
   accepted
   rejected
   implemented
+}
+
+enum RecommendationType {
+  anchor_keyword
+  synonym
+  section_prior
+  prompt_template
+  other
 }
 
 // ─── Approval Workflow ──────────────────────────────────────
