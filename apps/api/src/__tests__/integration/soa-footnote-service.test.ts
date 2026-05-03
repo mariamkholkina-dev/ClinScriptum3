@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { soaFootnoteService } from "../../services/soa-footnote.service.js";
-import { processingService } from "../../services/processing.service.js";
 import { DomainError } from "../../services/errors.js";
 import { verifyAccessToken } from "../../lib/auth.js";
 import { createCaller, registerUser, cleanupTestData, prisma } from "./helpers.js";
@@ -45,7 +44,6 @@ async function setupTenantWithSoa(emailPrefix: string, orgName: string): Promise
       status: "detected",
       headerData: { visits: ["Visit 1", "Visit 2"] },
       rawMatrix: [["Procedure", "V1", "V2"]],
-      footnotes: [],
     },
   });
 
@@ -91,11 +89,8 @@ describe("soaFootnoteService (integration)", () => {
 
   beforeEach(async () => {
     // Each test starts with a clean footnote slate for tenant A.
+    // soa_footnote_anchors cascade with the parent footnote.
     await prisma.soaFootnote.deleteMany({ where: { soaTableId: ctxA.soaTableId } });
-    await prisma.soaCell.update({
-      where: { id: ctxA.cellId },
-      data: { footnoteRefs: [] },
-    });
   });
 
   describe("create + listForTable", () => {
@@ -129,12 +124,6 @@ describe("soaFootnoteService (integration)", () => {
       ).rejects.toMatchObject({ code: "CONFLICT" });
     });
 
-    it("syncs legacy SoaTable.footnotes on create", async () => {
-      await soaFootnoteService.create(ctxA.tenantId, ctxA.soaTableId, "1", "First");
-      await soaFootnoteService.create(ctxA.tenantId, ctxA.soaTableId, "*", "Second");
-      const t = await prisma.soaTable.findUniqueOrThrow({ where: { id: ctxA.soaTableId } });
-      expect(t.footnotes).toEqual(["First", "Second"]);
-    });
   });
 
   describe("linkAnchor", () => {
@@ -194,7 +183,7 @@ describe("soaFootnoteService (integration)", () => {
       ).rejects.toThrow(DomainError);
     });
 
-    it("syncs legacy footnoteRefs on the cell when a cell anchor is linked", async () => {
+    it("creates one anchor per linked footnote on the same cell", async () => {
       const fn1 = await soaFootnoteService.create(ctxA.tenantId, ctxA.soaTableId, "1", "");
       const fn2 = await soaFootnoteService.create(ctxA.tenantId, ctxA.soaTableId, "2", "");
       await soaFootnoteService.linkAnchor(ctxA.tenantId, fn1.id, {
@@ -205,8 +194,11 @@ describe("soaFootnoteService (integration)", () => {
         type: "cell",
         cellId: ctxA.cellId,
       });
-      const cell = await prisma.soaCell.findUniqueOrThrow({ where: { id: ctxA.cellId } });
-      expect(cell.footnoteRefs).toEqual([0, 1]);
+      const anchors = await prisma.soaFootnoteAnchor.findMany({
+        where: { cellId: ctxA.cellId, targetType: "cell" },
+        include: { footnote: true },
+      });
+      expect(anchors.map((a) => a.footnote.marker).sort()).toEqual(["1", "2"]);
     });
   });
 
@@ -221,63 +213,10 @@ describe("soaFootnoteService (integration)", () => {
 
       const remaining = await prisma.soaFootnoteAnchor.count({ where: { footnoteId: fn.id } });
       expect(remaining).toBe(0);
-      const cell = await prisma.soaCell.findUniqueOrThrow({ where: { id: ctxA.cellId } });
-      expect(cell.footnoteRefs).toEqual([]);
-    });
-  });
-
-  describe("legacy shim — processingService.updateSoaCellFootnoteRefs", () => {
-    it("creates SoaFootnoteAnchor rows for each markerOrder reference", async () => {
-      await soaFootnoteService.create(ctxA.tenantId, ctxA.soaTableId, "1", "First");
-      await soaFootnoteService.create(ctxA.tenantId, ctxA.soaTableId, "*", "Optional");
-
-      await processingService.updateSoaCellFootnoteRefs(
-        ctxA.tenantId,
-        ctxA.cellId,
-        [0, 1],
-      );
-
-      const anchors = await prisma.soaFootnoteAnchor.findMany({
+      const cellAnchors = await prisma.soaFootnoteAnchor.count({
         where: { cellId: ctxA.cellId, targetType: "cell" },
       });
-      expect(anchors).toHaveLength(2);
-
-      const cell = await prisma.soaCell.findUniqueOrThrow({ where: { id: ctxA.cellId } });
-      expect(cell.footnoteRefs).toEqual([0, 1]);
-    });
-
-    it("removes existing cell anchors before applying new refs", async () => {
-      const fn1 = await soaFootnoteService.create(ctxA.tenantId, ctxA.soaTableId, "1", "");
-      await soaFootnoteService.create(ctxA.tenantId, ctxA.soaTableId, "*", "");
-      await soaFootnoteService.linkAnchor(ctxA.tenantId, fn1.id, {
-        type: "cell",
-        cellId: ctxA.cellId,
-      });
-
-      await processingService.updateSoaCellFootnoteRefs(ctxA.tenantId, ctxA.cellId, [1]);
-
-      const anchors = await prisma.soaFootnoteAnchor.findMany({
-        where: { cellId: ctxA.cellId, targetType: "cell" },
-      });
-      expect(anchors).toHaveLength(1);
-      const cell = await prisma.soaCell.findUniqueOrThrow({ where: { id: ctxA.cellId } });
-      expect(cell.footnoteRefs).toEqual([1]);
-    });
-  });
-
-  describe("legacy shim — processingService.updateSoaTableFootnotes", () => {
-    it("recreates SoaFootnote rows from the string array, source=manual", async () => {
-      await processingService.updateSoaTableFootnotes(ctxA.tenantId, ctxA.soaTableId, [
-        "First note",
-        "Second note",
-      ]);
-      const fns = await prisma.soaFootnote.findMany({
-        where: { soaTableId: ctxA.soaTableId },
-        orderBy: { markerOrder: "asc" },
-      });
-      expect(fns.map((f) => f.marker)).toEqual(["1", "2"]);
-      expect(fns.map((f) => f.text)).toEqual(["First note", "Second note"]);
-      expect(fns.every((f) => f.source === "manual")).toBe(true);
+      expect(cellAnchors).toBe(0);
     });
   });
 });

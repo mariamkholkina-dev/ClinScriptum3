@@ -8,6 +8,30 @@
 - Убран `invalidate` из `onSettled` обоих мутаций (`markFalseHeading`, `updateExpected`). При быстрых последовательных кликах `invalidate` завершившейся мутации запускал refetch, который перезаписывал кеш данными до того как сервер успел применить ещё pending мутации — optimistic-патчи терялись и строки в overlay не исчезали.
 - `invalidate` теперь делается только в `onError`, для синхронизации с сервером после неудачи. Поскольку наш optimistic patch идентичен ожидаемому состоянию сервера, явный refetch на success не нужен.
 
+### Спринт 5 SoA cleanup — итог
+
+**Commit 1/2 — drop legacy SoA footnote fields and endpoints:**
+
+`SoaTable.footnotes: Json string[]` и `SoaCell.footnoteRefs: Json number[]` были помечены `@deprecated` в Sprint 1 и работали как backward-compat fallback через шим-функции. Шимы удалены, колонки дропнуты, deprecated-endpoints `processing.updateSoaCellFootnoteRefs` / `updateSoaTableFootnotes` удалены вместе с service-методами. `SoaFootnote` / `SoaFootnoteAnchor` (Sprint 1) — единственное хранилище.
+
+- Миграция `20260503180000_drop_legacy_soa_footnote_fields` (`ALTER TABLE … DROP COLUMN`). Применена в dev и test БД.
+- `apps/api/src/routers/processing.ts` — удалены legacy endpoints вместе с импортом `logger`.
+- `apps/api/src/services/processing.service.ts` — удалены методы-шимы.
+- `apps/api/src/services/soa-footnote.service.ts` — удалены `syncLegacyTableFootnotes` и `syncLegacyCellFootnoteRefs` helpers и все их вызовы (cascade FK на анкорах справляется сам).
+- `packages/shared/src/soa-detection-core.ts` — удалено deprecated поле `SoaDetectionResult.footnotes: string[]`, `persistSoaTables` упрощён.
+- `apps/rule-admin/.../SoaViewer.tsx` — удалён `SoaCell.footnoteRefs`. Маркер-суперскрипт на ячейке теперь рендерится через `cellIdToMarkers` Map из `table.soaFootnotes[].anchors`. Helper `buildOrderToMarker` удалён.
+- Тесты: legacy-shim describe-блоки и assertions на удалённые поля удалены/переписаны.
+
+**Commit 2/2 — golden-set SoA metrics page:**
+
+`apps/rule-admin/src/app/(app)/soa/page.tsx` — полная замена placeholder. 4 summary-карточки, фильтры по типу документа и статусу, таблица всех SoA-таблиц tenant'а с метриками (score, visits/cells/footnotes/anchors/drawings counts, orientation badges, verification level + LLM confidence %, status, link на golden-dataset).
+
+Новый endpoint `processing.listSoaTablesOverview` в API: один запрос с `_count` per SoaTable, nested select по docVersion → document → study. Реальные F1 метрики (precision/recall на ячейках/визитах/процедурах/сносках) откладываются — нужна evaluation infrastructure с expected golden samples.
+
+UI extraction в shared package остаётся как followup: ~830 строк рефакторинга `SoaViewer` + workspace setup, экономнее делать отдельным спринтом когда apps/web SoaTab будет готов потреблять shared component.
+
+Sprint 5 завершён. Все 5 спринтов SoA-инициативы (footnotes → orientation → drawings → LLM verification → cleanup) merged в master.
+
 ### Optimistic update в Diff overlay Парсинга
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx`:

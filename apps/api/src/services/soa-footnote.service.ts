@@ -52,29 +52,6 @@ async function nextMarkerOrder(soaTableId: string): Promise<number> {
   return last ? last.markerOrder + 1 : 0;
 }
 
-async function syncLegacyTableFootnotes(soaTableId: string): Promise<void> {
-  const footnotes = await prisma.soaFootnote.findMany({
-    where: { soaTableId },
-    orderBy: { markerOrder: "asc" },
-    select: { text: true },
-  });
-  await prisma.soaTable.update({
-    where: { id: soaTableId },
-    data: { footnotes: footnotes.map((f) => f.text) },
-  });
-}
-
-async function syncLegacyCellFootnoteRefs(cellId: string): Promise<void> {
-  const anchors = await prisma.soaFootnoteAnchor.findMany({
-    where: { cellId, targetType: "cell" },
-    include: { footnote: { select: { markerOrder: true } } },
-  });
-  const refs = anchors
-    .map((a) => a.footnote.markerOrder)
-    .sort((a, b) => a - b);
-  await prisma.soaCell.update({ where: { id: cellId }, data: { footnoteRefs: refs } });
-}
-
 export const soaFootnoteService = {
   async listForTable(tenantId: string, soaTableId: string) {
     const table = await loadTableWithTenant(soaTableId);
@@ -119,7 +96,6 @@ export const soaFootnoteService = {
       },
     });
 
-    await syncLegacyTableFootnotes(soaTableId);
     return created;
   },
 
@@ -159,7 +135,6 @@ export const soaFootnoteService = {
       where: { id: footnoteId },
       data,
     });
-    await syncLegacyTableFootnotes(footnote.soaTableId);
     return updated;
   },
 
@@ -171,18 +146,8 @@ export const soaFootnoteService = {
       (f) => f.soaTable.docVersion.document.study.tenantId,
     );
 
-    // Collect cellIds that need legacy footnoteRefs resync after delete.
-    const cellAnchors = await prisma.soaFootnoteAnchor.findMany({
-      where: { footnoteId, targetType: "cell" },
-      select: { cellId: true },
-    });
-    const cellIds = cellAnchors
-      .map((a) => a.cellId)
-      .filter((id): id is string => id != null);
-
+    // Anchors cascade with the footnote via the FK in schema.prisma.
     await prisma.soaFootnote.delete({ where: { id: footnoteId } });
-    await syncLegacyTableFootnotes(footnote.soaTableId);
-    for (const cellId of cellIds) await syncLegacyCellFootnoteRefs(cellId);
     return { ok: true as const };
   },
 
@@ -221,10 +186,6 @@ export const soaFootnoteService = {
         source: "manual",
       },
     });
-
-    if (target.type === "cell") {
-      await syncLegacyCellFootnoteRefs(target.cellId);
-    }
     return anchor;
   },
 
@@ -236,9 +197,7 @@ export const soaFootnoteService = {
       (a) => a.soaTable.docVersion.document.study.tenantId,
     );
 
-    const cellId = anchor.cellId;
     await prisma.soaFootnoteAnchor.delete({ where: { id: anchorId } });
-    if (cellId) await syncLegacyCellFootnoteRefs(cellId);
     return { ok: true as const };
   },
 };

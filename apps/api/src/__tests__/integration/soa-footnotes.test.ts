@@ -173,30 +173,6 @@ describe("SoA footnote detection (integration)", () => {
     expect(fnStarCell?.rawValue).toBe("X");
   });
 
-  it("syncs legacy SoaTable.footnotes string array", async () => {
-    const table = await prisma.soaTable.findUniqueOrThrow({ where: { id: tableId } });
-    const legacy = table.footnotes as string[];
-    expect(legacy).toHaveLength(3);
-    expect(legacy[0]).toContain("After signing ICF");
-  });
-
-  it("syncs legacy SoaCell.footnoteRefs as markerOrder arrays", async () => {
-    const cells = await prisma.soaCell.findMany({
-      where: { soaTableId: tableId },
-    });
-    const fn1Cell = cells.find(
-      (c) => c.procedureName === "Vital signs" && c.colIndex === 2,
-    );
-    expect(fn1Cell).toBeDefined();
-    expect(fn1Cell!.footnoteRefs).toEqual([0]); // marker '1' has markerOrder 0
-
-    const fnStarCell = cells.find(
-      (c) => c.procedureName === "ECG" && c.colIndex === 1,
-    );
-    expect(fnStarCell).toBeDefined();
-    expect(fnStarCell!.footnoteRefs).toEqual([1]); // marker '*' has markerOrder 1
-  });
-
   it("cascade-deletes footnotes and anchors when SoaTable is removed", async () => {
     await prisma.soaTable.delete({ where: { id: tableId } });
     const fn = await prisma.soaFootnote.count({ where: { soaTableId: tableId } });

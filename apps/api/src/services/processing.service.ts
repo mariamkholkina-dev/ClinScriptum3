@@ -423,6 +423,60 @@ export const processingService = {
     });
   },
 
+  async listSoaTablesOverview(tenantId: string) {
+    const tables = await prisma.soaTable.findMany({
+      where: { docVersion: { document: { study: { tenantId } } } },
+      include: {
+        docVersion: {
+          select: {
+            id: true,
+            versionNumber: true,
+            versionLabel: true,
+            document: {
+              select: {
+                id: true,
+                title: true,
+                type: true,
+                study: { select: { id: true, title: true } },
+              },
+            },
+          },
+        },
+        _count: { select: { cells: true, soaFootnotes: true, footnoteAnchors: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return tables.map((t) => {
+      const headerData = t.headerData as { visits?: string[] } | null;
+      const drawings = Array.isArray(t.drawings) ? (t.drawings as unknown[]) : [];
+      return {
+        id: t.id,
+        title: t.title,
+        soaScore: t.soaScore,
+        status: t.status,
+        orientation: t.orientation,
+        orientationConflict: t.orientationConflict,
+        verificationLevel: t.verificationLevel,
+        llmConfidence: t.llmConfidence,
+        cellCount: t._count.cells,
+        footnoteCount: t._count.soaFootnotes,
+        anchorCount: t._count.footnoteAnchors,
+        drawingCount: drawings.length,
+        visitCount: headerData?.visits?.length ?? 0,
+        document: {
+          id: t.docVersion.document.id,
+          title: t.docVersion.document.title,
+          type: t.docVersion.document.type,
+          versionId: t.docVersion.id,
+          versionNumber: t.docVersion.versionNumber,
+          versionLabel: t.docVersion.versionLabel,
+          study: t.docVersion.document.study,
+        },
+        createdAt: t.createdAt,
+      };
+    });
+  },
+
   async getSoaData(tenantId: string, docVersionId: string) {
     const version = await prisma.documentVersion.findUnique({
       where: { id: docVersionId },
@@ -506,116 +560,6 @@ export const processingService = {
       where: { id: soaTableId },
       data: { status },
     });
-  },
-
-  /**
-   * @deprecated Use `soaFootnote.linkAnchor` / `unlinkAnchor` instead.
-   * Kept until Sprint 5; this shim mirrors the change into the
-   * normalized `soa_footnote_anchors` table so new readers stay in sync.
-   */
-  async updateSoaCellFootnoteRefs(
-    tenantId: string,
-    cellId: string,
-    footnoteRefs: number[],
-  ) {
-    const cell = await prisma.soaCell.findUnique({
-      where: { id: cellId },
-      include: {
-        soaTable: {
-          include: { docVersion: { include: { document: { include: { study: true } } } } },
-        },
-      },
-    });
-    requireTenantResource(cell, tenantId, (c) => c.soaTable.docVersion.document.study.tenantId);
-
-    const sortedRefs = [...new Set(footnoteRefs)].sort((a, b) => a - b);
-
-    await prisma.$transaction(async (tx) => {
-      // Drop existing cell-typed anchors for this cell.
-      await tx.soaFootnoteAnchor.deleteMany({
-        where: { cellId, targetType: "cell" },
-      });
-
-      if (sortedRefs.length > 0) {
-        const footnotes = await tx.soaFootnote.findMany({
-          where: {
-            soaTableId: cell.soaTableId,
-            markerOrder: { in: sortedRefs },
-          },
-          select: { id: true, markerOrder: true },
-        });
-        const data = footnotes.map((f) => ({
-          footnoteId: f.id,
-          soaTableId: cell.soaTableId,
-          targetType: "cell" as const,
-          cellId,
-          rowIndex: null,
-          colIndex: null,
-          confidence: 1.0,
-          source: "manual" as const,
-        }));
-        if (data.length > 0) {
-          await tx.soaFootnoteAnchor.createMany({ data, skipDuplicates: true });
-        }
-      }
-
-      await tx.soaCell.update({
-        where: { id: cellId },
-        data: { footnoteRefs: sortedRefs },
-      });
-    });
-
-    return prisma.soaCell.findUniqueOrThrow({ where: { id: cellId } });
-  },
-
-  /**
-   * @deprecated Use `soaFootnote.create` / `update` / `delete` instead.
-   * Kept until Sprint 5; this shim rewrites the normalized
-   * `soa_footnotes` rows for the table from scratch (manual source) and
-   * preserves `markerOrder` = array index for stable ordering.
-   */
-  async updateSoaTableFootnotes(
-    tenantId: string,
-    soaTableId: string,
-    footnotes: string[],
-  ) {
-    const table = await prisma.soaTable.findUnique({
-      where: { id: soaTableId },
-      include: { docVersion: { include: { document: { include: { study: true } } } } },
-    });
-    requireTenantResource(table, tenantId, (t) => t.docVersion.document.study.tenantId);
-
-    await prisma.$transaction(async (tx) => {
-      // Clear existing footnotes (cascades to anchors).
-      await tx.soaFootnote.deleteMany({ where: { soaTableId } });
-
-      if (footnotes.length > 0) {
-        await tx.soaFootnote.createMany({
-          data: footnotes.map((text, idx) => ({
-            soaTableId,
-            marker: String(idx + 1),
-            markerOrder: idx,
-            text,
-            source: "manual" as const,
-          })),
-        });
-      }
-
-      await tx.soaTable.update({
-        where: { id: soaTableId },
-        data: { footnotes },
-      });
-
-      // Existing legacy footnoteRefs on cells now point to (possibly)
-      // different markerOrders; recompute them from anchors which were
-      // cascade-deleted above so each cell ends up with [].
-      await tx.soaCell.updateMany({
-        where: { soaTableId },
-        data: { footnoteRefs: [] },
-      });
-    });
-
-    return prisma.soaTable.findUniqueOrThrow({ where: { id: soaTableId } });
   },
 
   async addSoaVisit(
