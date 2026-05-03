@@ -2,6 +2,14 @@
 
 ## 2026-05-03
 
+### UX: разрешение дубликатов title в Diff overlay Парсинга
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/`:
+- `DiffEntry` получил поле `actualSectionId?: string` — id реальной секции для extra/wrong_level записей. Без него при дубликатах title в документе нельзя было однозначно сопоставить запись overlay с конкретной секцией дерева.
+- `ParsingDiffOverlay` теперь резолвит секцию по `actualSectionId` (приоритет) и только при отсутствии — fallback на title-map. Это чинит сценарий когда у документа есть несколько секций с одинаковым названием — после пометки одной копии «Не заголовок» вторая корректно остаётся в overlay (раньше была неоднозначность какая копия попала в diff).
+- В строке overlay добавлен бейдж `№<numbering>` (иерархическая нумерация как в дереве) — эксперт сразу видит, какая именно секция в документе попала в diff. Полезно когда в документе несколько секций с одинаковым title (например, повторяющиеся «1 шаг титрации (на день 4)» в разных частях документа).
+- Кнопка прыжка `↳` теперь ведёт ровно к той секции, что в overlay (а не к последней с таким title).
+
 ### Fix: race condition в optimistic update Diff overlay
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx`:

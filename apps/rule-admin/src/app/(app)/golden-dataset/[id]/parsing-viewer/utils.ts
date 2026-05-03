@@ -172,6 +172,7 @@ export function diffWithExpected(
           sectionTitle: exp.title,
           expected: { level: exp.level, order: 0 },
           actual: { level: anyMatch.level, order: anyMatch.order },
+          actualSectionId: anyMatch.id,
         });
       }
     }
@@ -183,6 +184,7 @@ export function diffWithExpected(
         type: "extra",
         sectionTitle: s.title,
         actual: { level: s.level, order: s.order },
+        actualSectionId: s.id,
       });
     }
   }
