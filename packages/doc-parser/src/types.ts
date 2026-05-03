@@ -21,6 +21,12 @@ export interface ParsedDocument {
    * cells. Empty when the parser was called without a DOCX buffer.
    */
   tableGeometries: TableGeometry[];
+  /**
+   * Bodies of `<w:footnote w:id="N">` from `word/footnotes.xml`,
+   * indexed by `id`. Empty when the file is missing or the parser
+   * was called without a DOCX buffer.
+   */
+  wordFootnotes: Record<string, string>;
   metadata: Record<string, string>;
 }
 

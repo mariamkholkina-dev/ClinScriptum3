@@ -43,6 +43,14 @@ export interface CellRect {
   colSpan?: number;
   /** rowspan from `<w:vMerge>` chain, default 1. */
   rowSpan?: number;
+  /**
+   * Word native footnote ids (`<w:footnoteReference w:id="N">`) found
+   * anywhere inside this `<w:tc>`. Used to attach footnote anchors to
+   * SoA cells when mammoth has lost the inline `<sup>` ref. Body text
+   * comes from `word/footnotes.xml` via `extractWordFootnotes`.
+   * Undefined when the cell contains no footnote refs.
+   */
+  footnoteRefs?: string[];
 }
 
 export interface TableGeometry {
@@ -65,6 +73,33 @@ interface XmlNode {
 function asArray<T>(v: T | T[] | undefined): T[] {
   if (v == null) return [];
   return Array.isArray(v) ? v : [v];
+}
+
+/**
+ * Recursively walk a `<w:tc>` subtree gathering every `w:id` of every
+ * `<w:footnoteReference>`. Mammoth drops these refs whenever the body is
+ * non-trivial; we recover them so the SoA detector can still attach
+ * footnote anchors to the right cell.
+ */
+function collectFootnoteRefIds(node: unknown, out: string[]): void {
+  if (node == null) return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectFootnoteRefIds(item, out);
+    return;
+  }
+  if (typeof node !== "object") return;
+  const obj = node as XmlNode;
+  const refs = asArray(
+    obj.footnoteReference as XmlNode | XmlNode[] | undefined,
+  );
+  for (const ref of refs) {
+    const id = ref["@_w:id"] ?? ref["@_id"];
+    if (id != null) out.push(String(id));
+  }
+  for (const key of Object.keys(obj)) {
+    if (key === "footnoteReference" || key.startsWith("@_") || key === "#text") continue;
+    collectFootnoteRefIds(obj[key], out);
+  }
 }
 
 function parseDxa(raw: unknown): number {
@@ -266,6 +301,9 @@ export function extractTableGeometry(xmlText: string): TableGeometry[] {
         const cxEmu = (xs[gridCol + colSpan] ?? xs[xs.length - 1]) - xEmu;
         const cyEmu = (ys[rowIdx + rowSpan] ?? ys[ys.length - 1]) - yEmu;
 
+        const fnRefs: string[] = [];
+        collectFootnoteRefIds(tc, fnRefs);
+
         cells[rowIdx][gridCol] = {
           rowIndex: rowIdx,
           colIndex: gridCol,
@@ -275,6 +313,7 @@ export function extractTableGeometry(xmlText: string): TableGeometry[] {
           cyEmu,
           colSpan,
           rowSpan,
+          ...(fnRefs.length > 0 ? { footnoteRefs: fnRefs } : {}),
         };
 
         // Mark the entire merged region as covered so subsequent

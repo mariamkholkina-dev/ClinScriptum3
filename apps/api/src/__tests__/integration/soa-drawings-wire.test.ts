@@ -259,6 +259,55 @@ describe("SoA drawings wire-up (integration)", () => {
     await cleanupTestData();
   });
 
+  it("native Word footnote refs in cellGeometry create wfn-N anchors with bodies from wordFootnotes", async () => {
+    // Inject footnoteRefs into the geometry of one cell and provide a
+    // matching body via wordFootnotes. The detector must produce a
+    // SoaFootnote with marker `wfn-1` and body, and a SoaFootnoteAnchor
+    // pointing at the (rowIndex, colIndex) cell.
+    const geom = makeGeometry() as Array<{
+      tableIndex: number;
+      cells: Array<Array<{ rowIndex: number; colIndex: number; xEmu: number; yEmu: number; cxEmu: number; cyEmu: number; footnoteRefs?: string[] } | null>>;
+    }>;
+    // Geometry row 3 = Vital signs (after header rows 0..1). Add fn ref
+    // to col 1 (Visit 1).
+    geom[0].cells[3][1]!.footnoteRefs = ["1"];
+
+    versionId = await setupVersionWithSoa({
+      drawings: [],
+      tableGeometries: geom,
+      // @ts-expect-error wordFootnotes is a valid digitalTwin extension picked up by detectSoaForVersion
+      wordFootnotes: { "1": "Performed before drug administration." },
+    });
+    await detectSoaForVersion(versionId, silentLogger);
+
+    const tables = await prisma.soaTable.findMany({
+      where: { docVersionId: versionId },
+      include: { soaFootnotes: true, footnoteAnchors: true },
+    });
+    expect(tables).toHaveLength(1);
+    const fn = tables[0].soaFootnotes.find((f) => f.marker === "wfn-1");
+    expect(fn).toBeDefined();
+    expect(fn!.text).toBe("Performed before drug administration.");
+
+    const anchor = tables[0].footnoteAnchors.find(
+      (a) => a.footnoteId === fn!.id,
+    );
+    expect(anchor).toBeDefined();
+    expect(anchor!.targetType).toBe("cell");
+    // For cell-typed anchors persistSoaTables stores the resolved
+    // cellId; row/colIndex stay null. Look up the cell to verify the
+    // anchor lands on Vital signs / Visit 1.
+    expect(anchor!.cellId).not.toBeNull();
+    const cell = await prisma.soaCell.findUnique({
+      where: { id: anchor!.cellId! },
+    });
+    expect(cell).not.toBeNull();
+    expect(cell!.procedureName).toBe("Vital signs");
+    // Multi-level header builder joins the visit name with the day row.
+    expect(cell!.visitName).toContain("Visit 1");
+    await cleanupTestData();
+  });
+
   it("ignores image drawings", async () => {
     const drawing = {
       type: "image",

@@ -94,11 +94,6 @@ async function setupVersionWith(
   return { versionId: version.id, caller };
 }
 
-// Integration tests perform user registration, document/version setup,
-// SoA detection (which can call LLM verification skipped without API
-// key but still hits Prisma several times). Stay generous on timeout.
-const T = 30_000;
-
 describe("SoA continuation merge (integration)", () => {
   beforeAll(async () => {
     await cleanupTestData();
@@ -108,7 +103,7 @@ describe("SoA continuation merge (integration)", () => {
     await prisma.$disconnect();
   });
 
-  it("two identical-header tables in one section merge into one SoaTable", { timeout: T }, async () => {
+  it("two identical-header tables in one section merge into one SoaTable", async () => {
     const { versionId } = await setupVersionWith(
       "soa-merge-pair@example.com",
       "Merge Pair",
@@ -139,7 +134,7 @@ describe("SoA continuation merge (integration)", () => {
     await cleanupTestData();
   });
 
-  it("tables with different visits do NOT merge", { timeout: T }, async () => {
+  it("tables with different visits do NOT merge", async () => {
     const { versionId } = await setupVersionWith(
       "soa-merge-diff@example.com",
       "Merge Diff",
@@ -164,7 +159,7 @@ describe("SoA continuation merge (integration)", () => {
     await cleanupTestData();
   });
 
-  it("trio merge: 3 identical-header tables in one section produce one SoaTable", { timeout: T }, async () => {
+  it("trio merge: 3 identical-header tables in one section produce one SoaTable", async () => {
     const TABLE_PART3 = `<table>
       <tr><th>Процедура</th><th>Visit 1</th><th>Visit 2</th><th>Visit 3</th><th>Visit 4</th><th>Visit 5</th></tr>
       <tr><td>Day</td><td>D1</td><td>D7</td><td>D14</td><td>D21</td><td>D28</td></tr>
@@ -197,7 +192,7 @@ describe("SoA continuation merge (integration)", () => {
     await cleanupTestData();
   });
 
-  it("rowIndex of merged cells is contiguous and unique", { timeout: T }, async () => {
+  it("rowIndex of merged cells is contiguous and unique", async () => {
     const { versionId } = await setupVersionWith(
       "soa-merge-rowidx@example.com",
       "Merge RowIdx",

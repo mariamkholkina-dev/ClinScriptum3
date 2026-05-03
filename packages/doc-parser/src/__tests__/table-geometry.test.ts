@@ -247,4 +247,39 @@ describe("extractTableGeometry", () => {
       }
     }
   });
+
+  it("collects footnoteRefs from <w:footnoteReference w:id> inside cells", () => {
+    const xml = wrap(`
+      <w:tbl>
+        <w:tblGrid>
+          <w:gridCol w:w="2000"/>
+          <w:gridCol w:w="2000"/>
+        </w:tblGrid>
+        <w:tr>
+          <w:tc>
+            <w:p><w:r><w:t>X</w:t><w:footnoteReference w:id="1"/></w:r></w:p>
+          </w:tc>
+          <w:tc>
+            <w:p><w:r><w:t>Y</w:t></w:r></w:p>
+          </w:tc>
+        </w:tr>
+        <w:tr>
+          <w:tc>
+            <w:p>
+              <w:r><w:t>Z</w:t><w:footnoteReference w:id="2"/></w:r>
+              <w:r><w:footnoteReference w:id="3"/></w:r>
+            </w:p>
+          </w:tc>
+          <w:tc><w:p><w:r><w:t>W</w:t></w:r></w:p></w:tc>
+        </w:tr>
+      </w:tbl>
+    `);
+    const result = extractTableGeometry(xml);
+    expect(result).toHaveLength(1);
+    const cells = result[0].cells;
+    expect(cells[0][0]?.footnoteRefs).toEqual(["1"]);
+    expect(cells[0][1]?.footnoteRefs).toBeUndefined();
+    expect(cells[1][0]?.footnoteRefs).toEqual(["2", "3"]);
+    expect(cells[1][1]?.footnoteRefs).toBeUndefined();
+  });
 });

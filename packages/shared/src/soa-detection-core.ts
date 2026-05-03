@@ -217,9 +217,18 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
       prstGeom?: string;
     }>;
     tableGeometries?: TableGeometry[];
+    /**
+     * Bodies of `<w:footnote w:id="N">` from `word/footnotes.xml`,
+     * indexed by `id`. Populated by parseDocx (Sprint 6 commit 5).
+     * Cells whose `<w:tc>` contained `<w:footnoteReference w:id="N">`
+     * gain a footnote anchor with `marker="wfn-N"` and the body text
+     * pulled from this map.
+     */
+    wordFootnotes?: Record<string, string>;
   };
   const allDrawings = digitalTwin.drawings ?? [];
   const allGeometries = digitalTwin.tableGeometries ?? [];
+  const wordFootnotes = digitalTwin.wordFootnotes ?? {};
 
   const soaTables: SoaDetectionResult[] = [];
 
@@ -306,6 +315,54 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
         tableIndex: candidateIdx,
         overrides: overrides.length,
       });
+
+      // Native Word footnotes: dataGeometryReindexed already aligns
+      // with result.matrix coordinates. Pull `<w:footnoteReference>`
+      // ids out of each cellRect; pair them with bodies from
+      // word/footnotes.xml. Marker prefix `wfn-` keeps them disjoint
+      // from inline numeric/symbol markers.
+      const seenWfn = new Set<string>(
+        result.footnoteDefs.map((f) => f.marker),
+      );
+      let wfnAdded = 0;
+      for (let r = 0; r < dataGeometryReindexed.length; r++) {
+        for (let c = 0; c < dataGeometryReindexed[r].length; c++) {
+          const rect = dataGeometryReindexed[r][c];
+          if (!rect?.footnoteRefs?.length) continue;
+          for (const id of rect.footnoteRefs) {
+            const marker = `wfn-${id}`;
+            const body = wordFootnotes[id] ?? "";
+            if (!seenWfn.has(marker)) {
+              seenWfn.add(marker);
+              result.footnoteDefs.push({
+                marker,
+                markerOrder: result.footnoteDefs.length,
+                text: body,
+                source: "detected",
+              });
+            }
+            result.footnoteAnchors.push({
+              marker,
+              targetType: "cell",
+              rowIndex: r,
+              colIndex: c,
+              footnoteMarker: marker,
+              confidence: 1.0,
+            });
+            wfnAdded++;
+            const cell = result.matrix[r]?.[c];
+            if (cell && !cell.markers.includes(marker)) {
+              cell.markers = [...cell.markers, marker];
+            }
+          }
+        }
+      }
+      if (wfnAdded > 0) {
+        log.info("[soa] Word footnotes → cells anchors applied", {
+          tableIndex: candidateIdx,
+          anchors: wfnAdded,
+        });
+      }
     }
 
     soaTables.push(result);

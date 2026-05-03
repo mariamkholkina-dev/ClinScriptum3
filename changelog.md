@@ -2,6 +2,25 @@
 
 ## 2026-05-04
 
+### Спринт 6 SoA detection robustness (commit 5/8): native Word footnotes + trailing digit-after-marker
+
+Два related улучшения footnote extraction в одном коммите.
+
+**5.A — Word `word/footnotes.xml` parser:**
+- Новый `packages/doc-parser/src/word-footnote-parser.ts`. Функция `extractWordFootnotes(xmlText)` возвращает `Map<id, body>` с правильным skip'ом separator/continuationSeparator footnotes (id=-1, id=0, w:type='separator'). 8 unit тестов.
+- `extractTableGeometry` теперь recursively собирает `<w:footnoteReference w:id="N">` внутри каждого `<w:tc>` и сохраняет в `CellRect.footnoteRefs?: string[]`. 1 новый unit тест.
+- `parser.ts` параллельно с document.xml загружает `word/footnotes.xml` в `ParsedDocument.wordFootnotes: Record<string, string>`. Best-effort — пустой объект если файла нет или парсер не получил DOCX buffer.
+- `detectSoaForVersion`: после mapDrawingsToCells loop walk'ает aligned `dataGeometryReindexed` и для каждой ячейки с `footnoteRefs` создаёт pendingAnchor/footnoteDef с marker `wfn-N` (prefix защищает от коллизий с inline `1`/`*`). Body берётся из `digitalTwin.wordFootnotes`. 1 новый integration тест.
+
+**5.B — Trailing digit after positive/symbol marker (без `<sup>`):**
+
+Реальный кейс из протоколов: ячейка содержит `X1`, `X 1`, `X*1`, `✓2` — `1`/`2` это номер сноски, не часть значения и не часть имени `Day 1`.
+- Расширил `extractCellMarkers` новым шагом trailing-digit-after-marker (regex `/^(\([XхХ]\)|[XхХ✓✔☑●+×]|[–—-])\s*(\d{1,2})\s*$/i`). Применяется после symbol-marker step — поэтому `X*1` обрабатывается двумя проходами (symbol → trailing-digit) и даёт markers `['*', '1']`.
+- Защита от false positives: regex требует чтобы вся ячейка была pattern `<marker><digit>` без trailing unit-letter — `X 5mL` и `Day 1` остаются нетронутыми.
+- 9 новых unit тестов: `X1`, `X 1`, `X*1`, `X1*`, `✓2`, `X 5mL` (защита), `Day 1` (защита), `– 3`, `Х1` (Cyrillic).
+
+`apps/api/vitest.config.ts`: testTimeout/hookTimeout подняты до 30s — default 5s слишком близко к baseline 4.3-4.7s integration тестов.
+
 ### Спринт 6 SoA detection robustness (commit 4/8): merge continuation SoA tables
 
 Word часто разрывает длинную SoA на 2-3 части `<w:tbl>` с повторённой шапкой — ранее каждая часть становилась отдельной `SoaTable`. Теперь они сливаются в одну логическую таблицу.

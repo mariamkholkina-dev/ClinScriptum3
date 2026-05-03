@@ -6,6 +6,7 @@ import { extractFootnotes } from "./footnote-extractor.js";
 import JSZip from "jszip";
 import { extractDrawingsFromDocumentXml, type Drawing } from "./drawing-parser.js";
 import { extractTableGeometry, type TableGeometry } from "./table-geometry.js";
+import { extractWordFootnotes } from "./word-footnote-parser.js";
 import type {
   ParsedDocument,
   ParsedSection,
@@ -117,10 +118,12 @@ export async function parseDocx(
 
   const title = extractTitle(rawText, headings);
 
-  // Open the DOCX zip once and extract both drawings and table geometry
-  // from the same document.xml — saves one JSZip.loadAsync + parse.
+  // Open the DOCX zip once and extract drawings, table geometry and
+  // native Word footnote bodies in a single pass. word/footnotes.xml is
+  // optional — many DOCX have no native footnotes at all.
   let drawings: Drawing[] = [];
   let tableGeometries: TableGeometry[] = [];
+  let wordFootnotes: Record<string, string> = {};
   try {
     const zip = await JSZip.loadAsync(buffer);
     const docXmlEntry = zip.file("word/document.xml");
@@ -128,6 +131,12 @@ export async function parseDocx(
       const xml = await docXmlEntry.async("text");
       drawings = extractDrawingsFromDocumentXml(xml);
       tableGeometries = extractTableGeometry(xml);
+    }
+    const fnEntry = zip.file("word/footnotes.xml");
+    if (fnEntry) {
+      const fnXml = await fnEntry.async("text");
+      const fnMap = extractWordFootnotes(fnXml);
+      wordFootnotes = Object.fromEntries(fnMap);
     }
   } catch {
     // OOXML extraction is best-effort; don't fail the whole parse if
@@ -142,6 +151,7 @@ export async function parseDocx(
     footnotes,
     drawings,
     tableGeometries,
+    wordFootnotes,
     metadata: {
       totalParagraphs: String(elements.length),
       totalSections: String(countSections(sections)),
@@ -149,6 +159,7 @@ export async function parseDocx(
       totalFootnotes: String(footnotes.length),
       totalDrawings: String(drawings.length),
       totalTableGeometries: String(tableGeometries.length),
+      totalWordFootnotes: String(Object.keys(wordFootnotes).length),
       warnings: JSON.stringify(result.messages),
     },
   };

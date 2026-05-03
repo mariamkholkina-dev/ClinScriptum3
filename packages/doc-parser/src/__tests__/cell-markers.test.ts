@@ -141,6 +141,68 @@ describe("extractCellMarkers", () => {
     expect(result.cleanText).toBe("X");
     expect(result.markers).toEqual(["*", "†"]);
   });
+
+  it("20. 'X1' (digit immediately after X) → cleanText X, marker 1", () => {
+    expect(extractCellMarkers("X1")).toEqual({
+      cleanText: "X",
+      markers: ["1"],
+    });
+  });
+
+  it("21. 'X 1' (digit after X with space) → cleanText X, marker 1", () => {
+    expect(extractCellMarkers("X 1")).toEqual({
+      cleanText: "X",
+      markers: ["1"],
+    });
+  });
+
+  it("22. 'X*1' (symbol + digit after X) → markers '*' and '1'", () => {
+    const result = extractCellMarkers("X*1");
+    expect(result.cleanText).toBe("X");
+    // SYMBOL_MARKER_RE runs first → '*' pushed; then trailing-digit sees "X1".
+    expect(result.markers).toEqual(["*", "1"]);
+  });
+
+  it("23. 'X1*' (digit before symbol) → markers '*' and '1'", () => {
+    const result = extractCellMarkers("X1*");
+    expect(result.cleanText).toBe("X");
+    expect(result.markers).toEqual(["*", "1"]);
+  });
+
+  it("24. '✓2' → cleanText ✓, marker 2", () => {
+    expect(extractCellMarkers("✓2")).toEqual({
+      cleanText: "✓",
+      markers: ["2"],
+    });
+  });
+
+  it("25. 'X 5mL' (numeric value with unit) → digit is NOT a marker", () => {
+    expect(extractCellMarkers("X 5mL")).toEqual({
+      cleanText: "X 5mL",
+      markers: [],
+    });
+  });
+
+  it("26. 'Day 1' (non-marker prefix) → no markers", () => {
+    expect(extractCellMarkers("Day 1")).toEqual({
+      cleanText: "Day 1",
+      markers: [],
+    });
+  });
+
+  it("27. '– 3' (en-dash + footnote ref) → cleanText –, marker 3", () => {
+    expect(extractCellMarkers("– 3")).toEqual({
+      cleanText: "–",
+      markers: ["3"],
+    });
+  });
+
+  it("28. 'Х1' (Cyrillic) → cleanText Х, marker 1", () => {
+    expect(extractCellMarkers("Х1")).toEqual({
+      cleanText: "Х",
+      markers: ["1"],
+    });
+  });
 });
 
 describe("extractFootnoteDefinitions", () => {

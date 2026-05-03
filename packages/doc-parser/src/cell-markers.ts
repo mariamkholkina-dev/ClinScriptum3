@@ -61,6 +61,14 @@ const UNICODE_SUP_RE = /[²³¹⁰⁴-⁹]/g;
 const SYMBOL_MARKER_RE = /[*†‡§¶#]/g;
 const PAREN_NUMBER_RE = /\([^()]*?(\d{1,2})\s*\)/g;
 const STANDALONE_NUMERIC_RE = /^(\d{1,2})[).,]?$/;
+// Real protocols often write footnote refs as a digit appended to a
+// positive/dash marker without `<sup>`: "X1", "X 1", "✓2", "(X) 3",
+// "– 3". The digit is the footnote, NOT part of a value or name.
+// We only fire on cells whose entire remaining text is `<marker> <digit>` —
+// that protects "X 5mL" (unit suffix) and "Day 1" (non-marker prefix).
+// Letter markers (X / Х / ✓ / ✔ / ☑ / ● / + / ×) and dashes both qualify.
+const TRAILING_DIGIT_AFTER_MARKER_RE =
+  /^(\([XхХ]\)|[XхХ✓✔☑●+×]|[–—-])\s*(\d{1,2})\s*$/i;
 
 const ENTITY_MAP: Record<string, string> = {
   "&dagger;": "†",
@@ -148,6 +156,20 @@ export function extractCellMarkers(
     }
     return full;
   });
+
+  // Trailing-digit-after-marker. Symbol markers are already gone after
+  // SYMBOL_MARKER_RE above, so "X*1" / "X1*" both arrive here as "X1".
+  {
+    const t = text.replace(/\s+/g, " ").trim();
+    const m = TRAILING_DIGIT_AFTER_MARKER_RE.exec(t);
+    if (m) {
+      const n = parseInt(m[2], 10);
+      if (n >= 1 && n <= MAX_FOOTNOTE_NUM) {
+        markers.push(m[2]);
+        text = m[1];
+      }
+    }
+  }
 
   const trimmed = text.replace(/\s+/g, " ").trim();
   const standalone = STANDALONE_NUMERIC_RE.exec(trimmed);
