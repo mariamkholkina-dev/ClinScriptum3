@@ -237,6 +237,13 @@ interface DiffOverlayProps {
     sectionId: string | null;
     sectionTitle: string;
     newZone: string | null;
+    /** Для wrong_section: исходное expected.standardSection из diff entry —
+        используется для уникального матчинга записи в expected.sections при
+        дубликатах title. Без этого findIndex по title находил случайную копию. */
+    originalExpectedZone?: string | null;
+    /** Позиционный индекс секции среди дубликатов title в реальном документе —
+        используется для positional matching записи в expected.sections. */
+    duplicateIndex?: number;
   }) => void;
   /** Прыжок к строке в основной структуре: фокус + scroll. */
   onJumpToSection: (sectionId: string) => void;
@@ -252,11 +259,25 @@ function ClassificationDiffOverlay({
   onJumpToSection,
   fixPending,
 }: DiffOverlayProps) {
+  // Resolve real-секцию для строки overlay: приоритет — по actualSectionId
+  // (точно при дубликатах title), fallback — по title (старые entries без id).
+  const sectionById = useMemo(() => {
+    const m = new Map<string, Section>();
+    for (const s of sections) m.set(s.id, s);
+    return m;
+  }, [sections]);
   const titleToSection = useMemo(() => {
     const m = new Map<string, Section>();
     for (const s of sections) m.set(s.title.trim().toLowerCase(), s);
     return m;
   }, [sections]);
+  const resolveSection = (e: DiffEntry): Section | undefined => {
+    if (e.actualSectionId) {
+      const byId = sectionById.get(e.actualSectionId);
+      if (byId) return byId;
+    }
+    return titleToSection.get(e.sectionTitle.trim().toLowerCase());
+  };
 
   // Локальный state per-row select — initial value по типу:
   //   wrong_section: expected.standardSection (предложение эксперта)
@@ -303,7 +324,7 @@ function ClassificationDiffOverlay({
       <div className="max-h-80 overflow-y-auto space-y-1.5">
         {entries.map((e, i) => {
           const rowKey = getRowKey(e, i);
-          const matchedSection = titleToSection.get(e.sectionTitle.trim().toLowerCase());
+          const matchedSection = resolveSection(e);
           const suggestedZone = getSuggestedZone(e, matchedSection);
           const currentValue = pendingZones.get(rowKey) ?? suggestedZone;
           const applyMeta = getApplyLabel(e);
@@ -404,6 +425,8 @@ function ClassificationDiffOverlay({
                       sectionId: matchedSection?.id ?? null,
                       sectionTitle: e.sectionTitle,
                       newZone: e.type === "missing" ? null : (currentValue === "" ? null : currentValue),
+                      originalExpectedZone: e.expected?.standardSection ?? null,
+                      duplicateIndex: e.duplicateIndex,
                     })
                   }
                   className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium text-white ${
@@ -1365,8 +1388,10 @@ export default function ClassificationTreeViewer({
       sectionId: string | null;
       sectionTitle: string;
       newZone: string | null;
+      originalExpectedZone?: string | null;
+      duplicateIndex?: number;
     }) => {
-      const { diffType, sectionId, sectionTitle, newZone } = params;
+      const { diffType, sectionId, sectionTitle, newZone, originalExpectedZone, duplicateIndex } = params;
 
       // 1) Update Section.standardSection (если есть section и тип — wrong_section/extra)
       if (sectionId && diffType !== "missing" && newZone !== null) {
@@ -1383,23 +1408,52 @@ export default function ClassificationTreeViewer({
       const current = (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
       const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
       const titleLower = sectionTitle.trim().toLowerCase();
-      const existingIdx = sectionsArr.findIndex(
-        (s) => String(s.title ?? "").trim().toLowerCase() === titleLower,
-      );
 
       let nextSections: Array<Record<string, unknown>>;
-      if (diffType === "missing" && existingIdx >= 0) {
-        // Эксперт согласен, что эта секция не должна быть в эталоне → удаляем
-        nextSections = sectionsArr.filter((_, i) => i !== existingIdx);
-      } else if (existingIdx >= 0) {
-        // Update existing entry
-        nextSections = sectionsArr.map((s, i) =>
-          i === existingIdx
-            ? { ...s, title: sectionTitle, standardSection: newZone }
-            : s,
+
+      if (diffType === "missing") {
+        // Удаляем первую запись с этим title (missing — в реальности секции нет,
+        // и matched строго по порядку в diff, поэтому удаляем тоже первую).
+        const idx = sectionsArr.findIndex(
+          (s) => String(s.title ?? "").trim().toLowerCase() === titleLower,
         );
+        if (idx < 0) return;
+        nextSections = sectionsArr.filter((_, i) => i !== idx);
+      } else if (diffType === "wrong_section") {
+        // Positional match: ищем (duplicateIndex+1)-ю запись с таким title в expected.
+        // diff matches positionally — n-я real-секция с title T сопоставляется
+        // с n-й expected записью с этим же title. Обновляем именно её.
+        // Fallback: если duplicateIndex не передан или записей меньше —
+        // ищем по title + старый standardSection.
+        let idx = -1;
+        if (typeof duplicateIndex === "number") {
+          let seen = 0;
+          for (let i = 0; i < sectionsArr.length; i++) {
+            if (String(sectionsArr[i].title ?? "").trim().toLowerCase() === titleLower) {
+              if (seen === duplicateIndex) { idx = i; break; }
+              seen++;
+            }
+          }
+        }
+        if (idx < 0) {
+          idx = sectionsArr.findIndex(
+            (s) =>
+              String(s.title ?? "").trim().toLowerCase() === titleLower &&
+              (s.standardSection ?? null) === (originalExpectedZone ?? null),
+          );
+        }
+        if (idx >= 0) {
+          nextSections = sectionsArr.map((s, i) =>
+            i === idx ? { ...s, title: sectionTitle, standardSection: newZone } : s,
+          );
+        } else {
+          nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
+        }
       } else {
-        // Insert new
+        // diffType === "extra" — секция реально есть в документе, но не была в эталоне.
+        // Всегда push новой записи. Так как diff делает positional matching, новая
+        // запись займёт позицию (n+1) среди дубликатов и будет matched с этой extra
+        // секцией на следующем рендере → строка пропадёт из overlay.
         nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
       }
 

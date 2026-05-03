@@ -75,23 +75,34 @@ export function diffClassificationWithExpected(
   const expected = expectedResults as ExpectedClassificationResults;
   if (!Array.isArray(expected.sections)) return [];
 
-  // Каскад от Парсинга: секции, помеченные как «не заголовок», игнорируем
-  // во всех структурных diff — иначе они дадут extra даже после того, как
-  // эксперт уже отверг их на этапе парсинга.
+  // Каскад от Парсинга: секции, помеченные как «не заголовок», игнорируем.
   const realSections = sections.filter((s) => !s.isFalseHeading);
 
   const entries: DiffEntry[] = [];
 
-  const actualByTitle = new Map<string, Section>();
+  // Группируем real-секции по title с сохранением порядка — для positional
+  // matching при дубликатах. Без этого Map<title, Section> теряет все секции
+  // кроме последней, и при дубликатах title diff показывал чужой actual.
+  const realByTitle = new Map<string, Section[]>();
   for (const s of realSections) {
-    actualByTitle.set(s.title.trim().toLowerCase(), s);
+    const key = s.title.trim().toLowerCase();
+    if (!realByTitle.has(key)) realByTitle.set(key, []);
+    realByTitle.get(key)!.push(s);
+  }
+
+  // Позиционный индекс секции среди дубликатов title — для quickfix.
+  const duplicateIndexById = new Map<string, number>();
+  for (const list of realByTitle.values()) {
+    list.forEach((s, idx) => duplicateIndexById.set(s.id, idx));
   }
 
   const matchedActual = new Set<string>();
 
   for (const exp of expected.sections) {
     const key = exp.title.trim().toLowerCase();
-    const actual = actualByTitle.get(key);
+    const candidates = realByTitle.get(key) ?? [];
+    // Берём n-ю unmatched real-секцию для positional матча.
+    const actual = candidates.find((s) => !matchedActual.has(s.id));
 
     if (!actual) {
       entries.push({
@@ -110,6 +121,8 @@ export function diffClassificationWithExpected(
         sectionTitle: exp.title,
         expected: { standardSection: exp.standardSection },
         actual: { standardSection: actual.standardSection },
+        actualSectionId: actual.id,
+        duplicateIndex: duplicateIndexById.get(actual.id),
       });
     }
   }
@@ -120,6 +133,8 @@ export function diffClassificationWithExpected(
         type: "extra",
         sectionTitle: s.title,
         actual: { standardSection: s.standardSection },
+        actualSectionId: s.id,
+        duplicateIndex: duplicateIndexById.get(s.id),
       });
     }
   }
