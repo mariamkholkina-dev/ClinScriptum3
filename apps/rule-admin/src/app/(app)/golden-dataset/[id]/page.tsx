@@ -1243,7 +1243,11 @@ function StagePanel({
 
     switch (stageKey) {
       case "parsing": {
-        const sections = (versionQuery.data?.sections ?? []) as Array<Record<string, unknown>>;
+        // Исключаем секции, помеченные экспертом как «не заголовок» — они не должны
+        // попадать в эталонный JSON, иначе diff потом покажет их как «Пропущено»
+        // (в actual sections их нет, потому что diffWithExpected тоже их фильтрует).
+        const sections = ((versionQuery.data?.sections ?? []) as Array<Record<string, unknown>>)
+          .filter((s) => s.isFalseHeading !== true);
         generated = {
           sections: sections.map((s) => ({
             title: s.title,
@@ -1255,7 +1259,8 @@ function StagePanel({
         break;
       }
       case "classification": {
-        const sections = (versionQuery.data?.sections ?? []) as Array<Record<string, unknown>>;
+        const sections = ((versionQuery.data?.sections ?? []) as Array<Record<string, unknown>>)
+          .filter((s) => s.isFalseHeading !== true);
         generated = {
           sections: sections.map((s) => ({
             title: s.title,

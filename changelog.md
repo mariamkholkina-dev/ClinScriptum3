@@ -2,6 +2,11 @@
 
 ## 2026-05-03
 
+### Fix: исключить isFalseHeading из генерации эталонного JSON
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx`:
+- `generateExpectedJson` для этапов `parsing` и `classification` теперь фильтрует `s.isFalseHeading !== true` перед маппингом. Раньше ложные заголовки попадали в эталонный JSON, и diff потом показывал их как «Пропущено» (в actual их нет — diff-utils их фильтрует, в expected были — расхождение).
+
 ### Fix: лимит 200 секций в bulk-update мутациях
 
 `apps/api/src/routers/processing.ts`:
