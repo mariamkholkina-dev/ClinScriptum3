@@ -2,6 +2,36 @@
 
 ## 2026-05-03
 
+### Спринт 4 SoA LLM verification (commit 2/2): pipeline-интеграция
+
+`apps/workers/src/lib/soa-llm-verification.ts` (новый):
+- **`verifySoaTablesForVersion(versionId)`** — пробегает по `SoaTable[]` версии и для каждой запрашивает LLM Check через `LLMGateway` (env `LLM_SOA_VERIFY_*` с fallback на общий `LLM_*`). Промпт: «You verify Schedule of Assessments tables…». Ответ парсится как `{is_soa, confidence, reasoning?}`.
+- Disabled по умолчанию через `LLM_SOA_VERIFY_ENABLED=false` — детерминистический pipeline остаётся без изменений.
+- При **agreement** (LLM `is_soa=true`) → `verificationLevel='llm_check'`, `llmConfidence` из ответа.
+- При **disagreement** (детектор сохранил таблицу, но LLM `is_soa=false`) → `verificationLevel='llm_qa'` — флаг для оператора.
+- Ошибки LLM логируются и **не валят pipeline** — verification advisory.
+
+`apps/workers/src/handlers/run-pipeline.ts` — после `detectSoaForVersion` вызывает `verifySoaTablesForVersion(versionId)`.
+
+`.env.example` — секция «LLM: SoA verification (Sprint 4)» с `LLM_SOA_VERIFY_ENABLED|PROVIDER|API_KEY|MODEL|TEMPERATURE`.
+
+Тесты `apps/workers/src/lib/__tests__/soa-llm-verification.test.ts` — 8 кейсов на парсер LLM-ответа и user-message builder.
+
+Sprint 4 завершён.
+
+### Спринт 4 SoA LLM verification (commit 1/2): schema для уровней проверки
+
+`packages/db/prisma/schema.prisma`:
+- Новый enum `SoaVerificationLevel`: `deterministic` | `llm_check` | `llm_qa`. Это пятизуровневая модель из CLAUDE.md, применённая к SoA-этапу: уровень меняется по мере того как pipeline проходит проверки.
+- `SoaTable.verificationLevel: SoaVerificationLevel` (default `deterministic`) — высший уровень, на котором подтверждена данная SoA-таблица.
+- `SoaTable.llmConfidence: Float?` — уверенность, отчётливая LLM Check шагом (0..1). Null до того как llm_check отработал.
+
+Миграция `20260503140000_add_soa_verification_level` — `CREATE TYPE` + `ALTER TABLE`. Применена в dev и test БД.
+
+Цель спринта: добавить LLM-уровни проверки SoA по образцу того, что уже работает для классификации секций. Pipeline-интеграция — следующий коммит.
+
+
+
 ### Спринт 3 SoA drawings (commit 4/4): UI бейджи и индикаторы графических маркеров
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/soa-viewer/SoaViewer.tsx`:

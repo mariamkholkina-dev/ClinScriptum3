@@ -449,6 +449,14 @@ model SoaTable {
   status              SoaStatus       @default(detected)
   orientation         SoaOrientation  @default(visits_cols)
   orientationConflict Boolean         @default(false) @map("orientation_conflict")
+  /// Highest pipeline level this SoA table has been verified at:
+  /// `deterministic` (rules only), `llm_check` (LLM agreed), `llm_qa`
+  /// (LLM disagreed and a QA round was run). Drives confidence
+  /// indicators in the UI.
+  verificationLevel   SoaVerificationLevel @default(deterministic) @map("verification_level")
+  /// Confidence reported by the LLM Check step (0..1). Null when the
+  /// LLM step has not run.
+  llmConfidence       Float?          @map("llm_confidence")
   headerData          Json            @map("header_data") @db.JsonB
   rawMatrix           Json            @map("raw_matrix") @db.JsonB
   /// Raw drawings extracted from word/document.xml that overlay this SoA
@@ -504,6 +512,12 @@ enum SoaOrientation {
   visits_cols
   visits_rows
   unknown
+}
+
+enum SoaVerificationLevel {
+  deterministic
+  llm_check
+  llm_qa
 }
 
 enum SoaFootnoteSource {

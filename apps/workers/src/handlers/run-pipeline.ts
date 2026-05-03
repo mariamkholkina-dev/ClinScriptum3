@@ -9,6 +9,7 @@ import { handleParseDocument } from "./parse-document.js";
 import { handleClassifySections } from "./classify-sections.js";
 import { handleExtractFacts } from "./extract-facts.js";
 import { handleIntraDocAudit } from "./intra-doc-audit.js";
+import { verifySoaTablesForVersion } from "../lib/soa-llm-verification.js";
 import { logger } from "../lib/logger.js";
 
 export async function handleRunPipeline(data: { versionId: string }) {
@@ -55,6 +56,10 @@ export async function handleRunPipeline(data: { versionId: string }) {
 
       try {
         await detectSoaForVersion(versionId, logger);
+        // LLM verification is best-effort (gated by LLM_SOA_VERIFY_ENABLED)
+        // and never fails the pipeline — failure leaves the deterministic
+        // result intact at verificationLevel=deterministic.
+        await verifySoaTablesForVersion(versionId);
         await prisma.processingRun.update({
           where: { id: soaRun.id },
           data: { status: "completed" },
