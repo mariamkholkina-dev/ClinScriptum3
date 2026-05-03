@@ -226,6 +226,7 @@ export const documentService = {
           llmSection: true,
           llmConfidence: true,
           classificationComment: true,
+          isFalseHeading: true,
           contentBlocks: {
             orderBy: { order: "asc" },
             select: { id: true, type: true, content: true, rawHtml: true, order: true },
@@ -257,6 +258,7 @@ export const documentService = {
       llmSection: string | null;
       llmConfidence: number | null;
       classificationComment: string | null;
+      isFalseHeading: boolean | null;
     };
     type RawBlockRow = {
       id: string;
@@ -277,7 +279,8 @@ export const documentService = {
              s.algo_confidence AS "algoConfidence",
              s.llm_section AS "llmSection",
              s.llm_confidence AS "llmConfidence",
-             s.classification_comment AS "classificationComment"
+             s.classification_comment AS "classificationComment",
+             s.is_false_heading AS "isFalseHeading"
       FROM sections s WHERE s.doc_version_id = ${versionId}::uuid
       ORDER BY s."order" ASC
     `;
@@ -316,6 +319,7 @@ export const documentService = {
       llmSection: s.llmSection,
       llmConfidence: Number(s.llmConfidence ?? 0),
       classificationComment: s.classificationComment,
+      isFalseHeading: Boolean(s.isFalseHeading ?? false),
       contentBlocks: (blocksBySection.get(s.id) ?? []).map((b) => ({
         id: b.id,
         type: validTypes.has(b.type ?? "") ? b.type : "paragraph",
@@ -386,6 +390,23 @@ export const documentService = {
         standardSection,
         classificationStatus: classificationStatus ?? section.classificationStatus,
       },
+    });
+  },
+
+  async markSectionFalseHeading(
+    tenantId: string,
+    sectionId: string,
+    isFalseHeading: boolean,
+  ) {
+    const section = await prisma.section.findUnique({
+      where: { id: sectionId },
+      include: { docVersion: { include: { document: { include: { study: true } } } } },
+    });
+    requireTenantResource(section, tenantId, (s) => s.docVersion.document.study.tenantId);
+
+    return prisma.section.update({
+      where: { id: sectionId },
+      data: { isFalseHeading },
     });
   },
 
