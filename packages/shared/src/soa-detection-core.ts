@@ -30,6 +30,13 @@ interface HtmlCell {
   rawHtml: string;
   colspan: number;
   rowspan: number;
+  /**
+   * Cell background color as authored in the source DOCX, normalised
+   * to `#RRGGBB` upper-case. Picked up from inline `style="background…"`,
+   * legacy `bgcolor=` and a small set of named colors. `null`/undefined
+   * when the cell has no explicit highlight.
+   */
+  fill?: string | null;
 }
 
 interface TableCandidate {
@@ -39,6 +46,7 @@ interface TableCandidate {
   htmlRows: HtmlCell[][];
   rows: string[][];
   rawHtmlGrid: string[][];
+  fillGrid: string[][];
   nextBlockHtml: string | null;
   sectionId: string;
   order: number;
@@ -106,6 +114,12 @@ interface SoaCellData {
   confidence: number;
   markers: string[];
   markerSources: MarkerSource[];
+  /**
+   * Background color of the cell as authored in the source DOCX —
+   * `#RRGGBB` upper-case. Persisted to `SoaCell.cellHighlight`. Null
+   * when the cell has no explicit highlight.
+   */
+  cellHighlight: string | null;
 }
 
 /* ═══════════════════════ Constants ═══════════════════════ */
@@ -530,7 +544,7 @@ function collectTableCandidates(
 
       if (block.type === "table" && block.rawHtml) {
         const htmlRows = parseHtmlTableWithSpans(block.rawHtml);
-        const { textGrid, rawHtmlGrid } = expandGridFromHtmlRows(htmlRows);
+        const { textGrid, rawHtmlGrid, fillGrid } = expandGridFromHtmlRows(htmlRows);
         if (textGrid.length < 2 || (textGrid[0]?.length ?? 0) < 2) {
           lastParagraphText = "";
           continue;
@@ -555,6 +569,7 @@ function collectTableCandidates(
           htmlRows,
           rows: textGrid,
           rawHtmlGrid,
+          fillGrid,
           nextBlockHtml,
           sectionId: section.id,
           order: block.order,
@@ -674,7 +689,7 @@ function buildSoaResult(
   candidate: TableCandidate,
   scoring: ScoringResult
 ): SoaDetectionResult | null {
-  const { rows, htmlRows, rawHtmlGrid } = candidate;
+  const { rows, htmlRows, rawHtmlGrid, fillGrid } = candidate;
   if (rows.length < 2) return null;
 
   const headerRowCount = detectHeaderRowCount(rows);
@@ -767,12 +782,14 @@ function buildSoaResult(
         });
       }
 
+      const fill = fillGrid?.[sourceRowIdx]?.[col];
       cellRow.push({
         rawValue: raw,
         normalizedValue: normalized,
         confidence,
         markers: cellMarkers,
         markerSources: ["text"],
+        cellHighlight: fill && fill.length > 0 ? fill : null,
       });
     }
     matrix.push(cellRow);
@@ -925,6 +942,90 @@ function computeCellConfidence(raw: string, normalized: string): number {
 
 /* ═══════════════════════ HTML Parsing ═══════════════════════ */
 
+/**
+ * Named CSS colors common in protocol documents. Cheap lookup avoids
+ * pulling a full color library. Keys are lowercase for case-insensitive
+ * match. Values are upper-case `#RRGGBB`.
+ */
+const NAMED_COLORS: Record<string, string> = {
+  yellow: "#FFFF00",
+  red: "#FF0000",
+  green: "#008000",
+  lime: "#00FF00",
+  blue: "#0000FF",
+  cyan: "#00FFFF",
+  magenta: "#FF00FF",
+  pink: "#FFC0CB",
+  orange: "#FFA500",
+  white: "#FFFFFF",
+  black: "#000000",
+  gray: "#808080",
+  grey: "#808080",
+  silver: "#C0C0C0",
+};
+
+function normaliseHex(raw: string): string | null {
+  const stripped = raw.replace(/^#/, "");
+  if (!/^[0-9a-fA-F]+$/.test(stripped)) return null;
+  if (stripped.length === 3) {
+    return "#" + stripped.split("").map((c) => (c + c).toUpperCase()).join("");
+  }
+  if (stripped.length === 6) return "#" + stripped.toUpperCase();
+  if (stripped.length === 8) return "#" + stripped.slice(0, 6).toUpperCase();
+  return null;
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const c = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0").toUpperCase();
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+function parseColorValue(v: string): string | null {
+  const trimmed = v.trim();
+  if (/^(transparent|inherit|none|initial|unset|auto)$/i.test(trimmed)) return null;
+  // hex: #FFFF00 / #FF0 / FFFF00
+  const hex = trimmed.match(/^#?([0-9a-fA-F]{3,8})$/);
+  if (hex) return normaliseHex(hex[1]);
+  // rgb(255, 255, 0) / rgba(...)
+  const rgb = trimmed.match(/^rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgb) return rgbToHex(parseInt(rgb[1], 10), parseInt(rgb[2], 10), parseInt(rgb[3], 10));
+  // named color
+  const named = NAMED_COLORS[trimmed.toLowerCase()];
+  if (named) return named;
+  return null;
+}
+
+/** Pull a cell's background color out of its open tag. Order:
+ *  1) legacy `bgcolor="…"`
+ *  2) inline `style="background[-color]: …"`
+ *  3) Word's own `data-shd-fill="…"` attribute (when mammoth chooses
+ *     to surface the `<w:shd>` raw value).
+ *
+ * Exported for unit testing — not part of the stable public API.
+ */
+export function extractFillFromOpenTag(openTag: string): string | null {
+  const bg = openTag.match(/\bbgcolor\s*=\s*["']?#?([0-9a-fA-F]{3,8})/);
+  if (bg) {
+    const v = normaliseHex(bg[1]);
+    if (v) return v;
+  }
+  const styleAttr = openTag.match(/\bstyle\s*=\s*"([^"]*)"|\bstyle\s*=\s*'([^']*)'/i);
+  if (styleAttr) {
+    const styleStr = styleAttr[1] ?? styleAttr[2] ?? "";
+    const m = styleStr.match(/background(?:-color)?\s*:\s*([^;]+)/i);
+    if (m) {
+      const v = parseColorValue(m[1]);
+      if (v) return v;
+    }
+  }
+  const shd = openTag.match(/\bdata-shd-fill\s*=\s*["']?([0-9a-fA-F]{3,8})/);
+  if (shd) {
+    const v = normaliseHex(shd[1]);
+    if (v) return v;
+  }
+  return null;
+}
+
 function parseHtmlTableWithSpans(html: string): HtmlCell[][] {
   const rows: HtmlCell[][] = [];
 
@@ -948,7 +1049,8 @@ function parseHtmlTableWithSpans(html: string): HtmlCell[][] {
         cellOpenTag.match(/rowspan\s*=\s*["']?(\d+)/i)?.[1] ?? "1",
         10,
       );
-      cells.push({ text, rawHtml: innerHtml, colspan, rowspan });
+      const fill = extractFillFromOpenTag(cellOpenTag);
+      cells.push({ text, rawHtml: innerHtml, colspan, rowspan, fill });
     }
 
     if (cells.length > 0) rows.push(cells);
@@ -960,10 +1062,17 @@ function parseHtmlTableWithSpans(html: string): HtmlCell[][] {
 interface ExpandedGrid {
   textGrid: string[][];
   rawHtmlGrid: string[][];
+  /**
+   * Background hex per (row, col) — already propagated into every
+   * colspan/rowspan slot of the originating cell so consumers can read
+   * by absolute coords without re-walking spans. Empty string when the
+   * cell has no fill.
+   */
+  fillGrid: string[][];
 }
 
 function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
-  if (htmlRows.length === 0) return { textGrid: [], rawHtmlGrid: [] };
+  if (htmlRows.length === 0) return { textGrid: [], rawHtmlGrid: [], fillGrid: [] };
 
   let maxCols = 0;
   for (const row of htmlRows) {
@@ -982,6 +1091,9 @@ function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
   const rawHtmlGrid: string[][] = Array.from({ length: numRows }, () =>
     Array(maxCols).fill(""),
   );
+  const fillGrid: string[][] = Array.from({ length: numRows }, () =>
+    Array(maxCols).fill(""),
+  );
 
   for (let r = 0; r < numRows; r++) {
     let gridCol = 0;
@@ -996,6 +1108,7 @@ function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
       for (let dr = 0; dr < cell.rowspan && r + dr < numRows; dr++) {
         for (let dc = 0; dc < cell.colspan && gridCol + dc < maxCols; dc++) {
           textGrid[r + dr][gridCol + dc] = cell.text;
+          if (cell.fill) fillGrid[r + dr][gridCol + dc] = cell.fill;
         }
       }
       gridCol += cell.colspan;
@@ -1005,6 +1118,7 @@ function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
   return {
     textGrid: textGrid.map((row) => row.map((c) => c ?? "")),
     rawHtmlGrid,
+    fillGrid,
   };
 }
 
@@ -1115,10 +1229,14 @@ export function transposeCandidate(candidate: TableCandidate): TableCandidate {
   const newRawHtmlGrid: string[][] = Array.from({ length: numCols }, () =>
     Array<string>(numRows).fill(""),
   );
+  const newFillGrid: string[][] = Array.from({ length: numCols }, () =>
+    Array<string>(numRows).fill(""),
+  );
   for (let r = 0; r < numRows; r++) {
     for (let c = 0; c < numCols; c++) {
       newRows[c][r] = candidate.rows[r][c] ?? "";
       newRawHtmlGrid[c][r] = candidate.rawHtmlGrid[r]?.[c] ?? "";
+      newFillGrid[c][r] = candidate.fillGrid?.[r]?.[c] ?? "";
     }
   }
 
@@ -1130,6 +1248,7 @@ export function transposeCandidate(candidate: TableCandidate): TableCandidate {
       rawHtml: newRawHtmlGrid[ri][ci] ?? "",
       colspan: 1,
       rowspan: 1,
+      fill: newFillGrid[ri][ci] || null,
     })),
   );
 
@@ -1137,6 +1256,7 @@ export function transposeCandidate(candidate: TableCandidate): TableCandidate {
     ...candidate,
     rows: newRows,
     rawHtmlGrid: newRawHtmlGrid,
+    fillGrid: newFillGrid,
     htmlRows: newHtmlRows,
   };
 }
@@ -1332,6 +1452,7 @@ async function persistSoaTables(
           normalizedValue: string;
           confidence: number;
           markerSources: MarkerSource[];
+          cellHighlight: string | null;
         }> = [];
 
         for (let row = 0; row < soa.procedures.length; row++) {
@@ -1348,6 +1469,7 @@ async function persistSoaTables(
               normalizedValue: cell.normalizedValue ?? "",
               confidence: cell.confidence,
               markerSources: cell.markerSources ?? ["text"],
+              cellHighlight: cell.cellHighlight ?? null,
             });
           }
         }

@@ -501,6 +501,11 @@ model SoaCell {
   /// 'line', 'bracket'. 'text' means the X/dash came from the cell text;
   /// the others mean it was inferred from a graphic element overlaying the cell.
   markerSources   Json    @default("[\"text\"]") @db.JsonB @map("marker_sources")
+  /// Background color of the cell as authored in the source DOCX —
+  /// `<w:shd w:fill="FFFF00">` or HTML `style="background-color:#FFFF00"`.
+  /// Stored as the raw hex string with a leading `#` (e.g. "#FFFF00").
+  /// Null when the cell has no explicit highlight.
+  cellHighlight   String? @map("cell_highlight")
 
   soaTable        SoaTable            @relation(fields: [soaTableId], references: [id], onDelete: Cascade)
   footnoteAnchors SoaFootnoteAnchor[]

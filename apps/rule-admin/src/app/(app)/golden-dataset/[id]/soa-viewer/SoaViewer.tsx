@@ -33,6 +33,7 @@ interface SoaCell {
   manualValue: string | null;
   confidence: number;
   markerSources: ("text" | "arrow" | "line" | "bracket")[];
+  cellHighlight?: string | null;
 }
 
 interface SoaFootnoteAnchor {
@@ -314,10 +315,22 @@ function ParsedSoaTable({
                   else if (isPositive(val)) bgClass = "bg-green-50";
                   else if (isDash(val)) bgClass = "bg-gray-50";
 
+                  // Source-document highlight (e.g. "#FFFF00" yellow from
+                  // <w:shd>) takes visual priority over zone-color classes.
+                  // Tooltip explains the highlight to reviewers.
+                  const highlightStyle = cell.cellHighlight
+                    ? { backgroundColor: cell.cellHighlight }
+                    : undefined;
+                  const highlightTitle = cell.cellHighlight
+                    ? "Выделено в исходном документе"
+                    : undefined;
+
                   return (
                     <td
                       key={colIdx}
                       className={`border border-gray-200 px-1 py-1 text-center cursor-pointer relative select-none ${bgClass}`}
+                      style={highlightStyle}
+                      title={highlightTitle}
                       onClick={() =>
                         isSelected
                           ? onCellSelect(null)

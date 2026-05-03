@@ -1766,6 +1766,16 @@ function SoaTab({ versionId }: { versionId: string }) {
                                   isLow && !isSelected && "bg-amber-100/60",
                                   !isSelected && !isLow && "hover:bg-gray-100/50"
                                 )}
+                                style={
+                                  cell.cellHighlight
+                                    ? { backgroundColor: cell.cellHighlight }
+                                    : undefined
+                                }
+                                title={
+                                  cell.cellHighlight
+                                    ? "Выделено в исходном документе"
+                                    : undefined
+                                }
                               >
                                 {isEditing ? (
                                   <input

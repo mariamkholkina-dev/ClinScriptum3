@@ -2,6 +2,26 @@
 
 ## 2026-05-04
 
+### Спринт 6 SoA detection robustness (commit 6/8): yellow cell highlighting
+
+Реальные протоколы часто отмечают важные ячейки SoA желтой подсветкой. Теперь это сохраняется в БД и отображается в UI.
+
+Schema:
+- `SoaCell.cellHighlight: String?` — hex `#RRGGBB` upper-case. Null когда подсветки нет.
+- Миграция `20260504120000_add_soa_cell_highlight`. Применена в dev и test БД.
+
+`packages/shared/src/soa-detection-core.ts`:
+- Новая `extractFillFromOpenTag(openTag)` — ищет background по приоритету `bgcolor=` → inline `style="background[-color]:..."` → `data-shd-fill=`. Поддерживает hex (3/6/8 digits, alpha обрезается), `rgb()`, `rgba()`, набор named colors (yellow, red, green, blue, white, black, gray, orange, pink, magenta, cyan, lime, silver). Игнорирует `transparent`/`inherit`/`none`/`initial`/`unset`/`auto`.
+- `HtmlCell.fill?: string | null` — propagated через `fillGrid` параллельно `rawHtmlGrid` в `expandGridFromHtmlRows`. `transposeCandidate` транспонирует и `fillGrid`.
+- `SoaCellData.cellHighlight: string | null` — заполняется в `buildSoaResult`. `persistSoaTables` пишет `SoaCell.cellHighlight`.
+
+UI:
+- `apps/rule-admin/.../soa-viewer/SoaViewer.tsx` `SoaCell.cellHighlight` — `style={{ backgroundColor: cell.cellHighlight }}` поверх zone-color класса; tooltip «Выделено в исходном документе».
+- `apps/web/.../documents/[versionId]/page.tsx` SoaTab — то же.
+
+Tests:
+- 10 unit тестов для `extractFillFromOpenTag` в `apps/api/src/lib/__tests__/soa-cell-fill.test.ts` (shared не имеет vitest setup).
+
 ### Спринт 6 SoA detection robustness (commit 5/8): native Word footnotes + trailing digit-after-marker
 
 Два related улучшения footnote extraction в одном коммите.
