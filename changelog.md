@@ -2,6 +2,23 @@
 
 ## 2026-05-03
 
+### Спринт 4 SoA LLM verification (commit 2/2): pipeline-интеграция
+
+`apps/workers/src/lib/soa-llm-verification.ts` (новый):
+- **`verifySoaTablesForVersion(versionId)`** — пробегает по `SoaTable[]` версии и для каждой запрашивает LLM Check через `LLMGateway` (env `LLM_SOA_VERIFY_*` с fallback на общий `LLM_*`). Промпт: «You verify Schedule of Assessments tables…». Ответ парсится как `{is_soa, confidence, reasoning?}`.
+- Disabled по умолчанию через `LLM_SOA_VERIFY_ENABLED=false` — детерминистический pipeline остаётся без изменений.
+- При **agreement** (LLM `is_soa=true`) → `verificationLevel='llm_check'`, `llmConfidence` из ответа.
+- При **disagreement** (детектор сохранил таблицу, но LLM `is_soa=false`) → `verificationLevel='llm_qa'` — флаг для оператора.
+- Ошибки LLM логируются и **не валят pipeline** — verification advisory.
+
+`apps/workers/src/handlers/run-pipeline.ts` — после `detectSoaForVersion` вызывает `verifySoaTablesForVersion(versionId)`.
+
+`.env.example` — секция «LLM: SoA verification (Sprint 4)» с `LLM_SOA_VERIFY_ENABLED|PROVIDER|API_KEY|MODEL|TEMPERATURE`.
+
+Тесты `apps/workers/src/lib/__tests__/soa-llm-verification.test.ts` — 8 кейсов на парсер LLM-ответа и user-message builder.
+
+Sprint 4 завершён.
+
 ### Спринт 4 SoA LLM verification (commit 1/2): schema для уровней проверки
 
 `packages/db/prisma/schema.prisma`:
