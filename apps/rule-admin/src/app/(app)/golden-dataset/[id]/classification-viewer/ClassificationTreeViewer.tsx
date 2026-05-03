@@ -93,6 +93,63 @@ const CLASSIFIED_BY_LABEL: Record<string, string> = {
   llm_qa: "LLM QA",
 };
 
+/* ═══════════════ Helpers ═══════════════ */
+
+/**
+ * Группирует taxonomy-опции по родительской зоне и сортирует subzones алфавитно
+ * внутри каждой группы. Возвращает <optgroup>'ы для использования в <select>.
+ *
+ * Структура `taxonomyOptions[i].value`:
+ *   - zone: `"synopsis"`, `"design"`, ...
+ *   - subzone: `"design.blinding_and_unblinding"`, `"ip.description"`, ...
+ *
+ * Если у zone нет subzones, выводится одна `<option>` без optgroup-обёртки
+ * (чтобы не было пустой группы в выпадашке).
+ */
+function GroupedZoneOptions({
+  options,
+}: {
+  options: Array<{ value: string; label: string; type: string }>;
+}) {
+  // Сортируем zones алфавитно по label.
+  const zones = options
+    .filter((o) => o.type === "zone")
+    .slice()
+    .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+
+  return (
+    <>
+      {zones.map((zone) => {
+        const subzones = options
+          .filter((s) => s.type === "subzone" && s.value.startsWith(zone.value + "."))
+          .slice()
+          .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+
+        if (subzones.length === 0) {
+          // Одинокая зона без subzones — без optgroup-обёртки, иначе будет
+          // пустая группа в UI.
+          return (
+            <option key={zone.value} value={zone.value}>
+              {zone.label}
+            </option>
+          );
+        }
+
+        return (
+          <optgroup key={zone.value} label={zone.label}>
+            <option value={zone.value}>{zone.label}</option>
+            {subzones.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </optgroup>
+        );
+      })}
+    </>
+  );
+}
+
 /* ═══════════════ ContentBlockPanel ═══════════════ */
 
 function ContentBlockPanel({ blocks }: { blocks: Section["contentBlocks"] }) {
@@ -324,11 +381,7 @@ function ClassificationDiffOverlay({
                     disabled={fixPending}
                   >
                     <option value="">— null —</option>
-                    {taxonomyOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
+                    <GroupedZoneOptions options={taxonomyOptions} />
                   </select>
                 )}
                 <button
@@ -872,20 +925,7 @@ function SectionClassificationEditor({
         className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:border-brand-500 focus:outline-none"
       >
         <option value="">— Не определена —</option>
-        {taxonomyOptions
-          .filter((o) => o.type === "zone")
-          .map((zone) => (
-            <optgroup key={zone.value} label={zone.label}>
-              <option value={zone.value}>{zone.label}</option>
-              {taxonomyOptions
-                .filter((s) => s.type === "subzone" && s.value.startsWith(zone.value + "."))
-                .map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-            </optgroup>
-          ))}
+        <GroupedZoneOptions options={taxonomyOptions} />
       </select>
       <button
         onClick={() => onSave(selected || null)}
@@ -1220,9 +1260,37 @@ export default function ClassificationTreeViewer({
   );
 
   // Individual classification update
+  // Optimistic update: правка standardSection отражается в кеше getVersion сразу.
+  // Invalidate только на onError (та же логика что в parsing-viewer — refetch после
+  // быстрых параллельных кликов мог перезаписывать кеш данными до применения мутаций).
   const updateClassification = trpc.document.updateSectionClassification.useMutation({
-    onSuccess: () => {
+    onMutate: async ({ sectionId, standardSection, classificationStatus }) => {
+      await utils.document.getVersion.cancel({ versionId });
+      const prev = utils.document.getVersion.getData({ versionId });
+      utils.document.getVersion.setData({ versionId }, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          sections: old.sections.map((s) =>
+            s.id === sectionId
+              ? {
+                  ...s,
+                  standardSection,
+                  ...(classificationStatus
+                    ? { classificationStatus: classificationStatus as typeof s.classificationStatus }
+                    : {}),
+                }
+              : s,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.document.getVersion.setData({ versionId }, ctx.prev);
       utils.document.getVersion.invalidate({ versionId });
+    },
+    onSuccess: () => {
       setEditingSectionId(null);
     },
   });
@@ -1241,10 +1309,34 @@ export default function ClassificationTreeViewer({
   // Мутация обновления expected_results JSON (для extra/missing в diff overlay).
   // Используется когда нужно добавить/изменить/удалить запись секции в эталоне,
   // а не только её standardSection в БД.
+  // Optimistic update для эталона: патч goldenDataset.getSample в кеше,
+  // родительский page.tsx через useQuery подхватит свежий expectedResults.
+  // Invalidate только на onError (см. parsing-viewer для подробностей race-fix'а).
   const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onSuccess: () => {
-      // Перепроверяем sample целиком чтобы page.tsx state и StagePanel synced
-      if (goldenSampleId) {
+    onMutate: async (input) => {
+      if (!goldenSampleId) return undefined;
+      await utils.goldenDataset.getSample.cancel({ id: goldenSampleId });
+      const prev = utils.goldenDataset.getSample.getData({ id: goldenSampleId });
+      utils.goldenDataset.getSample.setData({ id: goldenSampleId }, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          stageStatuses: old.stageStatuses.map((ss) =>
+            ss.stage === input.stage
+              ? {
+                  ...ss,
+                  expectedResults: (input.expectedResults ?? {}) as typeof ss.expectedResults,
+                  status: input.status as typeof ss.status,
+                }
+              : ss,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev && goldenSampleId) {
+        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
         utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
       }
     },

@@ -2,6 +2,19 @@
 
 ## 2026-05-03
 
+### UX: optimistic update в Classification Diff overlay
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/classification-viewer/ClassificationTreeViewer.tsx`:
+- Мутации `updateClassification` (standardSection секции) и `updateExpected` (эталон) переведены на optimistic update — клик «Применить» / «Принять в эталон» / «Удалить из эталона» в Diff overlay и в SectionClassificationEditor обновляет UI мгновенно, без 1–2 сек ожидания на refetch getVersion / goldenSample.
+- Invalidate только на onError (race-fix как в parsing-viewer): при быстрых параллельных кликах refetch завершившейся мутации не перезаписывает кеш данными до применения других pending мутаций.
+
+### UX: группировка zone select в Diff overlay Классификации
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/classification-viewer/ClassificationTreeViewer.tsx`:
+- Добавлен helper `GroupedZoneOptions` — рендерит `<optgroup>` per-zone с алфавитной сортировкой subzones внутри (русская локаль).
+- Применён в двух местах: select на строке Diff overlay (был flat-список всех zones+subzones подряд) и в `SectionClassificationEditor` (был optgroup без сортировки).
+- Зоны без subzones показываются как одиночные `<option>` без optgroup-обёртки, чтобы не было пустых групп.
+
 ### Fix: исключить isFalseHeading из генерации эталонного JSON
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx`:
