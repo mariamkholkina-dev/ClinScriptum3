@@ -177,7 +177,13 @@ app.get("/api/download/:versionId", async (req, res) => {
     res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
     res.setHeader("Content-Length", buffer.length);
     res.send(buffer);
-  } catch {
+  } catch (err) {
+    const { logger } = await import("./lib/logger.js");
+    logger.error("download failed", {
+      versionId: req.params.versionId,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     res.status(500).json({ error: "Download failed" });
   }
 });
