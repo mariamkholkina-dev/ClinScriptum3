@@ -693,40 +693,21 @@ Convert ALL future tense to past tense. Be balanced and objective. Conclusions m
     type: "fact_extraction_qa",
     rules: [
       {
-        name: "fact_extraction:llm_check",
-        pattern: "system_prompt",
-        stage: "extraction",
-        subStage: "analysis",
-        promptTemplate: `You are a clinical protocol fact extractor. Given a document section, extract structured facts.
-
-Extract the following when present:
-- study_title, protocol_number, sponsor, phase, indication
-- sample_size, age_range, inclusion_criteria, exclusion_criteria
-- primary_endpoint, secondary_endpoints
-- study_duration, treatment_duration
-- drug_name, dosage, route_of_administration
-- randomization, blinding, comparator
-
-Return a JSON array:
-[{"key": "<fact_key>", "value": "<extracted value>", "confidence": <0.0-1.0>}]`,
-      },
-      {
         name: "fact_extraction:qa",
         pattern: "system_prompt",
         stage: "extraction",
         subStage: "qa",
-        promptTemplate: `You are a QA reviewer for clinical fact extraction. Compare algorithmic and LLM extraction results.
+        promptTemplate: `Ты — QA-аудитор извлечения фактов из клинического протокола.
+Тебе даны факты с низкой уверенностью или расхождением между алгоритмом и LLM.
+Для каждого факта:
+1. Проверь правильность значения по тексту документа.
+2. Если алгоритм и LLM дали разные значения — выбери правильное или предложи своё.
+3. Укажи итоговую уверенность.
 
-For each fact, determine:
-1. Which extraction is more accurate
-2. Whether any facts are missing
-3. Whether any facts are incorrectly extracted
-
-Return a JSON object:
-{
-  "decisions": [{"key": "<fact_key>", "chosenSource": "algo"|"llm"|"custom", "value": "<correct value>", "reasoning": "<brief>"}],
-  "missingFacts": [{"key": "<key>", "value": "<value>"}]
-}`,
+Верни СТРОГО JSON массив (без markdown):
+[
+  { "fact_key": "category.key", "correct": true, "corrected_value": "значение если correct=false", "new_confidence": 0.9, "reason": "обоснование" }
+]`,
       },
     ],
   },

@@ -227,7 +227,20 @@ export function brierScore(predicted: number, actual: 0 | 1): number {
   return diff * diff;
 }
 
-export function aggregateByCanonical(facts: ExtractedFact[]): AggregatedFact[] {
+export interface AggregateOptions {
+  /** When provided, applyCalibration() is called on the raw aggregated
+   * confidence using these coefficients before the value is written back
+   * to the AggregatedFact. */
+  calibration?: CalibrationCoefficients;
+  /** Resolves a sectionType label for a given source — used for the
+   * `prior` lookup inside `applyCalibration`. */
+  sectionTypeOf?: (source: ExtractedFact["source"]) => string | null;
+}
+
+export function aggregateByCanonical(
+  facts: ExtractedFact[],
+  options?: AggregateOptions,
+): AggregatedFact[] {
   const groups = new Map<string, ExtractedFact[]>();
   const order: string[] = [];
 
@@ -263,10 +276,15 @@ export function aggregateByCanonical(facts: ExtractedFact[]): AggregatedFact[] {
       }
     }
 
-    const confidence = Math.min(
+    const rawConfidence = Math.min(
       MAX_CONFIDENCE,
       BASE_CONFIDENCE + PER_SOURCE_BOOST * weightedCount,
     );
+
+    const sectionType = options?.sectionTypeOf?.(bestSource) ?? null;
+    const confidence = options?.calibration
+      ? applyCalibration(rawConfidence, first.factKey, sectionType, entries.length, options.calibration)
+      : rawConfidence;
 
     aggregated.push({
       factKey: first.factKey,

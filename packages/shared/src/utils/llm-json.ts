@@ -92,6 +92,34 @@ export function parseLlmJson<T>(raw: string, schema: ZodSchema<T>): ParseResult<
 }
 
 /**
+ * Like `parseLlmJson`, but on validation failure invokes `retryFn` once
+ * with a hint string built from the Zod error and re-validates the
+ * second response. Use when the cost of a malformed payload is high
+ * (e.g. losing a whole fact-extraction call).
+ *
+ * The retry hint is passed to `retryFn` so the caller can prepend or
+ * append it to its prompt as it sees fit.
+ */
+export async function parseLlmJsonWithRetry<T>(
+  raw: string,
+  schema: ZodSchema<T>,
+  retryFn: (hint: string) => Promise<string>,
+): Promise<ParseResult<T>> {
+  const first = parseLlmJson(raw, schema);
+  if (first.ok) return first;
+  const hint = `Твой предыдущий ответ не прошёл валидацию схемы: ${first.error}. Повтори ответ строго в указанном JSON-формате, без пояснений.`;
+  let retryRaw: string;
+  try {
+    retryRaw = await retryFn(hint);
+  } catch (e) {
+    return { ok: false, error: `retry call failed: ${(e as Error).message}` };
+  }
+  const second = parseLlmJson(retryRaw, schema);
+  if (second.ok) return second;
+  return { ok: false, error: `retry also failed: ${second.error}`, raw: second.raw ?? first.raw };
+}
+
+/**
  * Common schemas used by fact-extraction prompts. Re-exported so
  * callers don't have to redefine them in every handler.
  */

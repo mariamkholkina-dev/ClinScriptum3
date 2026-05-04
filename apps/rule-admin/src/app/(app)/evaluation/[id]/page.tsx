@@ -349,6 +349,49 @@ export default function EvaluationDetailPage() {
         </div>
       </div>
 
+      {/* Fact-extraction coverage breakdown */}
+      {metrics.data?.factCoverage && (
+        <div className="mb-6">
+          <h2 className="mb-3 text-lg font-semibold text-gray-900">Покрытие извлечения фактов</h2>
+          <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-baseline gap-3">
+              <span className="text-sm text-gray-500">Общий recall</span>
+              <span className={`text-2xl font-bold ${f1Color(metrics.data.factCoverage.overallRecall)}`}>
+                {pct(metrics.data.factCoverage.overallRecall)}
+              </span>
+            </div>
+            <div className="overflow-hidden rounded border border-gray-200">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-gray-200 bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 font-medium text-gray-600">Ключ факта</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Ожидалось</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Извлечено</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Совпало</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Recall</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {Object.entries(metrics.data.factCoverage.byFactKey)
+                    .sort((a, b) => a[1].recall - b[1].recall)
+                    .map(([key, v]) => (
+                      <tr key={key}>
+                        <td className="px-3 py-2 font-mono text-xs text-gray-700">{key}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-600">{v.expected}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-600">{v.extracted}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-600">{v.matched}</td>
+                        <td className={`px-3 py-2 text-right font-mono font-semibold ${f1Color(v.recall)}`}>
+                          {pct(v.recall)}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stage metrics cards */}
       {allStages.length > 0 && (
         <div className="mb-6">

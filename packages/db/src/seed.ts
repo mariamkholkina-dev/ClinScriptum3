@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
+import { seedFactAnchors } from "./seed-fact-anchors.js";
 
 const prisma = new PrismaClient();
 
@@ -276,6 +277,9 @@ async function main() {
       },
     });
   }
+
+  console.log("Seeding fact_anchors RuleSet...");
+  await seedFactAnchors(prisma);
 
   console.log("Seed completed.");
 }

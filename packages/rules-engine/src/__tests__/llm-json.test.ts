@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import {
   parseLlmJson,
+  parseLlmJsonWithRetry,
   findJsonSpan,
   FactExtractionItemSchema,
   FactExtractionArraySchema,
@@ -95,5 +96,53 @@ describe("FactExtractionItemSchema defaults", () => {
     const r = FactExtractionItemSchema.parse({ fact_key: "x", value: "y" });
     expect(r.confidence).toBe(0.7);
     expect(r.source_text).toBe("");
+  });
+});
+
+describe("parseLlmJsonWithRetry", () => {
+  it("returns first parse if valid", async () => {
+    const retry = vi.fn();
+    const r = await parseLlmJsonWithRetry(
+      `[{"fact_key":"x","value":"y"}]`,
+      FactExtractionArraySchema,
+      retry,
+    );
+    expect(r.ok).toBe(true);
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("invokes retryFn with hint and returns retry result on success", async () => {
+    const retry = vi.fn().mockResolvedValue(`[{"fact_key":"x","value":"y"}]`);
+    const r = await parseLlmJsonWithRetry(
+      `garbage`,
+      FactExtractionArraySchema,
+      retry,
+    );
+    expect(retry).toHaveBeenCalledOnce();
+    const hint = retry.mock.calls[0]![0] as string;
+    expect(hint).toContain("не прошёл валидацию");
+    expect(r.ok).toBe(true);
+  });
+
+  it("returns failure when retry also invalid", async () => {
+    const retry = vi.fn().mockResolvedValue(`also garbage`);
+    const r = await parseLlmJsonWithRetry(
+      `garbage`,
+      FactExtractionArraySchema,
+      retry,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/retry also failed/);
+  });
+
+  it("returns failure when retry call throws", async () => {
+    const retry = vi.fn().mockRejectedValue(new Error("network"));
+    const r = await parseLlmJsonWithRetry(
+      `garbage`,
+      FactExtractionArraySchema,
+      retry,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/retry call failed: network/);
   });
 });
