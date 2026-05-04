@@ -2,6 +2,10 @@
 
 ## 2026-05-04
 
+### Security: `.gitignore` для локальных secret-файлов
+
+Добавлены паттерны `*.local` и `*.local.*` в `.gitignore`. Триггер: после merge `feat/dev-server-deploy-v2` (PR #46) в `deploy/` остался untracked `restore-passwords.local.txt` — sensitive файл с паролями, который при случайном `git add -A` мог уйти в commit. Существующие `.env.local`/`.env.*.local` покрывали только env-файлы; новые паттерны закрывают любые `*.local.*` (например `deploy/restore-passwords.local.txt`, `*.local.json`, `*.local.yaml`).
+
 ### Спринт 6 SoA detection robustness (commit 8/8): real F1 metrics на /soa странице
 
 Завершающий коммит Sprint 6 — заменяет placeholder F1 на странице `/soa` реальными метриками относительно `expectedResults` golden samples.
