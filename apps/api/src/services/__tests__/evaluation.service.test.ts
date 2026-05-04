@@ -16,12 +16,17 @@ vi.mock("@clinscriptum/db", () => ({
   },
 }));
 
+vi.mock("../../lib/queue.js", () => ({
+  enqueueJob: vi.fn(),
+}));
+
 vi.mock("../../lib/logger.js", () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
 import { prisma } from "@clinscriptum/db";
 import { evaluationService } from "../evaluation.service.js";
+import { enqueueJob } from "../../lib/queue.js";
 import { DomainError } from "../errors.js";
 
 const mockEvalRun = prisma.evaluationRun as unknown as {
@@ -36,6 +41,8 @@ const mockEvalResult = prisma.evaluationResult as unknown as {
   findMany: ReturnType<typeof vi.fn>;
   create: ReturnType<typeof vi.fn>;
 };
+
+const mockEnqueue = enqueueJob as unknown as ReturnType<typeof vi.fn>;
 
 const TENANT_A = "tenant-aaa";
 const TENANT_B = "tenant-bbb";
@@ -212,6 +219,72 @@ describe("evaluationService — tenant isolation", () => {
       const where = mockEvalRun.findMany.mock.calls[0][0].where;
       expect(where.tenantId).toBe(TENANT_A);
       expect(where.type).toBe("section_classification");
+    });
+  });
+
+  describe("createRun — worker enqueue", () => {
+    const USER_ID = "user-aaa";
+
+    it("enqueues run_evaluation for single type", async () => {
+      mockEvalRun.create.mockResolvedValue({ id: "run-1", tenantId: TENANT_A, type: "single" });
+
+      await evaluationService.createRun(TENANT_A, { type: "single", createdById: USER_ID });
+
+      expect(mockEnqueue).toHaveBeenCalledTimes(1);
+      expect(mockEnqueue).toHaveBeenCalledWith("run_evaluation", { evaluationRunId: "run-1" });
+    });
+
+    it("enqueues run_batch_evaluation for batch type", async () => {
+      mockEvalRun.create.mockResolvedValue({ id: "run-2", tenantId: TENANT_A, type: "batch" });
+
+      await evaluationService.createRun(TENANT_A, { type: "batch", createdById: USER_ID });
+
+      expect(mockEnqueue).toHaveBeenCalledTimes(1);
+      expect(mockEnqueue).toHaveBeenCalledWith("run_batch_evaluation", {
+        evaluationRunId: "run-2",
+      });
+    });
+
+    it("does not enqueue for llm_comparison (no handler yet)", async () => {
+      mockEvalRun.create.mockResolvedValue({
+        id: "run-3",
+        tenantId: TENANT_A,
+        type: "llm_comparison",
+      });
+
+      await evaluationService.createRun(TENANT_A, {
+        type: "llm_comparison",
+        createdById: USER_ID,
+      });
+
+      expect(mockEnqueue).not.toHaveBeenCalled();
+    });
+
+    it("does not enqueue for context_window_test", async () => {
+      mockEvalRun.create.mockResolvedValue({
+        id: "run-4",
+        tenantId: TENANT_A,
+        type: "context_window_test",
+      });
+
+      await evaluationService.createRun(TENANT_A, {
+        type: "context_window_test",
+        createdById: USER_ID,
+      });
+
+      expect(mockEnqueue).not.toHaveBeenCalled();
+    });
+
+    it("returns the created run record", async () => {
+      const created = { id: "run-5", tenantId: TENANT_A, type: "single" };
+      mockEvalRun.create.mockResolvedValue(created);
+
+      const result = await evaluationService.createRun(TENANT_A, {
+        type: "single",
+        createdById: USER_ID,
+      });
+
+      expect(result).toEqual(created);
     });
   });
 });
