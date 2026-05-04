@@ -2,6 +2,35 @@
 
 ## 2026-05-04
 
+### Спринт 7 SoA как контекст (commit 4/10): SoA-контекст в генерации ICF
+
+LLM, генерирующий разделы ICF, теперь получает структурированный SoA-блок из протокола. Это предотвращает галлюцинирование процедур/визитов и позволяет описывать реальное расписание участника на простом языке.
+
+`apps/workers/src/lib/soa-context.ts`:
+- `formatSoaContext(snapshot)` — рендерит `SoaSnapshot` в LLM-friendly блок:
+  ```
+  PROCEDURES SCHEDULE (FROM SOA):
+  - Informed consent: Screening
+  - Vital signs: Visit 1, Visit 2
+  
+  FOOTNOTES:
+  [1] Required only on fasted visits
+  ```
+  Визиты выводятся в каноническом порядке (Screening → Visit 1 → ...), а не алфавитно. Footnotes с пустым text отбрасываются. Возвращает null когда нет процедур.
+- `loadSoaContextForVersion(docVersionId)` — загружает все `SoaTable` версии, объединяет в union snapshot (multiple SoA tables → one schedule), вызывает formatSoaContext.
+
+`apps/workers/src/handlers/generate-icf.ts`:
+- Новый параметр `useSoaContext?: boolean` (default true) — позволяет отключить SoA-инъекцию через handler data.
+- Deterministic step: загружает SoA через loadSoaContextForVersion и передаёт `soaContextText` + `soaProcedureCount` в step data.
+- LLM check step: для секций из SOA_AWARE_ICF_SECTIONS = `{study_procedures, visits, risks_side_effects}` — добавляет SoA-блок в user prompt с инструкцией «Do not invent procedures or visits that are not in the SoA». Остальные секции (Confidentiality, Compensation, ...) не получают SoA-шум.
+- Step result содержит `soaContextUsed: boolean` для observability.
+
+Tests:
+- `apps/workers/src/lib/__tests__/soa-context.test.ts` — 7 тестов: empty snapshot → null, canonical visit order побеждает cell-order, footnotes section appended/filtered, procedure без visits, multi-table union, prisma query shape.
+- `apps/workers/src/handlers/__tests__/generate-icf.test.ts` — расширен 4 новыми тестами: deterministic loads SoA, injection only into SoA-aware sections, no SoA → no injection, useSoaContext=false → no injection.
+
+Итого: 11 новых тестов, общий счёт workers tests возрос с 90+ до 100+.
+
 ### Спринт 7 SoA как контекст (commit 3/10): SoA-impact findings в intra-doc-audit
 
 При обработке новой версии документа автоматически создаются findings о добавленных/удалённых процедурах в SoA по сравнению с предыдущей версией. Cell- и visit-уровневые изменения не promote'ятся в findings — они и так видны в diff-view (commit 2), а вот процедуры почти всегда требуют follow-up в тексте протокола, ICF и IB.

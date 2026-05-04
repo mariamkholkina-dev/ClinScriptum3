@@ -4,6 +4,7 @@ import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
 import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeline/orchestrator.js";
+import { loadSoaContextForVersion } from "../lib/soa-context.js";
 
 /**
  * URS-055..059, URS-081
@@ -46,12 +47,28 @@ const SECTION_TO_PROTOCOL_MAP: Record<string, string[]> = {
   visits: ["visit_schedule"],
 };
 
+/**
+ * ICF sections where the protocol's SoA materially shapes the text. We
+ * inject the formatted SoA context block into the prompt only for
+ * these — for sections like Confidentiality/Compensation the schedule
+ * is irrelevant noise.
+ */
+const SOA_AWARE_ICF_SECTIONS = new Set(["study_procedures", "visits", "risks_side_effects"]);
+
 export async function handleGenerateICF(data: {
   processingRunId: string;
   protocolVersionId: string;
   templateVersionId?: string;
   operatorReviewEnabled?: boolean;
+  /**
+   * Inject SoA context (procedure × visit list + footnotes) into the
+   * prompts for SoA-aware ICF sections. Default true. Commit 6 exposes
+   * this via the generation router so users can opt out.
+   */
+  useSoaContext?: boolean;
 }) {
+  const useSoaContext = data.useSoaContext ?? true;
+
   const deterministicHandler: PipelineStepHandler = {
     level: "deterministic",
     async execute(ctx: PipelineContext): Promise<StepResult> {
@@ -73,12 +90,18 @@ export async function handleGenerateICF(data: {
         where: { docVersionId: data.protocolVersionId },
       });
 
+      const soaContext = useSoaContext
+        ? await loadSoaContextForVersion(data.protocolVersionId)
+        : { snapshot: null, text: null };
+
       return {
         data: {
           protocolSectionsCount: protocolSections.length,
           factsCount: facts.length,
           protocolByStandard: Object.fromEntries(protocolByStandard),
           facts: facts.map((f) => ({ key: f.factKey, value: f.value })),
+          soaContextText: soaContext.text,
+          soaProcedureCount: soaContext.snapshot?.procedures.length ?? 0,
         },
         needsNextStep: true,
       };
@@ -99,6 +122,7 @@ export async function handleGenerateICF(data: {
       const prev = ctx.previousResults.get("deterministic");
       const protocolByStandard = (prev?.data?.protocolByStandard ?? {}) as Record<string, string>;
       const facts = (prev?.data?.facts ?? []) as Array<{ key: string; value: string }>;
+      const soaContextText = prev?.data?.soaContextText as string | null | undefined;
 
       const gateway = new LLMGateway({
         provider: llmConfig.provider as LLMProvider,
@@ -142,17 +166,33 @@ export async function handleGenerateICF(data: {
 
         const sectionPrompt = sectionPrompts.get(icfSection.standardSection) ?? fallbackPrompt;
 
+        const includeSoa =
+          useSoaContext &&
+          soaContextText &&
+          SOA_AWARE_ICF_SECTIONS.has(icfSection.standardSection);
+
+        const userParts = [
+          `Generate the ICF section "${icfSection.title}" based on the following protocol content:`,
+          "",
+          `PROTOCOL CONTENT:\n${trimmedSource}`,
+          "",
+          `KEY FACTS:\n${factsContext}`,
+        ];
+        if (includeSoa) {
+          userParts.push("", soaContextText);
+          userParts.push(
+            "",
+            "When describing procedures and visits, draw on the SoA above so the patient sees a complete and accurate schedule. Do not invent procedures or visits that are not in the SoA.",
+          );
+        }
+        userParts.push(
+          "",
+          "Generate clear, patient-friendly language for the informed consent form.",
+        );
+
         const response = await gateway.generate({
           system: sectionPrompt,
-          messages: [
-            {
-              role: "user",
-              content: `Generate the ICF section "${icfSection.title}" based on the following protocol content:\n\n` +
-                `PROTOCOL CONTENT:\n${trimmedSource}\n\n` +
-                `KEY FACTS:\n${factsContext}\n\n` +
-                `Generate clear, patient-friendly language for the informed consent form.`,
-            },
-          ],
+          messages: [{ role: "user", content: userParts.join("\n") }],
           maxTokens: llmConfig.maxTokens,
         });
 
@@ -167,6 +207,7 @@ export async function handleGenerateICF(data: {
         data: {
           generatedSections: generated.length,
           sections: generated,
+          soaContextUsed: useSoaContext && Boolean(soaContextText),
         },
         needsNextStep: true,
         llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,

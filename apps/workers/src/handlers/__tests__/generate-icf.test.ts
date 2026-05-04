@@ -4,6 +4,7 @@ import type { PipelineStepHandler, PipelineContext, StepResult } from "../../pip
 const {
   sectionFindMany,
   factFindMany,
+  soaTableFindMany,
   getEffectiveLlmConfig,
   loadRulesForType,
   llmGenerate,
@@ -12,6 +13,7 @@ const {
 } = vi.hoisted(() => ({
   sectionFindMany: vi.fn(),
   factFindMany: vi.fn(),
+  soaTableFindMany: vi.fn(),
   getEffectiveLlmConfig: vi.fn(),
   loadRulesForType: vi.fn(),
   llmGenerate: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock("@clinscriptum/db", () => ({
   prisma: {
     section: { findMany: sectionFindMany },
     fact: { findMany: factFindMany },
+    soaTable: { findMany: soaTableFindMany },
   },
   getEffectiveLlmConfig,
   toConfigSnapshot: vi.fn().mockReturnValue({}),
@@ -65,12 +68,15 @@ function makeContext(overrides: Partial<PipelineContext> = {}): PipelineContext 
   };
 }
 
-async function captureHandlers(): Promise<Map<string, PipelineStepHandler>> {
+async function captureHandlers(
+  overrides: { useSoaContext?: boolean } = {},
+): Promise<Map<string, PipelineStepHandler>> {
   runPipelineMock.mockResolvedValueOnce(undefined);
   const { handleGenerateICF } = await import("../generate-icf.js");
   await handleGenerateICF({
     processingRunId: RUN_ID,
     protocolVersionId: PROTOCOL_VERSION_ID,
+    ...overrides,
   });
   const [, , handlers] = runPipelineMock.mock.calls[0];
   return handlers as Map<string, PipelineStepHandler>;
@@ -83,7 +89,26 @@ beforeEach(() => {
     sectionPrompts: new Map(),
   });
   loadRulesForType.mockResolvedValue(null);
+  // Default: no SoA. Individual tests override.
+  soaTableFindMany.mockResolvedValue([]);
 });
+
+function makeSoaTable(visits: string[], cells: Array<{ proc: string; visit: string; value: string }>) {
+  return {
+    headerData: { visits },
+    cells: cells.map((c, i) => ({
+      rowIndex: i,
+      colIndex: visits.indexOf(c.visit),
+      procedureName: c.proc,
+      visitName: c.visit,
+      rawValue: c.value,
+      normalizedValue: c.value,
+      manualValue: null,
+      markerSources: ["text"],
+    })),
+    soaFootnotes: [],
+  };
+}
 
 describe("handleGenerateICF", () => {
   it("invokes runPipeline with deterministic + llm_check handlers", async () => {
@@ -308,6 +333,115 @@ describe("handleGenerateICF", () => {
       // budget mocked to 10000
       expect(call[0].messages[0].content).toContain("A".repeat(10000));
       expect(call[0].messages[0].content).not.toContain("A".repeat(10001));
+    });
+
+    describe("SoA context (Sprint 7 commit 4)", () => {
+      const SOA_PREV_RESULTS = (soaContextText: string | null) =>
+        new Map<any, any>([
+          [
+            "deterministic",
+            {
+              data: {
+                protocolByStandard: {
+                  study_design: "Source for procedures",
+                  visit_schedule: "Source for visits",
+                  safety_assessments: "Source for risks",
+                  ethics: "Source for confidentiality",
+                },
+                facts: [],
+                soaContextText,
+                soaProcedureCount: soaContextText ? 2 : 0,
+              },
+            },
+          ],
+        ]) as any;
+
+      function setupLlm() {
+        getEffectiveLlmConfig.mockResolvedValueOnce({
+          apiKey: "sk-x",
+          provider: "openai",
+          model: "gpt-4",
+          temperature: 0.3,
+          maxTokens: 4096,
+        });
+        llmGenerate.mockResolvedValue({ content: "x", usage: {} });
+      }
+
+      it("loads SoA in deterministic step and exposes it to llm_check", async () => {
+        const handlers = await captureHandlers();
+        sectionFindMany.mockResolvedValueOnce([]);
+        factFindMany.mockResolvedValueOnce([]);
+        soaTableFindMany.mockResolvedValueOnce([
+          makeSoaTable(["Screening", "Visit 1"], [
+            { proc: "Informed consent", visit: "Screening", value: "X" },
+            { proc: "Vital signs", visit: "Visit 1", value: "X" },
+          ]),
+        ]);
+
+        const detResult = await handlers.get("deterministic")!.execute(makeContext());
+        expect(detResult.data.soaProcedureCount).toBe(2);
+        expect(detResult.data.soaContextText).toContain("Informed consent: Screening");
+        expect(detResult.data.soaContextText).toContain("Vital signs: Visit 1");
+      });
+
+      it("injects SoA into study_procedures and visits prompts only", async () => {
+        const handlers = await captureHandlers();
+        setupLlm();
+
+        const soaText =
+          "PROCEDURES SCHEDULE (FROM SOA):\n- Informed consent: Screening\n- Vital signs: Visit 1, Visit 2";
+        const result = await handlers.get("llm_check")!.execute(
+          makeContext({ previousResults: SOA_PREV_RESULTS(soaText) }),
+        );
+
+        expect(result.data.soaContextUsed).toBe(true);
+
+        const proceduresCall = llmGenerate.mock.calls.find((c) =>
+          c[0].messages[0].content.includes("Study Procedures"),
+        );
+        const visitsCall = llmGenerate.mock.calls.find((c) =>
+          c[0].messages[0].content.includes("Visits and Procedures Schedule"),
+        );
+        const confidentialityCall = llmGenerate.mock.calls.find((c) =>
+          c[0].messages[0].content.includes("Confidentiality"),
+        );
+
+        expect(proceduresCall![0].messages[0].content).toContain("PROCEDURES SCHEDULE (FROM SOA)");
+        expect(visitsCall![0].messages[0].content).toContain("PROCEDURES SCHEDULE (FROM SOA)");
+        // Confidentiality must NOT receive SoA — irrelevant noise.
+        expect(confidentialityCall![0].messages[0].content).not.toContain("PROCEDURES SCHEDULE (FROM SOA)");
+      });
+
+      it("does nothing special when protocol has no SoA (soaContextText=null)", async () => {
+        const handlers = await captureHandlers();
+        setupLlm();
+
+        const result = await handlers.get("llm_check")!.execute(
+          makeContext({ previousResults: SOA_PREV_RESULTS(null) }),
+        );
+
+        expect(result.data.soaContextUsed).toBe(false);
+        for (const call of llmGenerate.mock.calls) {
+          expect(call[0].messages[0].content).not.toContain("PROCEDURES SCHEDULE (FROM SOA)");
+        }
+      });
+
+      it("respects useSoaContext=false even when SoA is available", async () => {
+        const handlers = await captureHandlers({ useSoaContext: false });
+        setupLlm();
+
+        // Pretend the deterministic step still ran with useSoaContext off — text is null.
+        // Even if a stray text leaked through, the handler must skip injection.
+        const soaText = "PROCEDURES SCHEDULE (FROM SOA):\n- Informed consent: Screening";
+        const result = await handlers.get("llm_check")!.execute(
+          makeContext({ previousResults: SOA_PREV_RESULTS(soaText) }),
+        );
+
+        expect(result.data.soaContextUsed).toBe(false);
+        for (const call of llmGenerate.mock.calls) {
+          expect(call[0].messages[0].content).not.toContain("PROCEDURES SCHEDULE (FROM SOA)");
+        }
+      });
     });
 
     it("propagates LLM errors (no swallowing)", async () => {
