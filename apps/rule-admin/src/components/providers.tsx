@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, TRPCClientError } from "@trpc/client";
 import superjson from "superjson";
 import { trpc } from "@/lib/trpc";
 import { useAuthStore } from "@/lib/auth-store";
+import { ToastContainer, toast } from "@/components/Toast";
 
 async function tryRefreshToken(): Promise<string | null> {
   const refreshToken = localStorage.getItem("refreshToken");
@@ -38,6 +39,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
+        mutationCache: new MutationCache({
+          onError: (error, _vars, _ctx, mutation) => {
+            if (mutation.options.onError) return;
+            const message =
+              error instanceof Error ? error.message : "Произошла ошибка при выполнении операции";
+            toast.error(message);
+          },
+        }),
         defaultOptions: {
           queries: {
             retry(failureCount, error) {
@@ -90,7 +99,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        {children}
+        <ToastContainer />
+      </QueryClientProvider>
     </trpc.Provider>
   );
 }
