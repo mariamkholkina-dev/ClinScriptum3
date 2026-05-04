@@ -2,6 +2,30 @@
 
 ## 2026-05-04
 
+### Спринт 7 SoA как контекст (commit 1/10): snapshot + diff service
+
+Старт Sprint 7 — превращение SoA из изолированной структуры в first-class контекст для генерации, валидации, сравнения и impact analysis. Этот коммит закладывает фундамент: stable snapshot формат + diff между двумя `DocumentVersion`.
+
+Schema (`packages/db/prisma/schema.prisma`):
+- `SoaTable.snapshotJson Json?` — кэшированный сериализованный вид SoA для быстрого diff. Лениво вычисляется при первом сравнении.
+- 4 новых значения в `enum FindingType`: `soa_procedure_added`, `soa_procedure_removed`, `soa_inconsistent_with_text`, `icf_missing_soa_procedure` (используются в commits 3/7/8).
+- Миграция `20260504130000_add_soa_snapshot_and_finding_types`.
+
+`apps/api/src/lib/soa-snapshot.ts` — pure-функции:
+- `buildSoaSnapshot(table)` → `{ visits, procedures, cells, footnotes }`. Cell value = `manualValue ?? normalizedValue ?? rawValue`. Только non-empty cells. Stable sort по `(procedure, visit)`. Footnote anchors переведены в `cellRef = "procedure|visit"` чтобы оставаться сравнимыми между версиями (UUID'ы ячеек различаются).
+- `diffSoaSnapshots(oldSnap, newSnap)` → `SoaDiff` с `addedProcedures/removedProcedures/addedVisits/removedVisits/cellChanges/footnoteChanges/unchanged`. `cellChanges` различает added (`oldValue=null`), removed (`newValue=null`), edited (оба значения). `footnoteChanges` — `added | removed | edited`.
+
+`apps/api/src/services/soa-comparison.service.ts`:
+- `compareSoaTables(tenantId, oldVersionId, newVersionId)` — загружает обе версии с SoaTable+cells+footnotes+anchors, валидирует tenant через `requireTenantResource`, строит/читает кэшированный snapshot, объединяет несколько SoaTable одной версии в union snapshot (epoch-A + epoch-B → один schedule), считает diff.
+- Кэширование: snapshot сохраняется в `SoaTable.snapshotJson` после первого расчёта; повторные сравнения читают из кэша.
+- Тенант-isolation на обеих версиях.
+
+Tests:
+- `apps/api/src/lib/__tests__/soa-snapshot.test.ts` — 11 тестов: build (visits/procedures/cells), preferences (manualValue > normalizedValue > rawValue), footnote anchors as cellRef, empty headerData, stable order; diff (identical, added/removed procedures+visits, cell value changes, footnote add/remove/edit, null snapshots).
+- `apps/api/src/services/__tests__/soa-comparison.service.test.ts` — 8 тестов с mock prisma: added/removed procedures, snapshot caching skip, empty old version, BAD_REQUEST на same id, NOT_FOUND на missing version, cross-tenant rejection, multi-table union, cell-move detection.
+
+Итого 19 новых unit-тестов.
+
 ### Security: `.gitignore` для локальных secret-файлов
 
 Добавлены паттерны `*.local` и `*.local.*` в `.gitignore`. Триггер: после merge `feat/dev-server-deploy-v2` (PR #46) в `deploy/` остался untracked `restore-passwords.local.txt` — sensitive файл с паролями, который при случайном `git add -A` мог уйти в commit. Существующие `.env.local`/`.env.*.local` покрывали только env-файлы; новые паттерны закрывают любые `*.local.*` (например `deploy/restore-passwords.local.txt`, `*.local.json`, `*.local.yaml`).

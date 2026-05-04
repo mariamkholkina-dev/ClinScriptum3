@@ -7,6 +7,7 @@ export { auditService } from "./audit.service.js";
 export { studyService } from "./study.service.js";
 export { generationService } from "./generation.service.js";
 export { comparisonService } from "./comparison.service.js";
+export { soaComparisonService } from "./soa-comparison.service.js";
 export { findingReviewService } from "./finding-review.service.js";
 export { tuningService } from "./tuning.service.js";
 export { ruleManagementService } from "./rule-management.service.js";

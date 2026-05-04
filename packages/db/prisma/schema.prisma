@@ -340,6 +340,10 @@ enum FindingType {
   semantic
   intra_audit
   inter_audit
+  soa_procedure_added
+  soa_procedure_removed
+  soa_inconsistent_with_text
+  icf_missing_soa_procedure
 }
 
 enum FindingStatus {
@@ -475,6 +479,11 @@ model SoaTable {
   /// extractTableGeometry at detect time. Used together with `drawings`
   /// to render arrows over cells in the UI without re-parsing the DOCX.
   cellGeometry        Json?           @map("cell_geometry") @db.JsonB
+  /// Stable serialized snapshot of the SoA used for cross-version diff
+  /// (Sprint 7). Shape: { visits, procedures, cells, footnotes } — see
+  /// `apps/api/src/lib/soa-snapshot.ts`. Lazily computed and cached on
+  /// first read; recomputed when cells/footnotes change.
+  snapshotJson        Json?           @map("snapshot_json") @db.JsonB
   createdAt           DateTime        @default(now()) @map("created_at")
 
   docVersion       DocumentVersion     @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
