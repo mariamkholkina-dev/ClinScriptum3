@@ -13,6 +13,7 @@
     "baseline": "tsx --env-file=../../.env scripts/run-baseline-evaluation.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3",
     "@clinscriptum/db": "*",
     "@clinscriptum/shared": "*",
     "@clinscriptum/doc-parser": "*",
