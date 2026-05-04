@@ -23,7 +23,8 @@
     "seed:facts": "tsx --env-file=../../.env src/seed-fact-registry.ts",
     "seed:all": "tsx --env-file=../../.env src/seed.ts && tsx --env-file=../../.env src/seed-taxonomy.ts && tsx --env-file=../../.env src/seed-fact-registry.ts && tsx --env-file=../../.env src/seed-prompts.ts",
     "lint": "eslint src/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@prisma/client": "^6",

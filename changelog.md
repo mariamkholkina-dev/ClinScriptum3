@@ -2,6 +2,12 @@
 
 ## 2026-05-05
 
+### Tests: покрытие seed builder + getFactExtractionSummary
+
+Покрыта новая логика из PR #51 (review feedback):
+- `packages/db/src/__tests__/seed-fact-section-priors.test.ts` — 7 тестов на `FACT_SECTION_PRIORS_BUILDER`: ≥60 priors, наличие deterministic-only ключей (`protocol_number` и т.п.), наличие YAML-only ключей (`protocol_id`, `phase` и т.п.), merge при дубликатах (`inclusion_criteria`), дедупликация и сортировка `expectedSections`, sorted by factKey. Добавлен `vitest.config.ts` + `test` script в `packages/db/package.json` (vitest уже hoisted в root node_modules).
+- `apps/api/src/services/__tests__/processing.service.test.ts` — 6 тестов на `getFactExtractionSummary`: tenant guard, run=null когда нет fact_extraction run'а, агрегация failures из flat shape `ProcessingStep.result`, поддержка legacy `data` wrapper, разбиение фактов по confidence-bucket'ам (high/mid/low + validated + contradictions), фильтр на `type='fact_extraction'` (не на другие run-types).
+
 ### Архитектурное разделение UI surfaces (CLAUDE.md)
 
 Добавлен раздел «UI surfaces and audiences» в `CLAUDE.md`. Зафиксировано: каждый этап пайплайна (parsing / classification / fact extraction / SoA / audit / generation / evaluation / impact) имеет **две UI-поверхности**:

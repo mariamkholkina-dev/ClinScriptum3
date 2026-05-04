@@ -7,8 +7,12 @@ vi.mock("@clinscriptum/db", () => ({
     },
     processingRun: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       create: vi.fn(),
+    },
+    fact: {
+      findMany: vi.fn(),
     },
   },
   resolveActiveBundle: vi.fn().mockResolvedValue("bundle-1"),
@@ -28,8 +32,12 @@ const mockVersion = prisma.documentVersion as unknown as {
 };
 const mockRun = prisma.processingRun as unknown as {
   findUnique: ReturnType<typeof vi.fn>;
+  findFirst: ReturnType<typeof vi.fn>;
   findMany: ReturnType<typeof vi.fn>;
   create: ReturnType<typeof vi.fn>;
+};
+const mockFact = prisma.fact as unknown as {
+  findMany: ReturnType<typeof vi.fn>;
 };
 
 const TENANT_A = "tenant-aaa";
@@ -124,6 +132,116 @@ describe("processingService", () => {
       expect(mockRun.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { docVersionId: VERSION_ID, study: { tenantId: TENANT_A } },
+        }),
+      );
+    });
+  });
+
+  describe("getFactExtractionSummary", () => {
+    it("throws NOT_FOUND when document version doesn't belong to tenant", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion(TENANT_A));
+
+      await expect(
+        processingService.getFactExtractionSummary(TENANT_B, VERSION_ID),
+      ).rejects.toThrow(DomainError);
+    });
+
+    it("returns run=null when no fact_extraction run exists", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockRun.findFirst.mockResolvedValue(null);
+      mockFact.findMany.mockResolvedValue([]);
+
+      const result = await processingService.getFactExtractionSummary(TENANT_A, VERSION_ID);
+
+      expect(result.run).toBeNull();
+      expect(result.failures).toEqual({
+        parseErrors: 0,
+        skippedSections: 0,
+        llmRetries: 0,
+        totalTokens: 0,
+        stepFailures: 0,
+      });
+      expect(result.facts.total).toBe(0);
+    });
+
+    it("aggregates failure counters from ProcessingStep.result (flat shape)", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockRun.findFirst.mockResolvedValue({
+        id: "run-1",
+        status: "completed",
+        createdAt: new Date("2026-05-01"),
+        attemptNumber: 1,
+        steps: [
+          { status: "completed", result: { parseErrors: 2, skippedSections: 1, retries: 3, totalTokens: 1000 } },
+          { status: "completed", result: { parseErrors: 1, totalTokens: 500 } },
+          { status: "failed", result: null },
+          { status: "skipped", result: null },
+        ],
+      });
+      mockFact.findMany.mockResolvedValue([]);
+
+      const result = await processingService.getFactExtractionSummary(TENANT_A, VERSION_ID);
+
+      expect(result.run?.id).toBe("run-1");
+      expect(result.run?.stepCount).toBe(4);
+      expect(result.failures.parseErrors).toBe(3);
+      expect(result.failures.skippedSections).toBe(1);
+      expect(result.failures.llmRetries).toBe(3);
+      expect(result.failures.totalTokens).toBe(1500);
+      expect(result.failures.stepFailures).toBe(1);
+    });
+
+    it("supports legacy result shape with `data` wrapper", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockRun.findFirst.mockResolvedValue({
+        id: "run-2",
+        status: "completed",
+        createdAt: new Date(),
+        attemptNumber: 1,
+        steps: [
+          { status: "completed", result: { data: { parseErrors: 5, skippedSections: 2 } } },
+        ],
+      });
+      mockFact.findMany.mockResolvedValue([]);
+
+      const result = await processingService.getFactExtractionSummary(TENANT_A, VERSION_ID);
+
+      expect(result.failures.parseErrors).toBe(5);
+      expect(result.failures.skippedSections).toBe(2);
+    });
+
+    it("buckets facts by confidence (high/mid/low)", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockRun.findFirst.mockResolvedValue(null);
+      mockFact.findMany.mockResolvedValue([
+        { confidence: 0.95, hasContradiction: false, status: "extracted" },
+        { confidence: 0.85, hasContradiction: false, status: "validated" },
+        { confidence: 0.7, hasContradiction: true, status: "extracted" },
+        { confidence: 0.5, hasContradiction: false, status: "extracted" },
+        { confidence: 0.3, hasContradiction: false, status: "extracted" },
+        { confidence: 0.1, hasContradiction: false, status: "extracted" },
+      ]);
+
+      const result = await processingService.getFactExtractionSummary(TENANT_A, VERSION_ID);
+
+      expect(result.facts.total).toBe(6);
+      expect(result.facts.highConfidence).toBe(2); // 0.95, 0.85
+      expect(result.facts.midConfidence).toBe(2); // 0.7, 0.5
+      expect(result.facts.lowConfidence).toBe(2); // 0.3, 0.1
+      expect(result.facts.validated).toBe(1);
+      expect(result.facts.contradictions).toBe(1);
+    });
+
+    it("filters fact_extraction runs only", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockRun.findFirst.mockResolvedValue(null);
+      mockFact.findMany.mockResolvedValue([]);
+
+      await processingService.getFactExtractionSummary(TENANT_A, VERSION_ID);
+
+      expect(mockRun.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { docVersionId: VERSION_ID, type: "fact_extraction" },
         }),
       );
     });
