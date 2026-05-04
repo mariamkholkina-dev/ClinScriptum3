@@ -2,6 +2,10 @@
 
 ## 2026-05-04
 
+### Fix: `npm run db:seed` теперь подхватывает `.env`
+
+`packages/db/package.json` — все seed-скрипты (`seed`, `seed:prompts`, `seed:taxonomy`, `seed:facts`, `seed:all`) теперь запускаются через `tsx --env-file=../../.env`. Раньше падали с `Environment variable not found: DATABASE_URL` если запустить через `npm run`. Workaround был — `npx tsx --env-file=.env packages/db/src/seed.ts` напрямую. Найдено при проверке A1 на dev-сервере.
+
 ### Sprint 6 fact-extraction: section priors + UI failure visibility (A1+A2+A3)
 
 Закрывает «быстрые победы» из плана улучшения качества fact-extraction. Без изменений в алгоритмах — задействует уже написанные, но не засеянные/не выставленные наружу инфраструктурные хуки.
