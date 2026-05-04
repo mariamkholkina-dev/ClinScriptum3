@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-05-04
+
+### Процесс: параллельные Claude-сессии через git worktree
+
+Раньше несколько одновременных сессий Claude Code в одной директории `C:\Users\0\ClinScriptum3` ломали друг другу working tree: `git checkout` одной откатывал чужие правки, `git stash` сгребал чужие uncommitted-изменения, `commit` мог уйти на ветку, на которую только что переключилась параллельная сессия.
+
+Решение — по одному git worktree на каждую активную ветку. Создано 8 worktree рядом с основным checkout:
+
+- `ClinScriptum3-master` (master, для hotfix/review)
+- `ClinScriptum3-scratch` (новая `feat/scratch` от master, под ad-hoc задачи)
+- `ClinScriptum3-soa-cleanup-legacy`, `ClinScriptum3-soa-llm-verification`, `ClinScriptum3-soa-drawings`, `ClinScriptum3-soa-orientation` (активные SoA фичи)
+- `ClinScriptum3-fact-extraction-followups`, `ClinScriptum3-dev-server-deploy`
+
+`CLAUDE.md`:
+- Новый раздел `## Parallel Claude Code Sessions` — таблица существующих worktree, команды создания/удаления, ограничения (один бранч в одном worktree, общие порты dev-серверов, общие docker-сервисы).
+- В `### Common gotchas` — строка про `npm ci` + `db:generate` при первом запуске в свежем worktree (node_modules и Prisma client лежат per working tree, не в общем `.git`).
+- В `## Development Process (Plan & Act)` — шаг 0 «Pick the worktree» перед Plan.
+
+Каждая Claude-сессия теперь запускается из своей директории; общая `.git`, изолированный working tree, push/pull/PR работают как обычно.
+
 ## 2026-05-03
 
 ### UX: breadcrumb родителей в Diff overlay (Парсинг и Классификация)
