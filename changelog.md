@@ -2,6 +2,16 @@
 
 ## 2026-05-04
 
+### Evaluation: createRun теперь enqueue'ит job
+
+`evaluationService.createRun` создавал запись в `evaluation_runs` со status=queued, но job в BullMQ не отправлял — runs, созданные через UI rule-admin → /evaluation → «Новая оценка», застревали навсегда. Старые run'ы запускались через CLI скрипты.
+
+`apps/api/src/services/evaluation.service.ts`:
+- После `prisma.evaluationRun.create` маппим `EvaluationRunType` → job name (`single` → `run_evaluation`, `batch` → `run_batch_evaluation`) и вызываем `enqueueJob` с `{ evaluationRunId }` (handler-ы ничего больше не ждут).
+- `llm_comparison` и `context_window_test` пока не имеют worker handler'ов — для них логируется warning, run остаётся `queued`. Поведение прежнее, но видимое.
+
+Tests: `apps/api/src/services/__tests__/evaluation.service.test.ts` — 5 unit-кейсов через моки prisma + queue (single/batch enqueue, llm_comparison/context_window_test no-op, return value).
+
 ### Security: `.gitignore` для локальных secret-файлов
 
 Добавлены паттерны `*.local` и `*.local.*` в `.gitignore`. Триггер: после merge `feat/dev-server-deploy-v2` (PR #46) в `deploy/` остался untracked `restore-passwords.local.txt` — sensitive файл с паролями, который при случайном `git add -A` мог уйти в commit. Существующие `.env.local`/`.env.*.local` покрывали только env-файлы; новые паттерны закрывают любые `*.local.*` (например `deploy/restore-passwords.local.txt`, `*.local.json`, `*.local.yaml`).

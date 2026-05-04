@@ -1,6 +1,7 @@
 import { prisma } from "@clinscriptum/db";
 import type { ContextStrategy, EvaluationRunType } from "@prisma/client";
 import { DomainError } from "./errors.js";
+import { enqueueJob } from "../lib/queue.js";
 import { logger } from "../lib/logger.js";
 import {
   computeSoaMetrics,
@@ -23,7 +24,7 @@ export const evaluationService = {
       comparedToRunId?: string;
     },
   ) {
-    return prisma.evaluationRun.create({
+    const run = await prisma.evaluationRun.create({
       data: {
         tenantId,
         name: data.name,
@@ -37,6 +38,25 @@ export const evaluationService = {
         comparedToRunId: data.comparedToRunId,
       },
     });
+
+    const jobName =
+      data.type === "single"
+        ? "run_evaluation"
+        : data.type === "batch"
+          ? "run_batch_evaluation"
+          : null;
+
+    if (jobName) {
+      await enqueueJob(jobName, { evaluationRunId: run.id });
+      logger.info("Evaluation job enqueued", { evaluationRunId: run.id, jobName });
+    } else {
+      logger.warn(
+        "Evaluation type has no worker handler — run stays queued until handler is added",
+        { evaluationRunId: run.id, type: data.type },
+      );
+    }
+
+    return run;
   },
 
   async getRun(id: string, tenantId: string) {
