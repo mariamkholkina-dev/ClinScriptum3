@@ -2,6 +2,7 @@ import { z } from "zod";
 import { router, protectedProcedure } from "../trpc/trpc.js";
 import { withDomainErrors } from "../trpc/error-mapper.js";
 import { comparisonService } from "../services/comparison.service.js";
+import { soaComparisonService } from "../services/soa-comparison.service.js";
 
 const p = protectedProcedure.use(withDomainErrors);
 
@@ -15,6 +16,21 @@ export const comparisonRouter = router({
     )
     .mutation(({ ctx, input }) =>
       comparisonService.compare(ctx.user.tenantId, input.oldVersionId, input.newVersionId),
+    ),
+
+  compareSoa: p
+    .input(
+      z.object({
+        oldVersionId: z.string().uuid(),
+        newVersionId: z.string().uuid(),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      soaComparisonService.compareSoaTables(
+        ctx.user.tenantId,
+        input.oldVersionId,
+        input.newVersionId,
+      ),
     ),
 
   impactAnalysis: p

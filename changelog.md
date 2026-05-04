@@ -2,6 +2,23 @@
 
 ## 2026-05-04
 
+### Спринт 7 SoA как контекст (commit 2/10): UI для сравнения SoA версий
+
+Расширение страницы сравнения версий протокола вкладкой «SoA» с side-by-side таблицами и подсветкой изменений.
+
+`apps/api/src/routers/comparison.ts`:
+- Новая tRPC procedure `comparison.compareSoa` (query) — обёртка над `soaComparisonService.compareSoaTables`. Принимает `oldVersionId/newVersionId`, возвращает `{ oldSnapshot, newSnapshot, diff }`.
+
+`apps/web/src/app/(app)/compare/[newVersionId]/[oldVersionId]/`:
+- Новый компонент `soa-diff-view.tsx`:
+  - `DiffSummary` — 6 счётчиков: добавленные/удалённые процедуры, добавленные/удалённые визиты, изменения ячеек, изменения сносок. Цветовое выделение когда count > 0.
+  - `SideBySideMatrix` — два панеля «SoA · oldLabel» и «SoA · newLabel» с матрицей procedures × visits. Sticky header и sticky первая колонка. Подсветка: зелёный = добавлено (только в new), красный = удалено (только в old), жёлтый = ячейка изменена (в обеих).
+  - `FootnoteChanges` — список added/removed/edited сносок с before/after текстом для edited.
+  - Empty states: «SoA не обнаружена» (обе пусты), «SoA идентична» (unchanged), «SoA отсутствует в этой версии» (одна сторона пуста).
+- В `page.tsx` — таб-переключатель «Секции и факты / SoA». Активный таб подсвечивается brand-цветом, у sections есть бэдж количества изменений.
+
+Tests: typecheck/lint/test 33/33 turbo-tasks без ошибок (все 221 api-тест проходят).
+
 ### Спринт 7 SoA как контекст (commit 1/10): snapshot + diff service
 
 Старт Sprint 7 — превращение SoA из изолированной структуры в first-class контекст для генерации, валидации, сравнения и impact analysis. Этот коммит закладывает фундамент: stable snapshot формат + diff между двумя `DocumentVersion`.

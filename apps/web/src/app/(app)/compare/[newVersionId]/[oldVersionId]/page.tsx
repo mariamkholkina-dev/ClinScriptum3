@@ -15,6 +15,9 @@ import {
   FileText,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
+import { SoaDiffView } from "./soa-diff-view";
+
+type Tab = "sections" | "soa";
 
 export default function ProtocolComparisonPage() {
   const { newVersionId, oldVersionId } = useParams<{
@@ -84,6 +87,7 @@ export default function ProtocolComparisonPage() {
   };
 
   const [selectedChangeIdx, setSelectedChangeIdx] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("sections");
 
   return (
     <div className="flex h-full flex-col">
@@ -165,8 +169,53 @@ export default function ProtocolComparisonPage() {
         </div>
       )}
 
-      {/* Results */}
+      {/* Tabs */}
       {result && (
+        <div className="mb-4 border-b border-gray-200">
+          <nav className="-mb-px flex gap-6">
+            <button
+              onClick={() => setActiveTab("sections")}
+              className={cn(
+                "border-b-2 px-1 py-2 text-sm font-medium transition-colors",
+                activeTab === "sections"
+                  ? "border-brand-600 text-brand-700"
+                  : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700",
+              )}
+            >
+              Секции и факты
+              <span className="ml-2 inline-flex items-center justify-center rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-xs">
+                {changesCount}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab("soa")}
+              className={cn(
+                "border-b-2 px-1 py-2 text-sm font-medium transition-colors",
+                activeTab === "soa"
+                  ? "border-brand-600 text-brand-700"
+                  : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700",
+              )}
+            >
+              SoA
+            </button>
+          </nav>
+        </div>
+      )}
+
+      {/* SoA tab */}
+      {result && activeTab === "soa" && (
+        <div className="flex-1 overflow-auto">
+          <SoaDiffView
+            oldVersionId={oldVersionId}
+            newVersionId={newVersionId}
+            oldLabel={oldLabel}
+            newLabel={newLabel}
+          />
+        </div>
+      )}
+
+      {/* Results */}
+      {result && activeTab === "sections" && (
         <div className="grid grid-cols-12 gap-6 flex-1 min-h-0">
           {/* Left panel: List of changes */}
           <div className="col-span-5 flex flex-col min-h-0">
