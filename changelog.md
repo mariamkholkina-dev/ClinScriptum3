@@ -2,6 +2,19 @@
 
 ## 2026-05-04
 
+### Rule-admin: глобальный toast на ошибки мутаций
+
+Раньше провалившиеся tRPC-мутации в rule-admin падали молча (например quick-fix кнопки в `/golden-dataset/[id]/parsing-viewer` и `/classification-viewer` — пользователь видел только то, что строка не исчезает). Inline-toast был только в `/llm-config`.
+
+`apps/rule-admin/src/components/Toast.tsx` (новый):
+- Переиспользуемый `<ToastContainer />` + функции `toast.success/error/info`. Module-level event listener'ы, без зависимостей (Tailwind + lucide-react уже есть).
+- Стили: success/error/info через зелёный/красный/синий, авто-dismiss 5s, click для закрытия раньше.
+
+`apps/rule-admin/src/components/providers.tsx`:
+- В `QueryClient` добавлен `mutationCache: new MutationCache({ onError })` — глобальный fallback для всех мутаций без своего `onError`. Сообщение из `error.message`.
+- `<ToastContainer />` смонтирован в дереве провайдеров.
+- Локальные `onError` (как в `/llm-config`) продолжают работать — глобальный toast их не дублирует (`if (mutation.options.onError) return`).
+
 ### Security: `.gitignore` для локальных secret-файлов
 
 Добавлены паттерны `*.local` и `*.local.*` в `.gitignore`. Триггер: после merge `feat/dev-server-deploy-v2` (PR #46) в `deploy/` остался untracked `restore-passwords.local.txt` — sensitive файл с паролями, который при случайном `git add -A` мог уйти в commit. Существующие `.env.local`/`.env.*.local` покрывали только env-файлы; новые паттерны закрывают любые `*.local.*` (например `deploy/restore-passwords.local.txt`, `*.local.json`, `*.local.yaml`).
