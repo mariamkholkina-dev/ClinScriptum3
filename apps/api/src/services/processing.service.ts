@@ -109,6 +109,65 @@ export const processingService = {
     }));
   },
 
+  async getFactExtractionSummary(tenantId: string, docVersionId: string) {
+    const version = await prisma.documentVersion.findUnique({
+      where: { id: docVersionId },
+      include: { document: { include: { study: true } } },
+    });
+    requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
+
+    const latestRun = await prisma.processingRun.findFirst({
+      where: { docVersionId, type: "fact_extraction" },
+      orderBy: { createdAt: "desc" },
+      include: { steps: { orderBy: { startedAt: "asc" } } },
+    });
+
+    let parseErrors = 0;
+    let skippedSections = 0;
+    let llmRetries = 0;
+    let totalTokens = 0;
+    let stepFailures = 0;
+
+    if (latestRun) {
+      for (const step of latestRun.steps) {
+        if (step.status === "failed") stepFailures++;
+        const result = step.result as Record<string, unknown> | null;
+        if (!result) continue;
+        const data = (result.data ?? result) as Record<string, unknown>;
+        if (typeof data.parseErrors === "number") parseErrors += data.parseErrors;
+        if (typeof data.skippedSections === "number") skippedSections += data.skippedSections;
+        if (typeof data.retries === "number") llmRetries += data.retries;
+        if (typeof data.totalTokens === "number") totalTokens += data.totalTokens;
+      }
+    }
+
+    const facts = await prisma.fact.findMany({
+      where: { docVersionId },
+      select: { confidence: true, hasContradiction: true, status: true },
+    });
+
+    const totalFacts = facts.length;
+    const lowConfidence = facts.filter((f) => f.confidence < 0.5).length;
+    const midConfidence = facts.filter((f) => f.confidence >= 0.5 && f.confidence < 0.8).length;
+    const highConfidence = facts.filter((f) => f.confidence >= 0.8).length;
+    const validated = facts.filter((f) => f.status === "validated").length;
+    const contradictions = facts.filter((f) => f.hasContradiction).length;
+
+    return {
+      run: latestRun
+        ? {
+            id: latestRun.id,
+            status: latestRun.status,
+            createdAt: latestRun.createdAt,
+            attemptNumber: latestRun.attemptNumber,
+            stepCount: latestRun.steps.length,
+          }
+        : null,
+      facts: { total: totalFacts, lowConfidence, midConfidence, highConfidence, validated, contradictions },
+      failures: { parseErrors, skippedSections, llmRetries, totalTokens, stepFailures },
+    };
+  },
+
   async listFactsGrouped(tenantId: string, docVersionId: string) {
     const version = await prisma.documentVersion.findUnique({
       where: { id: docVersionId },

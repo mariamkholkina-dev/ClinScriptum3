@@ -2,6 +2,34 @@
 
 ## 2026-05-04
 
+### Sprint 6 fact-extraction: section priors + UI failure visibility (A1+A2+A3)
+
+Закрывает «быстрые победы» из плана улучшения качества fact-extraction. Без изменений в алгоритмах — задействует уже написанные, но не засеянные/не выставленные наружу инфраструктурные хуки.
+
+**A1: засеян `fact_section_priors` RuleSet.**
+
+`packages/db/src/seed-fact-section-priors.ts` — новый сидер. Читает `apps/api/src/data/fact-registry.yaml`, для каждого factKey копирует `topics` в `Rule.config.expectedSections`; для 10 deterministic-only ключей (`protocol_number`, `study_phase`, `sponsor`, `sample_size` и т.д., которых нет в YAML под этими именами) добавлен hardcoded mapping по аналогии с ближайшими YAML-записями. Подключён в `seed.ts` после `seedFactAnchors`.
+
+Эффект: при следующем `npm run db:seed` в БД появится `RuleSet type='fact_section_priors'`. Существующая логика `fact-extraction-core.ts:loadFactSectionPriors()` его подберёт и начнёт фильтровать факты, извлечённые из «не своих» секций (например `study_phase` из appendix отбрасывается, если ожидается `synopsis`/`design_plan`).
+
+**A2: failure-метрики извлечения фактов в UI.**
+
+`apps/api/src/services/processing.service.ts` — новый метод `getFactExtractionSummary(tenantId, docVersionId)`. Находит последний `ProcessingRun` типа `fact_extraction`, агрегирует из `ProcessingStep.result` уже записываемые счётчики (`parseErrors`, `skippedSections`, `retries`, `totalTokens`, `stepFailures`), считает факты по диапазонам уверенности (high ≥0.8 / mid 0.5-0.8 / low <0.5).
+
+`apps/api/src/routers/processing.ts` — tRPC procedure `processing.getFactExtractionSummary`.
+
+`apps/web/src/app/(app)/facts/[docVersionId]/page.tsx` — над таблицей фактов появился блок «Сводка извлечения»: 4 cards с разбивкой по confidence-диапазонам + строка с failure-индикаторами (LLM JSON parse errors, секций пропущено по лимиту, шагов pipeline упало). Раньше эти числа лежали в `ProcessingStep.result` JSON, но никуда не выводились — эксперт видел только сами факты, без сигнала, *где* и *почему* пайплайн потерял часть.
+
+**A3: фильтр фактов с уверенностью <0.5 по умолчанию.**
+
+`apps/web/src/app/(app)/facts/[docVersionId]/page.tsx`:
+- По умолчанию факты с `confidence < 0.5` скрываются (исключение — `status='validated'`, чтобы не прятать ручные подтверждения).
+- Toggle «Показывать неуверенные» в сводке + счётчик «N из M показаны / скрыто X с уверенностью <0.5».
+- Новая колонка «Уверенность» в таблице (XX% с цветовой кодировкой: зелёный ≥80%, янтарный 60-80%, красный <60%).
+- Если все факты низкоуверенные — показываем пустое состояние с CTA включить toggle.
+
+Цель — не дать эксперту утонуть в шуме: раньше в одной таблице вперемешку шли надёжные `0.95` и мусорные `0.31`. Теперь по умолчанию видны только пригодные к ревью; «всё подряд» — по запросу.
+
 ### Security: `.gitignore` для локальных secret-файлов
 
 Добавлены паттерны `*.local` и `*.local.*` в `.gitignore`. Триггер: после merge `feat/dev-server-deploy-v2` (PR #46) в `deploy/` остался untracked `restore-passwords.local.txt` — sensitive файл с паролями, который при случайном `git add -A` мог уйти в commit. Существующие `.env.local`/`.env.*.local` покрывали только env-файлы; новые паттерны закрывают любые `*.local.*` (например `deploy/restore-passwords.local.txt`, `*.local.json`, `*.local.yaml`).
