@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-05-05
+
+### Архитектурное разделение UI surfaces (CLAUDE.md)
+
+Добавлен раздел «UI surfaces and audiences» в `CLAUDE.md`. Зафиксировано: каждый этап пайплайна (parsing / classification / fact extraction / SoA / audit / generation / evaluation / impact) имеет **две UI-поверхности**:
+
+- **`apps/web` (3000)** — медицинский писатель: быстрый просмотр, подтверждение, минимум диагностики;
+- **`apps/rule-admin` (3002)** — эксперт правил: failure-метрики, confidence-разбивки, debug-панели, тюнинг промптов/anchors/regex.
+
+Правило: failure-метрики и debug-инструменты живут только в rule-admin. В основной интерфейс попадают только writer-facing элементы (кнопки подтверждения, навигация, простые статусы).
+
+### Перенос failure-summary в rule-admin → этап «Извлечение»
+
+Откат writer-side изменений из коммита `ce65d99`:
+- `apps/web/src/app/(app)/facts/[docVersionId]/page.tsx` возвращён к виду `origin/master` (failure-block, фильтр <0.5, колонка confidence — убраны из основного интерфейса).
+
+Failure-summary перенесён в `apps/rule-admin/src/app/(app)/golden-dataset/[id]/extraction-viewer/ExtractionViewer.tsx`:
+- Над toolbar'ом — новый блок «Метрики последнего запуска» с разбивкой по confidence (high ≥80% / mid 50-80% / low <50%) и failure-row (parseErrors / skippedSections / stepFailures / llmRetries / totalTokens).
+- run-id, время и attemptNumber видны в заголовке блока.
+- tRPC-процедура `processing.getFactExtractionSummary` (создана в `ce65d99`) остаётся — её теперь использует rule-admin.
+
 ## 2026-05-04
 
 ### Fix: `npm run db:seed` теперь подхватывает `.env`

@@ -602,6 +602,11 @@ export default function ExtractionViewer({ versionId }: { versionId: string; exp
     { staleTime: 60_000, refetchOnWindowFocus: false },
   );
 
+  const summaryQ = trpc.processing.getFactExtractionSummary.useQuery(
+    { docVersionId: versionId },
+    { staleTime: 60_000, refetchOnWindowFocus: false },
+  );
+
   const [sortKey, setSortKey] = useState<SortKey>("factCategory");
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -736,6 +741,58 @@ export default function ExtractionViewer({ versionId }: { versionId: string; exp
           <span className="rounded bg-orange-50 px-2 py-1 text-orange-700">Расхождений Д/L: {stats.disagreements}</span>
         )}
       </div>
+
+      {summaryQ.data?.run && (
+        <div className="rounded border border-gray-200 bg-gray-50/50 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold text-gray-700">Метрики последнего запуска</span>
+            <span className="text-[10px] text-gray-400">
+              run {summaryQ.data.run.id.slice(0, 8)} ·{" "}
+              {new Date(summaryQ.data.run.createdAt).toLocaleString("ru-RU")} ·{" "}
+              attempt {summaryQ.data.run.attemptNumber} · {summaryQ.data.run.stepCount} шагов
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            <span className="rounded bg-green-50 px-2 py-1 text-green-700">
+              Высокая ≥80%: <span className="font-semibold">{summaryQ.data.facts.highConfidence}</span>
+            </span>
+            <span className="rounded bg-amber-50 px-2 py-1 text-amber-700">
+              Средняя 50-80%: <span className="font-semibold">{summaryQ.data.facts.midConfidence}</span>
+            </span>
+            <span className="rounded bg-red-50 px-2 py-1 text-red-700">
+              Низкая &lt;50%: <span className="font-semibold">{summaryQ.data.facts.lowConfidence}</span>
+            </span>
+            {summaryQ.data.failures.parseErrors > 0 && (
+              <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-1 text-amber-800">
+                <AlertCircle size={12} />
+                LLM JSON parse errors: <span className="font-semibold">{summaryQ.data.failures.parseErrors}</span>
+              </span>
+            )}
+            {summaryQ.data.failures.skippedSections > 0 && (
+              <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-1 text-amber-800">
+                <AlertCircle size={12} />
+                Секций пропущено по лимиту: <span className="font-semibold">{summaryQ.data.failures.skippedSections}</span>
+              </span>
+            )}
+            {summaryQ.data.failures.stepFailures > 0 && (
+              <span className="inline-flex items-center gap-1 rounded bg-red-100 px-2 py-1 text-red-800">
+                <AlertCircle size={12} />
+                Шагов pipeline упало: <span className="font-semibold">{summaryQ.data.failures.stepFailures}</span>
+              </span>
+            )}
+            {summaryQ.data.failures.llmRetries > 0 && (
+              <span className="rounded bg-gray-100 px-2 py-1 text-gray-600">
+                LLM ретраев: {summaryQ.data.failures.llmRetries}
+              </span>
+            )}
+            {summaryQ.data.failures.totalTokens > 0 && (
+              <span className="rounded bg-gray-100 px-2 py-1 text-gray-600">
+                Токенов: {summaryQ.data.failures.totalTokens.toLocaleString("ru-RU")}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <ExtractionToolbar
         sortKey={sortKey} onSortChange={setSortKey}

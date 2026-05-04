@@ -49,6 +49,28 @@ Turbo monorepo with npm workspaces. All TypeScript, ESM modules (`"type": "modul
 | `apps/workers` | — | BullMQ job processors. Connects to Redis for queue, PostgreSQL for data |
 | `apps/word-addin` | 3001 | Office.js Word add-in (Vite + Fluent UI) |
 
+### UI surfaces and audiences (важно — read before adding any UI)
+
+Каждый этап пайплайна (parsing → classification → fact extraction → SoA detection → intra/inter audit → generation → evaluation → impact assessment) рендерится в **двух разных UI-поверхностях с разными аудиториями и разными целями**. Не путать.
+
+| Поверхность | Аудитория | Цель | Какие изменения тут уместны |
+|---|---|---|---|
+| **Основной интерфейс** (`apps/web`, port 3000) — страница исследования / страница версии документа / вкладки соответствующего этапа | Медицинский писатель | Быстро просмотреть результат, подтвердить корректные результаты, разобраться с вопросами. Минимум диагностики, простой UX. | Кнопки «подтвердить», «принять все», простые статусы, навигация, сравнение версий. |
+| **Rule admin** (`apps/rule-admin`, port 3002) — раздел «Эталонные наборы → соответствующий этап» (или другие admin-разделы: rules, llm-config, evaluation, corrections, soa, ...) | Эксперт по правилам / qc operator / rule admin | Тюнинг качества: видеть failure modes, корректировать промпты / anchors / regex / few-shots, применять рекомендации. Максимум инструментов и метрик. | Failure-метрики (parse errors, skipped sections), confidence-разбивки, debug-панели, side-by-side сравнения уровней (deterministic / LLM / QA), promp/anchor editing UI. |
+
+**Правило применения:** перед добавлением UI-элемента, связанного с любым этапом пайплайна, определи аудиторию.
+- Failure-метрики, confidence-разбивки, debug-панели, тюнинг правил → `apps/rule-admin`
+- Кнопки «подтвердить», «принять», простые статусы, базовая навигация → `apps/web`
+
+**Где какой stage живёт в rule-admin:** `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` хостит общую страницу эталона; конкретные viewers — отдельные файлы / папки в той же директории:
+- `parsing-viewer/` — этап «Парсинг»
+- `classification-viewer/` — этап «Классификация»
+- `extraction-viewer/` — этап «Извлечение» (`stage_to_run_type: extraction → fact_extraction`)
+- `soa-viewer/` — этап «SOA»
+- (intra_audit / inter_audit / generation / impact — на момент написания не имеют отдельных viewers; добавлять туда же)
+
+`STAGE_TO_RUN_TYPE` маппинг находится в `golden-dataset/[id]/page.tsx` — посмотри его перед добавлением нового этапа, чтобы новый viewer работал с правильным `ProcessingRunType`.
+
 ### Packages
 
 | Package | Role |
