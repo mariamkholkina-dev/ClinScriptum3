@@ -128,6 +128,98 @@ function intAttr(node: XmlNode | undefined, attr: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/* ═══════════════════════ VML fallback ═══════════════════════ */
+
+const PT_TO_EMU = 12700;
+
+const VML_TYPE_MAP: Record<string, DrawingType> = {
+  t13: "arrow", t14: "arrow", t15: "arrow", t16: "arrow",
+  t66: "arrow", t67: "arrow", t68: "arrow", t69: "arrow",
+  t32: "line", t33: "line", t34: "line", t35: "line",
+  t36: "line", t37: "line", t75: "line",
+  t76: "bracket", t77: "bracket", t87: "bracket", t88: "bracket",
+};
+
+function parseVmlStyle(style: string | undefined): {
+  xEmu: number; yEmu: number; cxEmu: number; cyEmu: number;
+} {
+  const out = { xEmu: 0, yEmu: 0, cxEmu: 0, cyEmu: 0 };
+  if (!style) return out;
+  for (const part of style.split(";")) {
+    const idx = part.indexOf(":");
+    if (idx < 0) continue;
+    const key = part.slice(0, idx).trim().toLowerCase();
+    const valRaw = part.slice(idx + 1).trim();
+    const valNum = parseFloat(valRaw.replace(/[a-z%]+$/i, ""));
+    if (!Number.isFinite(valNum)) continue;
+    const valEmu = Math.round(valNum * PT_TO_EMU);
+    if (key === "left") out.xEmu = valEmu;
+    else if (key === "top") out.yEmu = valEmu;
+    else if (key === "width") out.cxEmu = valEmu;
+    else if (key === "height") out.cyEmu = valEmu;
+  }
+  return out;
+}
+
+function classifyVmlType(rawType: string | undefined): DrawingType {
+  if (!rawType) return "shape";
+  const match = /t\d+$/i.exec(rawType);
+  if (!match) return "shape";
+  return VML_TYPE_MAP[match[0].toLowerCase()] ?? "shape";
+}
+
+/**
+ * Walk a `mc:Fallback` subtree looking for `<v:shape>`, `<v:line>`,
+ * `<v:roundrect>`, `<v:rect>`, `<v:oval>`. Each one becomes a Drawing
+ * with EMU geometry derived from the `style` attribute and a type
+ * derived from `type` (`#_x0000_tN` lookup). Used for legacy DOCX
+ * documents from Office 2007 SP1 and earlier where DrawingML may be
+ * absent.
+ */
+function extractVmlFromFallback(
+  fallback: XmlNode,
+  paragraphIndex: number,
+  out: Drawing[],
+): void {
+  const collectVml = (node: unknown): void => {
+    if (node == null) return;
+    if (Array.isArray(node)) {
+      for (const item of node) collectVml(item);
+      return;
+    }
+    if (typeof node !== "object") return;
+    const obj = node as XmlNode;
+    for (const [key, value] of Object.entries(obj)) {
+      if (
+        key === "shape" ||
+        key === "line" ||
+        key === "roundrect" ||
+        key === "rect" ||
+        key === "oval"
+      ) {
+        for (const v of asArray(value)) {
+          const vNode = v as XmlNode;
+          const style = (vNode["@_style"] ?? vNode.style) as string | undefined;
+          const type = (vNode["@_type"] ?? vNode.type) as string | undefined;
+          const position = parseVmlStyle(style);
+          const drawingType = key === "line" ? "line" : classifyVmlType(type);
+          if (position.cxEmu <= 0 && position.cyEmu <= 0) continue;
+          out.push({
+            type: drawingType,
+            position,
+            direction: classifyDirection(position),
+            paragraphIndex,
+            prstGeom: type,
+          });
+        }
+      } else if (typeof value === "object" && value !== null) {
+        collectVml(value);
+      }
+    }
+  };
+  collectVml(fallback);
+}
+
 /**
  * Walk the parsed `w:document` tree and collect every drawing node.
  * Returns drawings paired with the index of the enclosing `w:p` so
@@ -210,10 +302,21 @@ function extractDrawingsFromParagraph(
         }
       } else if (key === "AlternateContent") {
         // mc:AlternateContent has Choice (DrawingML) + Fallback (VML).
-        // The Choice branch is the modern DrawingML — recurse into it.
+        // We prefer the modern DrawingML when present, and fall back
+        // to VML only when Choice is missing or yields nothing — for
+        // old Word documents (Word 2007 SP1 and earlier) where
+        // DrawingML may be absent.
         for (const ac of asArray(value)) {
-          const choice = (ac as XmlNode).Choice;
-          if (choice) collect(choice);
+          const acNode = ac as XmlNode;
+          const choice = acNode.Choice;
+          if (choice) {
+            collect(choice);
+            continue;
+          }
+          const fallback = acNode.Fallback;
+          if (fallback) {
+            extractVmlFromFallback(fallback as XmlNode, paragraphIndex, out);
+          }
         }
       } else if (typeof value === "object" && value !== null) {
         collect(value);

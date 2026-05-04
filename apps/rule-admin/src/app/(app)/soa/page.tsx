@@ -12,6 +12,7 @@ import {
   Brain,
   Loader2,
   AlertCircle,
+  Target,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 
@@ -38,7 +39,33 @@ export default function SoaPage() {
     refetchOnWindowFocus: false,
   });
 
+  const metricsQuery = trpc.evaluation.getSoaMetricsByGoldenSample.useQuery(
+    undefined,
+    { refetchOnWindowFocus: false },
+  );
+
   const tables = q.data ?? [];
+  const sampleMetrics = metricsQuery.data ?? [];
+
+  const f1Summary = useMemo(() => {
+    const withExpected = sampleMetrics.filter((s) => s.hasExpected);
+    if (withExpected.length === 0) return null;
+    const avg = (vals: (number | null)[]) => {
+      const v = vals.filter((x): x is number => typeof x === "number");
+      return v.length === 0 ? null : v.reduce((a, b) => a + b, 0) / v.length;
+    };
+    const detection = avg(withExpected.map((s) => s.metrics.detectionAgreement));
+    const visit = avg(withExpected.map((s) => s.metrics.visit?.f1 ?? null));
+    const cell = avg(withExpected.map((s) => s.metrics.cell?.f1 ?? null));
+    const fn = avg(withExpected.map((s) => s.metrics.footnoteLink?.f1 ?? null));
+    return {
+      sampleCount: withExpected.length,
+      detection,
+      visit,
+      cell,
+      footnoteLink: fn,
+    };
+  }, [sampleMetrics]);
 
   const filtered = useMemo(() => {
     return tables.filter((t) => {
@@ -101,6 +128,56 @@ export default function SoaPage() {
           variant={summary.withConflict > 0 ? "amber" : "default"}
         />
       </div>
+
+      {/* F1 Metrics over golden samples */}
+      {f1Summary && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50/30 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Target className="h-4 w-4 text-blue-600" />
+            <h2 className="text-sm font-semibold text-gray-800">
+              Метрики на golden set ({f1Summary.sampleCount} samples)
+            </h2>
+          </div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <MetricCell label="Detection agreement" value={f1Summary.detection} />
+            <MetricCell label="Visit F1" value={f1Summary.visit} />
+            <MetricCell label="Cell F1" value={f1Summary.cell} />
+            <MetricCell label="Footnote link F1" value={f1Summary.footnoteLink} />
+          </div>
+          {sampleMetrics.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs text-blue-700 hover:underline">
+                Per-sample детализация ({sampleMetrics.length})
+              </summary>
+              <div className="mt-2 max-h-72 overflow-auto rounded border border-blue-100 bg-white">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-blue-50">
+                    <tr>
+                      {["Sample", "Detect", "Visits", "Procedures", "Cells", "Footnotes"].map((h) => (
+                        <th key={h} className="px-2 py-1.5 text-left font-medium text-gray-600">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sampleMetrics.map((s) => (
+                      <tr key={s.goldenSampleId} className={s.hasExpected ? "" : "text-gray-400"}>
+                        <td className="px-2 py-1 font-medium">{s.sampleName}</td>
+                        <td className="px-2 py-1">{s.hasExpected ? formatPct(s.metrics.detectionAgreement) : "—"}</td>
+                        <td className="px-2 py-1">{s.hasExpected ? formatPct(s.metrics.visit?.f1) : "—"}</td>
+                        <td className="px-2 py-1">{s.hasExpected ? formatPct(s.metrics.procedure?.f1) : "—"}</td>
+                        <td className="px-2 py-1">{s.hasExpected ? formatPct(s.metrics.cell?.f1) : "—"}</td>
+                        <td className="px-2 py-1">{s.hasExpected ? formatPct(s.metrics.footnoteLink?.f1) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-3">
@@ -267,6 +344,28 @@ export default function SoaPage() {
             </tbody>
           </table>
         )}
+      </div>
+    </div>
+  );
+}
+
+function formatPct(v: number | null | undefined): string {
+  if (v == null) return "—";
+  return `${Math.round(v * 1000) / 10}%`;
+}
+
+function MetricCell({
+  label,
+  value,
+}: {
+  label: string;
+  value: number | null | undefined;
+}) {
+  return (
+    <div className="rounded border border-blue-100 bg-white p-2.5">
+      <div className="text-[11px] text-gray-500">{label}</div>
+      <div className="mt-0.5 text-lg font-semibold text-gray-900">
+        {formatPct(value)}
       </div>
     </div>
   );

@@ -3,7 +3,10 @@ import { randomUUID } from "crypto";
 import { detectHeading, type DetectedHeading } from "./heading-detector.js";
 import { parseHtmlTable, isSOATable } from "./table-parser.js";
 import { extractFootnotes } from "./footnote-extractor.js";
-import { extractDrawings, type Drawing } from "./drawing-parser.js";
+import JSZip from "jszip";
+import { extractDrawingsFromDocumentXml, type Drawing } from "./drawing-parser.js";
+import { extractTableGeometry, type TableGeometry } from "./table-geometry.js";
+import { extractWordFootnotes } from "./word-footnote-parser.js";
 import type {
   ParsedDocument,
   ParsedSection,
@@ -115,11 +118,29 @@ export async function parseDocx(
 
   const title = extractTitle(rawText, headings);
 
+  // Open the DOCX zip once and extract drawings, table geometry and
+  // native Word footnote bodies in a single pass. word/footnotes.xml is
+  // optional — many DOCX have no native footnotes at all.
   let drawings: Drawing[] = [];
+  let tableGeometries: TableGeometry[] = [];
+  let wordFootnotes: Record<string, string> = {};
   try {
-    drawings = await extractDrawings(buffer);
+    const zip = await JSZip.loadAsync(buffer);
+    const docXmlEntry = zip.file("word/document.xml");
+    if (docXmlEntry) {
+      const xml = await docXmlEntry.async("text");
+      drawings = extractDrawingsFromDocumentXml(xml);
+      tableGeometries = extractTableGeometry(xml);
+    }
+    const fnEntry = zip.file("word/footnotes.xml");
+    if (fnEntry) {
+      const fnXml = await fnEntry.async("text");
+      const fnMap = extractWordFootnotes(fnXml);
+      wordFootnotes = Object.fromEntries(fnMap);
+    }
   } catch {
-    // Drawing extraction is best-effort; don't fail the whole parse.
+    // OOXML extraction is best-effort; don't fail the whole parse if
+    // the buffer isn't a valid DOCX or word/document.xml is missing.
   }
 
   return {
@@ -129,12 +150,16 @@ export async function parseDocx(
     soaTable,
     footnotes,
     drawings,
+    tableGeometries,
+    wordFootnotes,
     metadata: {
       totalParagraphs: String(elements.length),
       totalSections: String(countSections(sections)),
       totalTables: String(tables.length),
       totalFootnotes: String(footnotes.length),
       totalDrawings: String(drawings.length),
+      totalTableGeometries: String(tableGeometries.length),
+      totalWordFootnotes: String(Object.keys(wordFootnotes).length),
       warnings: JSON.stringify(result.messages),
     },
   };

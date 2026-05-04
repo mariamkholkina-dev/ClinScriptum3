@@ -1542,10 +1542,32 @@ function SoaTab({ versionId }: { versionId: string }) {
             {/* Parsed SOA table (editable) */}
             <div className="rounded-lg border bg-white shadow-sm">
               <div className="px-5 py-3 border-b bg-gray-50/50 flex items-center justify-between">
-                <div>
+                <div className="flex items-center gap-2">
                   <h3 className="text-sm font-semibold text-gray-800">
                     Извлечённые данные (для валидации)
                   </h3>
+                  {table.verificationLevel === "llm_check" && (
+                    <span
+                      className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+                      title="LLM Check выполнен в момент detect; уровень определяет согласие или конфликт детерминистики и LLM"
+                    >
+                      Проверено LLM
+                      {typeof table.llmConfidence === "number"
+                        ? ` (${Math.round(table.llmConfidence * 100)}%)`
+                        : ""}
+                    </span>
+                  )}
+                  {table.verificationLevel === "llm_qa" && (
+                    <span
+                      className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                      title="LLM Check выполнен в момент detect; уровень определяет согласие или конфликт детерминистики и LLM"
+                    >
+                      Требует проверки LLM QA
+                      {typeof table.llmConfidence === "number"
+                        ? ` (${Math.round(table.llmConfidence * 100)}%)`
+                        : ""}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {/* Add procedure button */}
@@ -1766,6 +1788,16 @@ function SoaTab({ versionId }: { versionId: string }) {
                                   isLow && !isSelected && "bg-amber-100/60",
                                   !isSelected && !isLow && "hover:bg-gray-100/50"
                                 )}
+                                style={
+                                  cell.cellHighlight
+                                    ? { backgroundColor: cell.cellHighlight }
+                                    : undefined
+                                }
+                                title={
+                                  cell.cellHighlight
+                                    ? "Выделено в исходном документе"
+                                    : undefined
+                                }
                               >
                                 {isEditing ? (
                                   <input

@@ -14,6 +14,8 @@ import {
   type PendingAnchor,
   type ResolvedFootnote,
   type ResolvedAnchor,
+  type CellRect as DocParserCellRect,
+  type TableGeometry,
 } from "@clinscriptum/doc-parser";
 
 export interface SoaLogger {
@@ -28,6 +30,13 @@ interface HtmlCell {
   rawHtml: string;
   colspan: number;
   rowspan: number;
+  /**
+   * Cell background color as authored in the source DOCX, normalised
+   * to `#RRGGBB` upper-case. Picked up from inline `style="background…"`,
+   * legacy `bgcolor=` and a small set of named colors. `null`/undefined
+   * when the cell has no explicit highlight.
+   */
+  fill?: string | null;
 }
 
 interface TableCandidate {
@@ -37,6 +46,7 @@ interface TableCandidate {
   htmlRows: HtmlCell[][];
   rows: string[][];
   rawHtmlGrid: string[][];
+  fillGrid: string[][];
   nextBlockHtml: string | null;
   sectionId: string;
   order: number;
@@ -55,6 +65,13 @@ type SoaOrientation = "visits_cols" | "visits_rows" | "unknown";
 
 interface SoaDetectionResult {
   tableBlockId: string;
+  /**
+   * All ContentBlock IDs that contributed to this result. Length 1 by
+   * default; grows to ≥2 when continuation merge fires
+   * (`mergeContinuationTables`). The first element always equals
+   * `tableBlockId` for backward compatibility.
+   */
+  sourceBlockIds: string[];
   sectionId: string;
   title: string;
   score: number;
@@ -67,6 +84,26 @@ interface SoaDetectionResult {
   footnoteAnchors: ResolvedAnchor[];
   orientation: SoaOrientation;
   orientationConflict: boolean;
+  /**
+   * EMU geometry of cells in canonical (visits-cols) layout. Set when
+   * detectSoaForVersion has access to `tableGeometries` in the
+   * DocumentVersion.digitalTwin and the matching table-by-index
+   * resolves. Persisted as `SoaTable.cellGeometry` so the UI can later
+   * render an SVG overlay without re-parsing the DOCX.
+   */
+  cellGeometry: (DocParserCellRect | null)[][] | null;
+  /**
+   * Drawings that overlay this specific SoA table — already filtered
+   * down from the full `digitalTwin.drawings` by area intersection.
+   * Persisted as `SoaTable.drawings`.
+   */
+  tableDrawings: Array<{
+    type: "arrow" | "line" | "bracket" | "image" | "shape";
+    position: { xEmu: number; yEmu: number; cxEmu: number; cyEmu: number };
+    direction?: "horizontal" | "vertical";
+    paragraphIndex?: number;
+    prstGeom?: string;
+  }>;
 }
 
 type MarkerSource = "text" | "arrow" | "line" | "bracket";
@@ -77,6 +114,12 @@ interface SoaCellData {
   confidence: number;
   markers: string[];
   markerSources: MarkerSource[];
+  /**
+   * Background color of the cell as authored in the source DOCX —
+   * `#RRGGBB` upper-case. Persisted to `SoaCell.cellHighlight`. Null
+   * when the cell has no explicit highlight.
+   */
+  cellHighlight: string | null;
 }
 
 /* ═══════════════════════ Constants ═══════════════════════ */
@@ -174,9 +217,37 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
 
   if (candidates.length === 0) return;
 
+  // Pull drawings + table geometries from the digitalTwin if parse-document
+  // ran a DOCX through parseDocx. Both fields are arrays — empty when the
+  // parse used non-DOCX input (e.g. integration tests with raw HTML
+  // ContentBlocks). Indexing is positional: the N-th SoA table candidate
+  // corresponds to the N-th `<w:tbl>` in document order.
+  const digitalTwin = (version.digitalTwin ?? {}) as {
+    drawings?: Array<{
+      type: "arrow" | "line" | "bracket" | "image" | "shape";
+      position: { xEmu: number; yEmu: number; cxEmu: number; cyEmu: number };
+      direction?: "horizontal" | "vertical";
+      paragraphIndex?: number;
+      prstGeom?: string;
+    }>;
+    tableGeometries?: TableGeometry[];
+    /**
+     * Bodies of `<w:footnote w:id="N">` from `word/footnotes.xml`,
+     * indexed by `id`. Populated by parseDocx (Sprint 6 commit 5).
+     * Cells whose `<w:tc>` contained `<w:footnoteReference w:id="N">`
+     * gain a footnote anchor with `marker="wfn-N"` and the body text
+     * pulled from this map.
+     */
+    wordFootnotes?: Record<string, string>;
+  };
+  const allDrawings = digitalTwin.drawings ?? [];
+  const allGeometries = digitalTwin.tableGeometries ?? [];
+  const wordFootnotes = digitalTwin.wordFootnotes ?? {};
+
   const soaTables: SoaDetectionResult[] = [];
 
-  for (const candidate of candidates) {
+  for (let candidateIdx = 0; candidateIdx < candidates.length; candidateIdx++) {
+    const candidate = candidates[candidateIdx];
     // Decide orientation BEFORE scoring — scoring assumes visits-in-columns
     // (it inspects the first row for visit signals and the first column for
     // procedure patterns). For `visits_rows` candidates we transpose first
@@ -200,10 +271,115 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
     });
 
     const result = buildSoaResult(workingCandidate, scoring);
-    if (result) {
-      result.orientation = orientation;
-      soaTables.push(result);
+    if (!result) continue;
+    result.orientation = orientation;
+
+    // Resolve geometry & drawings for this table by positional index
+    // and apply mapDrawingsToCells overrides.
+    const rawGeometry = allGeometries[candidateIdx]?.cells ?? null;
+    if (rawGeometry) {
+      const geometryCanonical =
+        orientation === "visits_rows" ? transposeGeometry(rawGeometry) : rawGeometry;
+      result.cellGeometry = geometryCanonical;
+
+      // Drawings filter: ratio test discards those that don't overlap
+      // the table's bounds, so we can pass everything in. Image/shape
+      // are ignored inside mapDrawingsToCells.
+      result.tableDrawings = allDrawings.map((d) => ({
+        type: d.type,
+        position: d.position,
+        direction: d.direction,
+        paragraphIndex: d.paragraphIndex,
+        prstGeom: d.prstGeom,
+      }));
+
+      // Geometry includes header rows; result.matrix is data-rows only.
+      // Slice and re-index so override rowIndex aligns with matrix
+      // rowIndex. Also drop the first column (procedure-name column)
+      // so override colIndex aligns with visits index.
+      const headerRowCount = detectHeaderRowCount(workingCandidate.rows);
+      const dataGeometry = geometryCanonical.slice(headerRowCount).map((row) =>
+        row.slice(1).map((cell, c) => {
+          if (!cell) return null;
+          return { ...cell, colIndex: c };
+        }),
+      );
+      // Re-index rowIndex so it matches matrix coords.
+      const dataGeometryReindexed = dataGeometry.map((row, r) =>
+        row.map((cell) => (cell ? { ...cell, rowIndex: r } : null)),
+      );
+      const flatCells = flattenGeometryToCellRects(dataGeometryReindexed);
+      const overrides = mapDrawingsToCells(allDrawings, flatCells, 0.6);
+      for (const ov of overrides) {
+        const cellRow = result.matrix[ov.rowIndex];
+        const cell = cellRow?.[ov.colIndex];
+        if (!cell) continue;
+        if (!cell.markerSources.includes(ov.source)) {
+          cell.markerSources = [...cell.markerSources, ov.source];
+        }
+        // Promote to positive mark only when the cell had no textual
+        // value yet — never overwrite an explicit X or dash.
+        if (cell.normalizedValue === "") {
+          cell.normalizedValue = "X";
+          cell.confidence = 0.85;
+        }
+      }
+
+      log.info("[soa] Drawings → cells override applied", {
+        tableIndex: candidateIdx,
+        overrides: overrides.length,
+      });
+
+      // Native Word footnotes: dataGeometryReindexed already aligns
+      // with result.matrix coordinates. Pull `<w:footnoteReference>`
+      // ids out of each cellRect; pair them with bodies from
+      // word/footnotes.xml. Marker prefix `wfn-` keeps them disjoint
+      // from inline numeric/symbol markers.
+      const seenWfn = new Set<string>(
+        result.footnoteDefs.map((f) => f.marker),
+      );
+      let wfnAdded = 0;
+      for (let r = 0; r < dataGeometryReindexed.length; r++) {
+        for (let c = 0; c < dataGeometryReindexed[r].length; c++) {
+          const rect = dataGeometryReindexed[r][c];
+          if (!rect?.footnoteRefs?.length) continue;
+          for (const id of rect.footnoteRefs) {
+            const marker = `wfn-${id}`;
+            const body = wordFootnotes[id] ?? "";
+            if (!seenWfn.has(marker)) {
+              seenWfn.add(marker);
+              result.footnoteDefs.push({
+                marker,
+                markerOrder: result.footnoteDefs.length,
+                text: body,
+                source: "detected",
+              });
+            }
+            result.footnoteAnchors.push({
+              marker,
+              targetType: "cell",
+              rowIndex: r,
+              colIndex: c,
+              footnoteMarker: marker,
+              confidence: 1.0,
+            });
+            wfnAdded++;
+            const cell = result.matrix[r]?.[c];
+            if (cell && !cell.markers.includes(marker)) {
+              cell.markers = [...cell.markers, marker];
+            }
+          }
+        }
+      }
+      if (wfnAdded > 0) {
+        log.info("[soa] Word footnotes → cells anchors applied", {
+          tableIndex: candidateIdx,
+          anchors: wfnAdded,
+        });
+      }
     }
+
+    soaTables.push(result);
   }
 
   // Mixed-orientation guard. If at least one detected SoA is `visits_cols`
@@ -226,8 +402,123 @@ export async function detectSoaForVersion(versionId: string, log: SoaLogger): Pr
     return;
   }
 
-  await persistSoaTables(versionId, soaTables);
-  log.info("[soa] Saved SOA tables", { count: soaTables.length });
+  // Continuation merge: identical visits + headerRows in the same
+  // section, same orientation, are typically a single SoA Word split
+  // across consecutive `<w:tbl>` parts with a repeated header.
+  const merged = mergeContinuationTables(soaTables);
+  if (merged.length < soaTables.length) {
+    log.info("[soa] Merged continuation tables", {
+      before: soaTables.length,
+      after: merged.length,
+    });
+  }
+
+  await persistSoaTables(versionId, merged);
+  log.info("[soa] Saved SOA tables", { count: merged.length });
+}
+
+/**
+ * Merge SoA detection results that look like Word split a single
+ * logical table across multiple `<w:tbl>` parts. Strict equality on
+ * `visits + headerRows + sectionId + orientation` — fuzzy matching is
+ * out of scope for Sprint 6.
+ *
+ * Within each merge group:
+ *   - cells from later parts have their `rowIndex` offset by the sum
+ *     of `procedures.length` of earlier parts;
+ *   - `procedures`, `matrix` rows, `rawMatrix` data rows, `drawings`,
+ *     `cellGeometry` rows are concatenated in order;
+ *   - `footnoteDefs` are merged by `marker` (first wins);
+ *   - `footnoteAnchors` are concatenated with `rowIndex` offset for
+ *     cell-typed anchors;
+ *   - `sourceBlockIds` lists all contributing ContentBlock IDs.
+ */
+export function mergeContinuationTables(
+  tables: SoaDetectionResult[],
+): SoaDetectionResult[] {
+  if (tables.length < 2) return tables;
+  const groups = new Map<string, SoaDetectionResult[]>();
+  for (const t of tables) {
+    const key = JSON.stringify({
+      sectionId: t.sectionId,
+      orientation: t.orientation,
+      visits: t.visits,
+      headerRows: t.headerRows,
+    });
+    const arr = groups.get(key) ?? [];
+    arr.push(t);
+    groups.set(key, arr);
+  }
+  const out: SoaDetectionResult[] = [];
+  for (const [, parts] of groups) {
+    if (parts.length === 1) {
+      out.push(parts[0]);
+      continue;
+    }
+    // Merge into the first part. Process in source order — assume
+    // detection ran sections in document order and each part keeps
+    // its natural order.
+    const head = parts[0];
+    const merged: SoaDetectionResult = {
+      ...head,
+      sourceBlockIds: [...head.sourceBlockIds],
+      procedures: [...head.procedures],
+      matrix: head.matrix.map((row) => [...row]),
+      rawMatrix: head.rawMatrix.map((row) => [...row]),
+      footnoteDefs: [...head.footnoteDefs],
+      footnoteAnchors: [...head.footnoteAnchors],
+    };
+    let rowOffset = head.procedures.length;
+    const seenMarkers = new Set(merged.footnoteDefs.map((f) => f.marker));
+    for (let i = 1; i < parts.length; i++) {
+      const p = parts[i];
+      merged.sourceBlockIds.push(...p.sourceBlockIds);
+      merged.procedures.push(...p.procedures);
+      // Matrix rows: append as-is — rowIndex is positional.
+      for (const row of p.matrix) merged.matrix.push([...row]);
+      // rawMatrix: skip header rows of subsequent parts (they repeat
+      // the same visits/days from the head).
+      const headerRowCount = head.headerRows.length;
+      const dataRows = p.rawMatrix.slice(headerRowCount);
+      for (const row of dataRows) merged.rawMatrix.push([...row]);
+      // Footnote defs: skip duplicate markers.
+      for (const f of p.footnoteDefs) {
+        if (!seenMarkers.has(f.marker)) {
+          seenMarkers.add(f.marker);
+          merged.footnoteDefs.push({
+            ...f,
+            markerOrder: merged.footnoteDefs.length,
+          });
+        }
+      }
+      // Footnote anchors: rowIndex offset for cell-typed anchors.
+      for (const a of p.footnoteAnchors) {
+        const adjusted = { ...a };
+        if (a.targetType === "cell" && a.rowIndex != null) {
+          adjusted.rowIndex = a.rowIndex + rowOffset;
+        } else if (a.targetType === "row" && a.rowIndex != null) {
+          adjusted.rowIndex = a.rowIndex + rowOffset;
+        }
+        merged.footnoteAnchors.push(adjusted);
+      }
+      // Drawings: concat as-is — paragraphIndex stays original so UI
+      // can still locate them in the source.
+      merged.tableDrawings = [...merged.tableDrawings, ...p.tableDrawings];
+      // cellGeometry: concat data rows of subsequent parts. Heads of
+      // parts already contain header geometry; we keep the first
+      // part's header geometry and append data rows from siblings.
+      if (merged.cellGeometry && p.cellGeometry) {
+        const headerRowCountInGeom = head.headerRows.length;
+        const dataGeom = p.cellGeometry.slice(headerRowCountInGeom);
+        merged.cellGeometry = [...merged.cellGeometry, ...dataGeom];
+      } else if (p.cellGeometry && !merged.cellGeometry) {
+        merged.cellGeometry = p.cellGeometry;
+      }
+      rowOffset += p.procedures.length;
+    }
+    out.push(merged);
+  }
+  return out;
 }
 
 /* ═══════════════════════ Phase 1: Collect candidates ═══════════════════════ */
@@ -253,7 +544,7 @@ function collectTableCandidates(
 
       if (block.type === "table" && block.rawHtml) {
         const htmlRows = parseHtmlTableWithSpans(block.rawHtml);
-        const { textGrid, rawHtmlGrid } = expandGridFromHtmlRows(htmlRows);
+        const { textGrid, rawHtmlGrid, fillGrid } = expandGridFromHtmlRows(htmlRows);
         if (textGrid.length < 2 || (textGrid[0]?.length ?? 0) < 2) {
           lastParagraphText = "";
           continue;
@@ -278,6 +569,7 @@ function collectTableCandidates(
           htmlRows,
           rows: textGrid,
           rawHtmlGrid,
+          fillGrid,
           nextBlockHtml,
           sectionId: section.id,
           order: block.order,
@@ -397,7 +689,7 @@ function buildSoaResult(
   candidate: TableCandidate,
   scoring: ScoringResult
 ): SoaDetectionResult | null {
-  const { rows, htmlRows, rawHtmlGrid } = candidate;
+  const { rows, htmlRows, rawHtmlGrid, fillGrid } = candidate;
   if (rows.length < 2) return null;
 
   const headerRowCount = detectHeaderRowCount(rows);
@@ -490,12 +782,14 @@ function buildSoaResult(
         });
       }
 
+      const fill = fillGrid?.[sourceRowIdx]?.[col];
       cellRow.push({
         rawValue: raw,
         normalizedValue: normalized,
         confidence,
         markers: cellMarkers,
         markerSources: ["text"],
+        cellHighlight: fill && fill.length > 0 ? fill : null,
       });
     }
     matrix.push(cellRow);
@@ -509,6 +803,7 @@ function buildSoaResult(
 
   return {
     tableBlockId: candidate.blockId,
+    sourceBlockIds: [candidate.blockId],
     sectionId: candidate.sectionId,
     title: candidate.title || "Schedule of Activities",
     score: scoring.score,
@@ -522,6 +817,8 @@ function buildSoaResult(
     // Defaults — overwritten by detectSoaForVersion if needed.
     orientation: "visits_cols",
     orientationConflict: false,
+    cellGeometry: null,
+    tableDrawings: [],
   };
 }
 
@@ -645,6 +942,90 @@ function computeCellConfidence(raw: string, normalized: string): number {
 
 /* ═══════════════════════ HTML Parsing ═══════════════════════ */
 
+/**
+ * Named CSS colors common in protocol documents. Cheap lookup avoids
+ * pulling a full color library. Keys are lowercase for case-insensitive
+ * match. Values are upper-case `#RRGGBB`.
+ */
+const NAMED_COLORS: Record<string, string> = {
+  yellow: "#FFFF00",
+  red: "#FF0000",
+  green: "#008000",
+  lime: "#00FF00",
+  blue: "#0000FF",
+  cyan: "#00FFFF",
+  magenta: "#FF00FF",
+  pink: "#FFC0CB",
+  orange: "#FFA500",
+  white: "#FFFFFF",
+  black: "#000000",
+  gray: "#808080",
+  grey: "#808080",
+  silver: "#C0C0C0",
+};
+
+function normaliseHex(raw: string): string | null {
+  const stripped = raw.replace(/^#/, "");
+  if (!/^[0-9a-fA-F]+$/.test(stripped)) return null;
+  if (stripped.length === 3) {
+    return "#" + stripped.split("").map((c) => (c + c).toUpperCase()).join("");
+  }
+  if (stripped.length === 6) return "#" + stripped.toUpperCase();
+  if (stripped.length === 8) return "#" + stripped.slice(0, 6).toUpperCase();
+  return null;
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const c = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0").toUpperCase();
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+function parseColorValue(v: string): string | null {
+  const trimmed = v.trim();
+  if (/^(transparent|inherit|none|initial|unset|auto)$/i.test(trimmed)) return null;
+  // hex: #FFFF00 / #FF0 / FFFF00
+  const hex = trimmed.match(/^#?([0-9a-fA-F]{3,8})$/);
+  if (hex) return normaliseHex(hex[1]);
+  // rgb(255, 255, 0) / rgba(...)
+  const rgb = trimmed.match(/^rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgb) return rgbToHex(parseInt(rgb[1], 10), parseInt(rgb[2], 10), parseInt(rgb[3], 10));
+  // named color
+  const named = NAMED_COLORS[trimmed.toLowerCase()];
+  if (named) return named;
+  return null;
+}
+
+/** Pull a cell's background color out of its open tag. Order:
+ *  1) legacy `bgcolor="…"`
+ *  2) inline `style="background[-color]: …"`
+ *  3) Word's own `data-shd-fill="…"` attribute (when mammoth chooses
+ *     to surface the `<w:shd>` raw value).
+ *
+ * Exported for unit testing — not part of the stable public API.
+ */
+export function extractFillFromOpenTag(openTag: string): string | null {
+  const bg = openTag.match(/\bbgcolor\s*=\s*["']?#?([0-9a-fA-F]{3,8})/);
+  if (bg) {
+    const v = normaliseHex(bg[1]);
+    if (v) return v;
+  }
+  const styleAttr = openTag.match(/\bstyle\s*=\s*"([^"]*)"|\bstyle\s*=\s*'([^']*)'/i);
+  if (styleAttr) {
+    const styleStr = styleAttr[1] ?? styleAttr[2] ?? "";
+    const m = styleStr.match(/background(?:-color)?\s*:\s*([^;]+)/i);
+    if (m) {
+      const v = parseColorValue(m[1]);
+      if (v) return v;
+    }
+  }
+  const shd = openTag.match(/\bdata-shd-fill\s*=\s*["']?([0-9a-fA-F]{3,8})/);
+  if (shd) {
+    const v = normaliseHex(shd[1]);
+    if (v) return v;
+  }
+  return null;
+}
+
 function parseHtmlTableWithSpans(html: string): HtmlCell[][] {
   const rows: HtmlCell[][] = [];
 
@@ -668,7 +1049,8 @@ function parseHtmlTableWithSpans(html: string): HtmlCell[][] {
         cellOpenTag.match(/rowspan\s*=\s*["']?(\d+)/i)?.[1] ?? "1",
         10,
       );
-      cells.push({ text, rawHtml: innerHtml, colspan, rowspan });
+      const fill = extractFillFromOpenTag(cellOpenTag);
+      cells.push({ text, rawHtml: innerHtml, colspan, rowspan, fill });
     }
 
     if (cells.length > 0) rows.push(cells);
@@ -680,10 +1062,17 @@ function parseHtmlTableWithSpans(html: string): HtmlCell[][] {
 interface ExpandedGrid {
   textGrid: string[][];
   rawHtmlGrid: string[][];
+  /**
+   * Background hex per (row, col) — already propagated into every
+   * colspan/rowspan slot of the originating cell so consumers can read
+   * by absolute coords without re-walking spans. Empty string when the
+   * cell has no fill.
+   */
+  fillGrid: string[][];
 }
 
 function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
-  if (htmlRows.length === 0) return { textGrid: [], rawHtmlGrid: [] };
+  if (htmlRows.length === 0) return { textGrid: [], rawHtmlGrid: [], fillGrid: [] };
 
   let maxCols = 0;
   for (const row of htmlRows) {
@@ -702,6 +1091,9 @@ function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
   const rawHtmlGrid: string[][] = Array.from({ length: numRows }, () =>
     Array(maxCols).fill(""),
   );
+  const fillGrid: string[][] = Array.from({ length: numRows }, () =>
+    Array(maxCols).fill(""),
+  );
 
   for (let r = 0; r < numRows; r++) {
     let gridCol = 0;
@@ -716,6 +1108,7 @@ function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
       for (let dr = 0; dr < cell.rowspan && r + dr < numRows; dr++) {
         for (let dc = 0; dc < cell.colspan && gridCol + dc < maxCols; dc++) {
           textGrid[r + dr][gridCol + dc] = cell.text;
+          if (cell.fill) fillGrid[r + dr][gridCol + dc] = cell.fill;
         }
       }
       gridCol += cell.colspan;
@@ -725,6 +1118,7 @@ function expandGridFromHtmlRows(htmlRows: HtmlCell[][]): ExpandedGrid {
   return {
     textGrid: textGrid.map((row) => row.map((c) => c ?? "")),
     rawHtmlGrid,
+    fillGrid,
   };
 }
 
@@ -835,10 +1229,14 @@ export function transposeCandidate(candidate: TableCandidate): TableCandidate {
   const newRawHtmlGrid: string[][] = Array.from({ length: numCols }, () =>
     Array<string>(numRows).fill(""),
   );
+  const newFillGrid: string[][] = Array.from({ length: numCols }, () =>
+    Array<string>(numRows).fill(""),
+  );
   for (let r = 0; r < numRows; r++) {
     for (let c = 0; c < numCols; c++) {
       newRows[c][r] = candidate.rows[r][c] ?? "";
       newRawHtmlGrid[c][r] = candidate.rawHtmlGrid[r]?.[c] ?? "";
+      newFillGrid[c][r] = candidate.fillGrid?.[r]?.[c] ?? "";
     }
   }
 
@@ -850,6 +1248,7 @@ export function transposeCandidate(candidate: TableCandidate): TableCandidate {
       rawHtml: newRawHtmlGrid[ri][ci] ?? "",
       colspan: 1,
       rowspan: 1,
+      fill: newFillGrid[ri][ci] || null,
     })),
   );
 
@@ -857,6 +1256,7 @@ export function transposeCandidate(candidate: TableCandidate): TableCandidate {
     ...candidate,
     rows: newRows,
     rawHtmlGrid: newRawHtmlGrid,
+    fillGrid: newFillGrid,
     htmlRows: newHtmlRows,
   };
 }
@@ -903,6 +1303,58 @@ export interface CellMarkerOverride {
  *
  * Image drawings are ignored — they're not markers.
  */
+/**
+ * Transpose a geometry grid: swap rows ↔ cols so the data lines up with
+ * a canonical visits-cols layout when the source table had visits in
+ * rows. Width and height also swap. Merged cells are flattened to
+ * single-slot for simplicity — transposed SoA tables in real protocols
+ * don't use merges (same constraint as `transposeCandidate`).
+ */
+export function transposeGeometry(
+  geometry: (DocParserCellRect | null)[][],
+): (DocParserCellRect | null)[][] {
+  const numRows = geometry.length;
+  if (numRows === 0) return [];
+  const numCols = Math.max(...geometry.map((r) => r.length));
+  const out: (DocParserCellRect | null)[][] = Array.from({ length: numCols }, () =>
+    Array<DocParserCellRect | null>(numRows).fill(null),
+  );
+  for (let r = 0; r < numRows; r++) {
+    for (let c = 0; c < numCols; c++) {
+      const src = geometry[r][c];
+      if (!src) continue;
+      out[c][r] = {
+        rowIndex: c,
+        colIndex: r,
+        xEmu: src.yEmu,
+        yEmu: src.xEmu,
+        cxEmu: src.cyEmu,
+        cyEmu: src.cxEmu,
+        colSpan: 1,
+        rowSpan: 1,
+      };
+    }
+  }
+  return out;
+}
+
+/**
+ * Flatten geometry grid into the array shape `mapDrawingsToCells`
+ * expects. Drops nulls (merged-into slots — they're already covered by
+ * their top-left CellRect, no need to test them again).
+ */
+export function flattenGeometryToCellRects(
+  geometry: (DocParserCellRect | null)[][],
+): CellRect[] {
+  const out: CellRect[] = [];
+  for (const row of geometry) {
+    for (const cell of row) {
+      if (cell) out.push(cell);
+    }
+  }
+  return out;
+}
+
 export function mapDrawingsToCells(
   drawings: DrawingForMapping[],
   cells: CellRect[],
@@ -972,6 +1424,7 @@ async function persistSoaTables(
           data: {
             docVersionId: versionId,
             sourceBlockId: soa.tableBlockId,
+            sourceBlockIds: soa.sourceBlockIds,
             title: soa.title,
             soaScore: soa.score,
             status: "detected",
@@ -979,6 +1432,10 @@ async function persistSoaTables(
             orientationConflict: soa.orientationConflict,
             headerData: { visits: soa.visits, headerRows: soa.headerRows },
             rawMatrix: soa.rawMatrix,
+            drawings: soa.tableDrawings as object,
+            cellGeometry: soa.cellGeometry === null
+              ? undefined
+              : (soa.cellGeometry as unknown as object),
           },
         });
 
@@ -995,6 +1452,7 @@ async function persistSoaTables(
           normalizedValue: string;
           confidence: number;
           markerSources: MarkerSource[];
+          cellHighlight: string | null;
         }> = [];
 
         for (let row = 0; row < soa.procedures.length; row++) {
@@ -1011,6 +1469,7 @@ async function persistSoaTables(
               normalizedValue: cell.normalizedValue ?? "",
               confidence: cell.confidence,
               markerSources: cell.markerSources ?? ["text"],
+              cellHighlight: cell.cellHighlight ?? null,
             });
           }
         }

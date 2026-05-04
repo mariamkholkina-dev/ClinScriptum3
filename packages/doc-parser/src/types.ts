@@ -1,4 +1,5 @@
 import type { Drawing } from "./drawing-parser.js";
+import type { TableGeometry } from "./table-geometry.js";
 
 export interface ParsedDocument {
   title: string;
@@ -14,6 +15,18 @@ export interface ParsedDocument {
    * a text X.
    */
   drawings: Drawing[];
+  /**
+   * EMU geometry of every top-level `<w:tbl>` in document order. Used
+   * by `mapDrawingsToCells` to decide which drawings overlay which
+   * cells. Empty when the parser was called without a DOCX buffer.
+   */
+  tableGeometries: TableGeometry[];
+  /**
+   * Bodies of `<w:footnote w:id="N">` from `word/footnotes.xml`,
+   * indexed by `id`. Empty when the file is missing or the parser
+   * was called without a DOCX buffer.
+   */
+  wordFootnotes: Record<string, string>;
   metadata: Record<string, string>;
 }
 

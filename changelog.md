@@ -2,6 +2,143 @@
 
 ## 2026-05-04
 
+### Спринт 6 SoA detection robustness (commit 8/8): real F1 metrics на /soa странице
+
+Завершающий коммит Sprint 6 — заменяет placeholder F1 на странице `/soa` реальными метриками относительно `expectedResults` golden samples.
+
+`apps/api/src/lib/soa-metrics.ts`:
+- `ExpectedSoaResults` — lenient JSON shape для ground truth (`{ soaTables: [{ visits, procedures, cells?, footnoteAnchors? }] }`).
+- `parseExpectedSoa(raw)` — best-effort парсер; возвращает null для пустого/неправильного формата, отбрасывает malformed cells/anchors.
+- `computeSoaMetrics(expected, actual)` — считает 5 групп метрик:
+  - `detectionAgreement`: 1 если обе стороны имеют ≥1 SoA; 0 если только одна; 1 если обе пусты.
+  - `visit`/`procedure`/`cell`: precision/recall/F1 по set-сравнению (агрегированно через все таблицы — порядок таблиц не важен).
+  - `footnoteLink`: PRF1 по `(procedure|visit|marker)` ключу. Null если у обеих сторон нет anchors.
+- Cell normalization: `X/✓/✔/+` → `x`; `–/—/-` → `-`; всё остальное в lowercase.
+
+`apps/api/src/services/evaluation.service.ts`:
+- Новый `getSoaMetricsByGoldenSample(tenantId)` — для каждого golden sample подтягивает stage `soa_detection`, expected results, actual SoaTable + cells + footnoteAnchors (через `cell` lookup для resolved procedure/visit), и вызывает `computeSoaMetrics`.
+
+`apps/api/src/routers/evaluation.ts`:
+- tRPC `evaluation.getSoaMetricsByGoldenSample` — quality-procedure protected query без input.
+
+UI `apps/rule-admin/src/app/(app)/soa/page.tsx`:
+- Новый блок «Метрики на golden set» над фильтрами с 4 cards: Detection agreement, Visit F1, Cell F1, Footnote link F1. Усреднение через samples с expected.
+- Раскрывающаяся per-sample таблица: Sample, Detect, Visits, Procedures, Cells, Footnotes — для drill-down.
+- Samples без expected отображаются серым с прочерками.
+
+Tests:
+- 8 unit тестов для `parseExpectedSoa` + `computeSoaMetrics` в `apps/api/src/lib/__tests__/soa-metrics.test.ts` (perfect match, partial cell, missed detection, malformed input, footnote null edge case).
+
+Sprint 6 завершён: 8 коммитов, ~50 новых тестов, 3 миграции (`add_soa_cell_geometry`, `add_soa_source_block_ids`, `add_soa_cell_highlight`).
+
+### Спринт 6 SoA detection robustness (commit 7/8): LLM verification UI badges
+
+Followup к Sprint 4 — `verificationLevel` и `llmConfidence` уже хранились на `SoaTable`, но не отображались в UI.
+
+`apps/rule-admin/.../soa-viewer/SoaViewer.tsx`:
+- Шапка таблицы (`SingleSoaTableViewer`):
+  - `verificationLevel === 'llm_check'` → синий бейдж `Проверено LLM ({llmConfidence × 100}%)`.
+  - `verificationLevel === 'llm_qa'` → амбер бейдж `Требует проверки LLM QA ({llmConfidence × 100}%)`.
+  - `verificationLevel === 'deterministic'` → без бейджа.
+  - Tooltip: «LLM Check выполнен в момент detect; уровень определяет согласие или конфликт детерминистики и LLM».
+- `CellDetailPanel` теперь принимает `verificationLevel` + `llmConfidence` и показывает их в нижней метаинформации ячейки.
+
+`apps/web/.../documents/[versionId]/page.tsx`:
+- Тот же бейдж рядом с заголовком «Извлечённые данные (для валидации)» в SoaTab. Read-only.
+
+Backend без изменений — `processing.service.getSoaData` уже возвращает все scalar поля `SoaTable` (включая `verificationLevel` и `llmConfidence`) через `findMany` без select.
+
+### Спринт 6 SoA detection robustness (commit 6/8): yellow cell highlighting
+
+Реальные протоколы часто отмечают важные ячейки SoA желтой подсветкой. Теперь это сохраняется в БД и отображается в UI.
+
+Schema:
+- `SoaCell.cellHighlight: String?` — hex `#RRGGBB` upper-case. Null когда подсветки нет.
+- Миграция `20260504120000_add_soa_cell_highlight`. Применена в dev и test БД.
+
+`packages/shared/src/soa-detection-core.ts`:
+- Новая `extractFillFromOpenTag(openTag)` — ищет background по приоритету `bgcolor=` → inline `style="background[-color]:..."` → `data-shd-fill=`. Поддерживает hex (3/6/8 digits, alpha обрезается), `rgb()`, `rgba()`, набор named colors (yellow, red, green, blue, white, black, gray, orange, pink, magenta, cyan, lime, silver). Игнорирует `transparent`/`inherit`/`none`/`initial`/`unset`/`auto`.
+- `HtmlCell.fill?: string | null` — propagated через `fillGrid` параллельно `rawHtmlGrid` в `expandGridFromHtmlRows`. `transposeCandidate` транспонирует и `fillGrid`.
+- `SoaCellData.cellHighlight: string | null` — заполняется в `buildSoaResult`. `persistSoaTables` пишет `SoaCell.cellHighlight`.
+
+UI:
+- `apps/rule-admin/.../soa-viewer/SoaViewer.tsx` `SoaCell.cellHighlight` — `style={{ backgroundColor: cell.cellHighlight }}` поверх zone-color класса; tooltip «Выделено в исходном документе».
+- `apps/web/.../documents/[versionId]/page.tsx` SoaTab — то же.
+
+Tests:
+- 10 unit тестов для `extractFillFromOpenTag` в `apps/api/src/lib/__tests__/soa-cell-fill.test.ts` (shared не имеет vitest setup).
+
+### Спринт 6 SoA detection robustness (commit 5/8): native Word footnotes + trailing digit-after-marker
+
+Два related улучшения footnote extraction в одном коммите.
+
+**5.A — Word `word/footnotes.xml` parser:**
+- Новый `packages/doc-parser/src/word-footnote-parser.ts`. Функция `extractWordFootnotes(xmlText)` возвращает `Map<id, body>` с правильным skip'ом separator/continuationSeparator footnotes (id=-1, id=0, w:type='separator'). 8 unit тестов.
+- `extractTableGeometry` теперь recursively собирает `<w:footnoteReference w:id="N">` внутри каждого `<w:tc>` и сохраняет в `CellRect.footnoteRefs?: string[]`. 1 новый unit тест.
+- `parser.ts` параллельно с document.xml загружает `word/footnotes.xml` в `ParsedDocument.wordFootnotes: Record<string, string>`. Best-effort — пустой объект если файла нет или парсер не получил DOCX buffer.
+- `detectSoaForVersion`: после mapDrawingsToCells loop walk'ает aligned `dataGeometryReindexed` и для каждой ячейки с `footnoteRefs` создаёт pendingAnchor/footnoteDef с marker `wfn-N` (prefix защищает от коллизий с inline `1`/`*`). Body берётся из `digitalTwin.wordFootnotes`. 1 новый integration тест.
+
+**5.B — Trailing digit after positive/symbol marker (без `<sup>`):**
+
+Реальный кейс из протоколов: ячейка содержит `X1`, `X 1`, `X*1`, `✓2` — `1`/`2` это номер сноски, не часть значения и не часть имени `Day 1`.
+- Расширил `extractCellMarkers` новым шагом trailing-digit-after-marker (regex `/^(\([XхХ]\)|[XхХ✓✔☑●+×]|[–—-])\s*(\d{1,2})\s*$/i`). Применяется после symbol-marker step — поэтому `X*1` обрабатывается двумя проходами (symbol → trailing-digit) и даёт markers `['*', '1']`.
+- Защита от false positives: regex требует чтобы вся ячейка была pattern `<marker><digit>` без trailing unit-letter — `X 5mL` и `Day 1` остаются нетронутыми.
+- 9 новых unit тестов: `X1`, `X 1`, `X*1`, `X1*`, `✓2`, `X 5mL` (защита), `Day 1` (защита), `– 3`, `Х1` (Cyrillic).
+
+`apps/api/vitest.config.ts`: testTimeout/hookTimeout подняты до 30s — default 5s слишком близко к baseline 4.3-4.7s integration тестов.
+
+### Спринт 6 SoA detection robustness (commit 4/8): merge continuation SoA tables
+
+Word часто разрывает длинную SoA на 2-3 части `<w:tbl>` с повторённой шапкой — ранее каждая часть становилась отдельной `SoaTable`. Теперь они сливаются в одну логическую таблицу.
+
+Schema:
+- `SoaTable.sourceBlockIds: Json @default("[]")` — массив всех ContentBlock IDs continuation parts. Существующее `sourceBlockId` оставлено для backward compatibility и заполняется первым элементом.
+- Миграция `20260504110000_add_soa_source_block_ids`. Применена в dev и test БД.
+
+`packages/shared/src/soa-detection-core.ts`:
+- Новый `mergeContinuationTables(tables)` — strict-equality grouping по `(sectionId, orientation, visits, headerRows)`. Внутри группы concatenation `procedures`, `matrix` rows, `rawMatrix` data rows (header rows последующих частей пропускаются), `tableDrawings`, `cellGeometry` data rows. `footnoteDefs` мерджатся по `marker` (first wins, остальные пропускаются), `footnoteAnchors` сшиваются с rowIndex offset для cell- и row-anchors.
+- `detectSoaForVersion` вызывает merge между detection и persist. Лог `[soa] Merged continuation tables` с before/after.
+- `SoaDetectionResult.sourceBlockIds: string[]` — новое поле; default `[candidate.blockId]` в `buildSoaResult`.
+- `persistSoaTables` пишет `SoaTable.sourceBlockIds`.
+
+Tests:
+- 4 integration теста в `apps/api/src/__tests__/integration/soa-continuation-merge.test.ts`: pair merge, разные visits НЕ мерджатся, trio merge, rowIndex contiguity без коллизий. Тесты используют локальный `timeout: 30_000` (default 5s слишком близко к baseline 4.3-4.7s интеграционок).
+
+### Спринт 6 SoA detection robustness (commit 2/8): wire mapDrawingsToCells в pipeline
+
+Sprint 3's `mapDrawingsToCells` (`packages/shared/src/soa-detection-core.ts:994`) был pure helper готов с того спринта, но никогда не вызывался — не было источника cell EMU coordinates. Sprint 6 commit 1 добавил geometry parser; этот commit подключает его в pipeline и фактически записывает данные в БД.
+
+Schema:
+- `SoaTable.cellGeometry: Json?` — EMU geometry ячеек в canonical (visits-cols) layout. Json shape: `(CellRect | null)[][]`. Заполняется в момент detection.
+- Миграция `20260504100000_add_soa_cell_geometry`. Применена в dev и test БД.
+
+`packages/doc-parser/src/parser.ts`:
+- Один `JSZip.loadAsync(buffer)` теперь парсит `word/document.xml` дважды — для drawings (existing) и для table geometries (new). Один pass экономит I/O.
+- `ParsedDocument.tableGeometries: TableGeometry[]` — новое required поле. Пустой массив если parser вызван без DOCX buffer (HTML-only тесты).
+- `metadata.totalTableGeometries` для observability.
+
+`packages/shared/src/soa-detection-core.ts:detectSoaForVersion`:
+- Загружает `version.digitalTwin.drawings` + `version.digitalTwin.tableGeometries`. parse-document сохраняет ParsedDocument целиком в digitalTwin (Sprint 1 поведение), теперь оттуда читаем drawings и geometries.
+- Для каждой обнаруженной SoA таблицы (по positional index в `candidates`) — берём соответствующую geometry. Если orientation='visits_rows' — транспонируем geometry (новый helper `transposeGeometry`).
+- Slice'ем geometry по `headerRowCount` и убираем первую колонку (procedure-name) — получаем data-rows × visits-only grid; reindex'им rowIndex/colIndex.
+- Вызываем `mapDrawingsToCells(allDrawings, flatCells, 0.6)`. Для каждого override:
+  - Добавляем `'arrow'`/`'line'`/`'bracket'` в `SoaCellData.markerSources` (additive — `'text'` сохраняется).
+  - Если `normalizedValue === ''` — устанавливаем `'X'` с `confidence=0.85`. Никогда не перезаписываем существующий X / dash.
+- `persistSoaTables` пишет `SoaTable.cellGeometry` (canonical) и `SoaTable.drawings` (фильтрованные `tableDrawings`).
+
+Helpers:
+- **`transposeGeometry(geom)`** — swap rows ↔ cols, x ↔ y, cx ↔ cy. Merged cells flatten'ятся (transposed SoA не используют merge на практике).
+- **`flattenGeometryToCellRects(geom)`** — обходит grid, дропает null slots (merged-into), возвращает плоский `CellRect[]` для `mapDrawingsToCells`.
+
+5 integration тестов в `apps/api/src/__tests__/integration/soa-drawings-wire.test.ts`:
+1. Empty digitalTwin → no crash, cellGeometry null, drawings []
+2. Geometry persists in `SoaTable.cellGeometry` JSON column
+3. Horizontal arrow over Drug administration row → cells получают `markerSources: ['arrow']` + `normalizedValue='X'` с confidence 0.85
+4. Arrow над уже X-ячейками → markerSources additive (`['text', 'arrow']`), normalizedValue остаётся 'X', confidence не понижается
+5. Image drawings игнорируются — markerSources остаются `['text']`
+
+Все 24 SoA api тестов зелёные, full monorepo typecheck чист.
+
 ### Процесс: параллельные Claude-сессии через git worktree
 
 Раньше несколько одновременных сессий Claude Code в одной директории `C:\Users\0\ClinScriptum3` ломали друг другу working tree: `git checkout` одной откатывал чужие правки, `git stash` сгребал чужие uncommitted-изменения, `commit` мог уйти на ветку, на которую только что переключилась параллельная сессия.
@@ -43,6 +180,26 @@ Per-sample classification f1: FNT-AS-III-2026 `0.573`, STP-08-25 `0.393`, VLT-01
 Run ID: `337328af-533f-465b-af49-2ac7b2448723`. Compared-to: `7761187e-b746-40c1-bd93-42da50a9a9a3` (after-rerelabel-2026-05-02).
 
 ## 2026-05-03
+
+### Спринт 6 SoA detection robustness (commit 1/8): table-geometry парсер
+
+`packages/doc-parser/src/table-geometry.ts` (новый, ~230 строк). Извлекает EMU-координаты ячеек из `word/document.xml` для будущего вызова `mapDrawingsToCells` (Sprint 3 helper, готов с того спринта но не имел источника координат).
+
+API:
+- **`extractTableGeometry(documentXml: string): TableGeometry[]`** — pure-функция, принимает raw XML строку, возвращает массив с одной записью на каждый top-level `<w:tbl>` в порядке появления в документе. Каждая запись = `{ tableIndex, cells: (CellRect | null)[][] }`.
+- Тип **`CellRect`** — `{ rowIndex, colIndex, xEmu, yEmu, cxEmu, cyEmu, colSpan?, rowSpan? }`. Структурно совместим с `CellRect` в `@clinscriptum/shared` (Sprint 3) для последующего вызова `mapDrawingsToCells`.
+
+Что парсит:
+- `<w:tblGrid>` → `<w:gridCol w:w="DXA">` для x-координат колонок (DXA → EMU = `× 635`).
+- `<w:tr>` → `<w:trHeight w:val="..." w:hRule="auto|exact|atLeast">` для y-координат. При отсутствии или `hRule="auto"` без значения — fallback на `14pt × 12700 EMU/pt`.
+- `<w:tc>` → `<w:gridSpan>` для colspan; `<w:vMerge w:val="restart|continue">` для rowspan. Top-left ячейка получает полный bounding box на весь span; covered slots = `null`.
+- Nested tables в `<w:tc>` — игнорируются (drawings внутри nested table останутся attribut'ами outer table в Sprint 6 commit 2 wire-up).
+
+Tests `packages/doc-parser/src/__tests__/table-geometry.test.ts` — 11 кейсов: malformed XML, no tables, 5-col tblGrid с разными widths, missing trHeight (fallback на default), mixed exact/auto rows, nested table skip + sequential top-level tables, gridSpan colspan (top-left + nulls), vMerge rowspan (restart + continuation null), multi-row y-stacking, empty tblGrid, корректность row/col indices.
+
+Re-export через `packages/doc-parser/src/index.ts`. Все 200+ doc-parser тестов проходят, typecheck чист.
+
+Sprint 6 commit 2 wire-up `mapDrawingsToCells` в `detectSoaForVersion` использует эту функцию.
 
 ### UX: breadcrumb родителей в Diff overlay (Парсинг и Классификация)
 

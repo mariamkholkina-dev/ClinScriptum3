@@ -445,6 +445,12 @@ model SoaTable {
   id                  String          @id @default(uuid()) @db.Uuid
   docVersionId        String          @map("doc_version_id") @db.Uuid
   sourceBlockId       String?         @map("source_block_id") @db.Uuid
+  /// All ContentBlock IDs that contributed to this SoaTable. When a Word
+  /// table is split across two `<w:tbl>` parts with a repeated header
+  /// (continuation), the detector merges them and lists both block IDs
+  /// here. `sourceBlockId` is kept as the first element for backward
+  /// compatibility with consumers that read a single block.
+  sourceBlockIds      Json            @default("[]") @map("source_block_ids") @db.JsonB
   title               String          @default("")
   soaScore            Float           @default(0) @map("soa_score")
   status              SoaStatus       @default(detected)
@@ -464,6 +470,11 @@ model SoaTable {
   /// table (arrows, lines, brackets). Each item: { type, position: {xEmu, yEmu, cxEmu, cyEmu}, direction? }.
   /// Used by the UI to render an SVG overlay.
   drawings            Json            @default("[]") @db.JsonB
+  /// EMU-bounding-boxes of cells in this SoA table after canonicalization
+  /// (visits-cols layout). Shape: (CellRect | null)[][]. Populated from
+  /// extractTableGeometry at detect time. Used together with `drawings`
+  /// to render arrows over cells in the UI without re-parsing the DOCX.
+  cellGeometry        Json?           @map("cell_geometry") @db.JsonB
   createdAt           DateTime        @default(now()) @map("created_at")
 
   docVersion       DocumentVersion     @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
@@ -490,6 +501,11 @@ model SoaCell {
   /// 'line', 'bracket'. 'text' means the X/dash came from the cell text;
   /// the others mean it was inferred from a graphic element overlaying the cell.
   markerSources   Json    @default("[\"text\"]") @db.JsonB @map("marker_sources")
+  /// Background color of the cell as authored in the source DOCX —
+  /// `<w:shd w:fill="FFFF00">` or HTML `style="background-color:#FFFF00"`.
+  /// Stored as the raw hex string with a leading `#` (e.g. "#FFFF00").
+  /// Null when the cell has no explicit highlight.
+  cellHighlight   String? @map("cell_highlight")
 
   soaTable        SoaTable            @relation(fields: [soaTableId], references: [id], onDelete: Cascade)
   footnoteAnchors SoaFootnoteAnchor[]

@@ -33,6 +33,7 @@ interface SoaCell {
   manualValue: string | null;
   confidence: number;
   markerSources: ("text" | "arrow" | "line" | "bracket")[];
+  cellHighlight?: string | null;
 }
 
 interface SoaFootnoteAnchor {
@@ -72,6 +73,8 @@ interface DrawingUI {
   prstGeom?: string;
 }
 
+type VerificationLevel = "deterministic" | "llm_check" | "llm_qa";
+
 interface SoaTable {
   id: string;
   title: string;
@@ -79,6 +82,10 @@ interface SoaTable {
   status: string;
   orientation: "visits_cols" | "visits_rows" | "unknown";
   orientationConflict: boolean;
+  /** Highest pipeline level this SoA was verified at (Sprint 4). */
+  verificationLevel?: VerificationLevel;
+  /** LLM-reported confidence in [0,1] from the LLM Check step. Null when not run. */
+  llmConfidence?: number | null;
   headerData: { visits: string[]; headerRows?: { text: string; span: number }[][] };
   rawMatrix: string[][];
   /** @deprecated string[] kept for backward-compat; new UI reads `soaFootnotes` */
@@ -314,10 +321,22 @@ function ParsedSoaTable({
                   else if (isPositive(val)) bgClass = "bg-green-50";
                   else if (isDash(val)) bgClass = "bg-gray-50";
 
+                  // Source-document highlight (e.g. "#FFFF00" yellow from
+                  // <w:shd>) takes visual priority over zone-color classes.
+                  // Tooltip explains the highlight to reviewers.
+                  const highlightStyle = cell.cellHighlight
+                    ? { backgroundColor: cell.cellHighlight }
+                    : undefined;
+                  const highlightTitle = cell.cellHighlight
+                    ? "Выделено в исходном документе"
+                    : undefined;
+
                   return (
                     <td
                       key={colIdx}
                       className={`border border-gray-200 px-1 py-1 text-center cursor-pointer relative select-none ${bgClass}`}
+                      style={highlightStyle}
+                      title={highlightTitle}
                       onClick={() =>
                         isSelected
                           ? onCellSelect(null)
@@ -829,10 +848,14 @@ function FootnotesPanel({
 function CellDetailPanel({
   cell,
   visits,
+  verificationLevel,
+  llmConfidence,
   onValueChange,
 }: {
   cell: SoaCell;
   visits: string[];
+  verificationLevel?: VerificationLevel;
+  llmConfidence?: number | null;
   onValueChange: (cellId: string, value: string) => void;
 }) {
   const val = cellValue(cell);
@@ -871,6 +894,14 @@ function CellDetailPanel({
         {cell.markerSources && cell.markerSources.some((s) => s !== "text") && (
           <span className="text-blue-700 font-medium">
             Источник: {cell.markerSources.filter((s) => s !== "text").join(", ")}
+          </span>
+        )}
+        {verificationLevel && verificationLevel !== "deterministic" && (
+          <span className={verificationLevel === "llm_check" ? "text-blue-700" : "text-amber-700"}>
+            Уровень: {verificationLevel}
+            {typeof llmConfidence === "number"
+              ? ` · LLM ${Math.round(llmConfidence * 100)}%`
+              : ""}
           </span>
         )}
       </div>
@@ -985,6 +1016,26 @@ function SingleSoaTableViewer({
               Графика: {table.drawings.length}
             </span>
           )}
+          {table.verificationLevel === "llm_check" && (
+            <span
+              className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+              title="LLM Check выполнен в момент detect; уровень определяет согласие или конфликт детерминистики и LLM"
+            >
+              Проверено LLM{typeof table.llmConfidence === "number"
+                ? ` (${Math.round(table.llmConfidence * 100)}%)`
+                : ""}
+            </span>
+          )}
+          {table.verificationLevel === "llm_qa" && (
+            <span
+              className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+              title="LLM Check выполнен в момент detect; уровень определяет согласие или конфликт детерминистики и LLM"
+            >
+              Требует проверки LLM QA{typeof table.llmConfidence === "number"
+                ? ` (${Math.round(table.llmConfidence * 100)}%)`
+                : ""}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 text-xs text-gray-500">
           {lowConfCount > 0 && (
@@ -1036,6 +1087,8 @@ function SingleSoaTableViewer({
             <CellDetailPanel
               cell={selectedCellData}
               visits={table.headerData.visits}
+              verificationLevel={table.verificationLevel}
+              llmConfidence={table.llmConfidence}
               onValueChange={handleCellValueChange}
             />
           )}
