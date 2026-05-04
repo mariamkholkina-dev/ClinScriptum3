@@ -5,6 +5,9 @@ dist/
 .env
 .env.local
 .env.*.local
+# Local-only secrets / restore notes (e.g. deploy/restore-passwords.local.txt)
+*.local
+*.local.*
 *.log
 coverage/
 .DS_Store
