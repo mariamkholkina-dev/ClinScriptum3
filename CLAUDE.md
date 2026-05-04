@@ -170,6 +170,7 @@ Copy `.env.example` to `.env`. Key variables: `DATABASE_URL`, `REDIS_URL`, `JWT_
 - `.gitignore` includes `*.sql` for dumps but **whitelists** Prisma migrations via `!packages/db/prisma/migrations/**/*.sql` — don't accidentally re-block them
 - Cross-platform lockfile: `package-lock.json` may resolve differently on Windows (npm 11) vs Linux/CI (npm 10), causing `npm ci` to fail on optional native binaries (rollup, swc). CI handles this via `npm ci || npm install --no-audit` fallback + explicit installs of `@rollup/rollup-linux-x64-gnu`, `@next/swc-linux-x64-gnu`, `@emnapi/core`, `@emnapi/runtime`
 - Frontend env vars must be prefixed `NEXT_PUBLIC_` to be available in browser
+- Fresh worktree (see Parallel Claude Code Sessions): always `npm ci && npm run db:generate` in the new directory before first run — `node_modules` and the generated Prisma client live in the working tree, not in shared `.git`
 
 ## Git Workflow
 
@@ -194,6 +195,38 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 Types: `feat` (new feature), `fix` (bug fix), `refactor` (no behavior change),
 `test` (adding tests), `docs` (documentation), `chore` (tooling, deps)
 
+## Parallel Claude Code Sessions
+
+Several Claude Code sessions running in the **same** working directory routinely break each other: a `git checkout` in one rolls back files the other is editing, a `git stash` sweeps up unrelated changes, a `commit` may land on whatever branch the parallel session just switched to. The fix is **one git worktree per concurrent session**.
+
+### Existing worktrees
+
+The repo is set up with worktrees alongside the main checkout. Run `git worktree list` from any worktree to see the current state. Standard layout:
+
+| Directory | Branch |
+|---|---|
+| `C:\Users\0\Clinscriptum3` | active feature branch (the original checkout) |
+| `C:\Users\0\ClinScriptum3-master` | `master` — for hotfixes, review, branching off |
+| `C:\Users\0\ClinScriptum3-scratch` | `feat/scratch` — disposable branch for ad-hoc tasks |
+| `C:\Users\0\ClinScriptum3-<branch>` | one per active feature branch |
+
+### Workflow
+
+- **Each parallel Claude Code session runs from its own worktree directory.** Never start two sessions in the same directory.
+- **Pick the right worktree before starting a task:** if it lines up with an existing branch, `cd` there; otherwise create one.
+- **New branch:** `git -C C:/Users/0/Clinscriptum3 worktree add -b feat/<name> ../ClinScriptum3-<name> master`. Branches off master, working tree in a fresh directory.
+- **Branching off another branch** (e.g. continuation of in-flight work): replace the trailing `master` with the source branch.
+- **First-time setup in a fresh worktree:** `npm ci && npm run db:generate` — `node_modules` and the generated Prisma client are per working tree, not in shared `.git`. Skipping this breaks typecheck/dev.
+- **Cleanup after merge:** `git worktree remove ../ClinScriptum3-<name>`. The branch itself stays in the repo until manually deleted with `git branch -D`.
+- **If a worktree directory was deleted manually** (e.g. `rm -rf`): `git worktree prune` clears the stale entry under `.git/worktrees/`.
+
+### Constraints to remember
+
+- **One branch can be checked out in only one worktree at a time.** Git locks it; the second `worktree add` for the same branch fails.
+- **Dev servers share global ports** (`:3000` web, `:3001` word-addin, `:3002` rule-admin, `:4000` api). Run `npm run dev` in **one** worktree at a time, or override ports via env.
+- **Postgres / Redis / MinIO from `docker compose` are shared across worktrees.** That is fine — tenant isolation is enforced in the DB. But destructive migrations or `prisma migrate reset` in one worktree affect all of them.
+- **Documentation/process changes (this file, README, etc.) should land via a small branch off master** (e.g. `docs/...`), not piggybacked on a long-running feature branch — otherwise other worktrees see the new rules only after their next rebase from master.
+
 ## Before committing
 
 Always run before creating a commit:
@@ -206,6 +239,7 @@ Always run before creating a commit:
 
 For tasks touching >3 files or spanning multiple layers (DB → API → UI):
 
+0. **Pick the worktree** — make sure the session is running in the right directory (existing worktree for the branch, or create a new one — see [Parallel Claude Code Sessions](#parallel-claude-code-sessions))
 1. **Plan** — enter `/plan` mode, describe the task, agree on approach
 2. **Research** — explore affected files, check existing patterns
 3. **Decompose** — break into atomic steps (migration → service → router → UI → tests)
@@ -213,7 +247,7 @@ For tasks touching >3 files or spanning multiple layers (DB → API → UI):
 5. **Review** — run `/review` on the branch before creating PR
 6. **Simplify** — run `/simplify` to check for duplication and quality
 
-For small tasks (<3 files, single layer): skip steps 1-3, go directly to execute.
+For small tasks (<3 files, single layer): skip steps 1-3, go directly to execute (but step 0 still applies).
 
 ### Task decomposition template
 

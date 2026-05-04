@@ -32,6 +32,15 @@ export interface DiffEntry {
   sectionTitle: string;
   expected?: { standardSection: string | null };
   actual?: { standardSection: string | null };
+  /** ID реальной секции для extra/wrong_section. Используется для resolve
+      дубликатов title — когда несколько секций имеют одинаковое название,
+      без id невозможно однозначно сопоставить запись overlay с конкретной
+      секцией дерева и обновить нужную позицию в expected.sections. */
+  actualSectionId?: string;
+  /** Позиционный индекс среди секций с тем же title в реальном документе.
+      Нужен handleQuickFix для обновления соответствующей по позиции записи
+      в expected.sections (которая упорядочена тем же positional matching'ом). */
+  duplicateIndex?: number;
 }
 
 export type SortKey =

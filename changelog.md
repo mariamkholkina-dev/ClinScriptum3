@@ -139,6 +139,46 @@ Helpers:
 
 Все 24 SoA api тестов зелёные, full monorepo typecheck чист.
 
+### Процесс: параллельные Claude-сессии через git worktree
+
+Раньше несколько одновременных сессий Claude Code в одной директории `C:\Users\0\ClinScriptum3` ломали друг другу working tree: `git checkout` одной откатывал чужие правки, `git stash` сгребал чужие uncommitted-изменения, `commit` мог уйти на ветку, на которую только что переключилась параллельная сессия.
+
+Решение — по одному git worktree на каждую активную ветку. Создано 8 worktree рядом с основным checkout:
+
+- `ClinScriptum3-master` (master, для hotfix/review)
+- `ClinScriptum3-scratch` (новая `feat/scratch` от master, под ad-hoc задачи)
+- `ClinScriptum3-soa-cleanup-legacy`, `ClinScriptum3-soa-llm-verification`, `ClinScriptum3-soa-drawings`, `ClinScriptum3-soa-orientation` (активные SoA фичи)
+- `ClinScriptum3-fact-extraction-followups`, `ClinScriptum3-dev-server-deploy`
+
+`CLAUDE.md`:
+- Новый раздел `## Parallel Claude Code Sessions` — таблица существующих worktree, команды создания/удаления, ограничения (один бранч в одном worktree, общие порты dev-серверов, общие docker-сервисы).
+- В `### Common gotchas` — строка про `npm ci` + `db:generate` при первом запуске в свежем worktree (node_modules и Prisma client лежат per working tree, не в общем `.git`).
+- В `## Development Process (Plan & Act)` — шаг 0 «Pick the worktree» перед Plan.
+
+Каждая Claude-сессия теперь запускается из своей директории; общая `.git`, изолированный working tree, push/pull/PR работают как обычно.
+
+### Final baseline после Sprint 0–5 — обнаружена регрессия
+
+`docs/baselines/final-baseline-post-sprint-5-2026-05-04.json` (запуск через `apps/workers/scripts/run-baseline-evaluation.ts`):
+
+| Stage | avgPrecision | avgRecall | avgF1 | Δ vs after-rerelabel-2026-05-02 |
+|---|---|---|---|---|
+| classification | 0.496 | 0.591 | **0.529** | **−0.461** |
+| parsing | 1.000 | 0.000 | 0.000 | −0.000 |
+
+Per-sample classification f1: FNT-AS-III-2026 `0.573`, STP-08-25 `0.393`, VLT-015-II/2025 `0.592`, Тетра-AHAGGN-11/25 `0.557`. Все четыре failed (порог `f1 ≥ 0.8`).
+
+Предыдущий baseline (после re-разметки эталонов 2026-05-02) был `f1=0.990`. Текущая регрессия −0.46 по f1. Возможные причины:
+- Reprocess документов 2026-05-04 шёл при исчерпанной квоте YandexGPT (`429 ResourceExhausted: 10 requests`) — часть LLM Check ушла в fallback / no-op, секции получили deterministic-only классификацию.
+- `metrics.fewShots.activeCount = 0`, `zonesCovered = 0` — few-shot примеры из Sprint 5 не задействованы в evaluation. Возможно отсутствует подмешивание в LLM Check либо нет approved few-shots в БД на dev.
+- Параллельные изменения в `feat/soa-sprint-6` могли затронуть детектор/handler классификации.
+
+**Парсинг recall=0** — это известно: `evaluation_results.parsing` не сравнивает structure с эталоном, только проверяет наличие документа. Не рассматривается как регрессия.
+
+**Status:** Final baseline зафиксирован, регрессия известна. Расследование причин и восстановление f1 — отдельная задача (см. memory `project_classification_quality_state.md`).
+
+Run ID: `337328af-533f-465b-af49-2ac7b2448723`. Compared-to: `7761187e-b746-40c1-bd93-42da50a9a9a3` (after-rerelabel-2026-05-02).
+
 ## 2026-05-03
 
 ### Спринт 6 SoA detection robustness (commit 1/8): table-geometry парсер
