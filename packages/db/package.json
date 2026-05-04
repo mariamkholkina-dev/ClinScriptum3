@@ -17,13 +17,14 @@
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "migrate:prod": "prisma migrate deploy",
-    "seed": "tsx src/seed.ts",
-    "seed:prompts": "tsx src/seed-prompts.ts",
-    "seed:taxonomy": "tsx src/seed-taxonomy.ts",
-    "seed:facts": "tsx src/seed-fact-registry.ts",
-    "seed:all": "tsx src/seed.ts && tsx src/seed-taxonomy.ts && tsx src/seed-fact-registry.ts && tsx src/seed-prompts.ts",
+    "seed": "tsx --env-file=../../.env src/seed.ts",
+    "seed:prompts": "tsx --env-file=../../.env src/seed-prompts.ts",
+    "seed:taxonomy": "tsx --env-file=../../.env src/seed-taxonomy.ts",
+    "seed:facts": "tsx --env-file=../../.env src/seed-fact-registry.ts",
+    "seed:all": "tsx --env-file=../../.env src/seed.ts && tsx --env-file=../../.env src/seed-taxonomy.ts && tsx --env-file=../../.env src/seed-fact-registry.ts && tsx --env-file=../../.env src/seed-prompts.ts",
     "lint": "eslint src/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@prisma/client": "^6",

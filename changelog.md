@@ -1,6 +1,65 @@
 # Changelog
 
+## 2026-05-05
+
+### Tests: покрытие seed builder + getFactExtractionSummary
+
+Покрыта новая логика из PR #51 (review feedback):
+- `packages/db/src/__tests__/seed-fact-section-priors.test.ts` — 7 тестов на `FACT_SECTION_PRIORS_BUILDER`: ≥60 priors, наличие deterministic-only ключей (`protocol_number` и т.п.), наличие YAML-only ключей (`protocol_id`, `phase` и т.п.), merge при дубликатах (`inclusion_criteria`), дедупликация и сортировка `expectedSections`, sorted by factKey. Добавлен `vitest.config.ts` + `test` script в `packages/db/package.json` (vitest уже hoisted в root node_modules).
+- `apps/api/src/services/__tests__/processing.service.test.ts` — 6 тестов на `getFactExtractionSummary`: tenant guard, run=null когда нет fact_extraction run'а, агрегация failures из flat shape `ProcessingStep.result`, поддержка legacy `data` wrapper, разбиение фактов по confidence-bucket'ам (high/mid/low + validated + contradictions), фильтр на `type='fact_extraction'` (не на другие run-types).
+
+### Архитектурное разделение UI surfaces (CLAUDE.md)
+
+Добавлен раздел «UI surfaces and audiences» в `CLAUDE.md`. Зафиксировано: каждый этап пайплайна (parsing / classification / fact extraction / SoA / audit / generation / evaluation / impact) имеет **две UI-поверхности**:
+
+- **`apps/web` (3000)** — медицинский писатель: быстрый просмотр, подтверждение, минимум диагностики;
+- **`apps/rule-admin` (3002)** — эксперт правил: failure-метрики, confidence-разбивки, debug-панели, тюнинг промптов/anchors/regex.
+
+Правило: failure-метрики и debug-инструменты живут только в rule-admin. В основной интерфейс попадают только writer-facing элементы (кнопки подтверждения, навигация, простые статусы).
+
+### Перенос failure-summary в rule-admin → этап «Извлечение»
+
+Откат writer-side изменений из коммита `ce65d99`:
+- `apps/web/src/app/(app)/facts/[docVersionId]/page.tsx` возвращён к виду `origin/master` (failure-block, фильтр <0.5, колонка confidence — убраны из основного интерфейса).
+
+Failure-summary перенесён в `apps/rule-admin/src/app/(app)/golden-dataset/[id]/extraction-viewer/ExtractionViewer.tsx`:
+- Над toolbar'ом — новый блок «Метрики последнего запуска» с разбивкой по confidence (high ≥80% / mid 50-80% / low <50%) и failure-row (parseErrors / skippedSections / stepFailures / llmRetries / totalTokens).
+- run-id, время и attemptNumber видны в заголовке блока.
+- tRPC-процедура `processing.getFactExtractionSummary` (создана в `ce65d99`) остаётся — её теперь использует rule-admin.
+
 ## 2026-05-04
+
+### Fix: `npm run db:seed` теперь подхватывает `.env`
+
+`packages/db/package.json` — все seed-скрипты (`seed`, `seed:prompts`, `seed:taxonomy`, `seed:facts`, `seed:all`) теперь запускаются через `tsx --env-file=../../.env`. Раньше падали с `Environment variable not found: DATABASE_URL` если запустить через `npm run`. Workaround был — `npx tsx --env-file=.env packages/db/src/seed.ts` напрямую. Найдено при проверке A1 на dev-сервере.
+
+### Sprint 6 fact-extraction: section priors + UI failure visibility (A1+A2+A3)
+
+Закрывает «быстрые победы» из плана улучшения качества fact-extraction. Без изменений в алгоритмах — задействует уже написанные, но не засеянные/не выставленные наружу инфраструктурные хуки.
+
+**A1: засеян `fact_section_priors` RuleSet.**
+
+`packages/db/src/seed-fact-section-priors.ts` — новый сидер. Читает `apps/api/src/data/fact-registry.yaml`, для каждого factKey копирует `topics` в `Rule.config.expectedSections`; для 10 deterministic-only ключей (`protocol_number`, `study_phase`, `sponsor`, `sample_size` и т.д., которых нет в YAML под этими именами) добавлен hardcoded mapping по аналогии с ближайшими YAML-записями. Подключён в `seed.ts` после `seedFactAnchors`.
+
+Эффект: при следующем `npm run db:seed` в БД появится `RuleSet type='fact_section_priors'`. Существующая логика `fact-extraction-core.ts:loadFactSectionPriors()` его подберёт и начнёт фильтровать факты, извлечённые из «не своих» секций (например `study_phase` из appendix отбрасывается, если ожидается `synopsis`/`design_plan`).
+
+**A2: failure-метрики извлечения фактов в UI.**
+
+`apps/api/src/services/processing.service.ts` — новый метод `getFactExtractionSummary(tenantId, docVersionId)`. Находит последний `ProcessingRun` типа `fact_extraction`, агрегирует из `ProcessingStep.result` уже записываемые счётчики (`parseErrors`, `skippedSections`, `retries`, `totalTokens`, `stepFailures`), считает факты по диапазонам уверенности (high ≥0.8 / mid 0.5-0.8 / low <0.5).
+
+`apps/api/src/routers/processing.ts` — tRPC procedure `processing.getFactExtractionSummary`.
+
+`apps/web/src/app/(app)/facts/[docVersionId]/page.tsx` — над таблицей фактов появился блок «Сводка извлечения»: 4 cards с разбивкой по confidence-диапазонам + строка с failure-индикаторами (LLM JSON parse errors, секций пропущено по лимиту, шагов pipeline упало). Раньше эти числа лежали в `ProcessingStep.result` JSON, но никуда не выводились — эксперт видел только сами факты, без сигнала, *где* и *почему* пайплайн потерял часть.
+
+**A3: фильтр фактов с уверенностью <0.5 по умолчанию.**
+
+`apps/web/src/app/(app)/facts/[docVersionId]/page.tsx`:
+- По умолчанию факты с `confidence < 0.5` скрываются (исключение — `status='validated'`, чтобы не прятать ручные подтверждения).
+- Toggle «Показывать неуверенные» в сводке + счётчик «N из M показаны / скрыто X с уверенностью <0.5».
+- Новая колонка «Уверенность» в таблице (XX% с цветовой кодировкой: зелёный ≥80%, янтарный 60-80%, красный <60%).
+- Если все факты низкоуверенные — показываем пустое состояние с CTA включить toggle.
+
+Цель — не дать эксперту утонуть в шуме: раньше в одной таблице вперемешку шли надёжные `0.95` и мусорные `0.31`. Теперь по умолчанию видны только пригодные к ревью; «всё подряд» — по запросу.
 
 ### Security: `.gitignore` для локальных secret-файлов
 

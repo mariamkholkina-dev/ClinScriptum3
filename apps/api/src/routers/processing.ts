@@ -55,6 +55,12 @@ export const processingRouter = router({
       processingService.listFacts(ctx.user.tenantId, input.docVersionId),
     ),
 
+  getFactExtractionSummary: p
+    .input(z.object({ docVersionId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      processingService.getFactExtractionSummary(ctx.user.tenantId, input.docVersionId),
+    ),
+
   listFactsGrouped: p
     .input(z.object({ docVersionId: z.string().uuid() }))
     .query(({ ctx, input }) =>
