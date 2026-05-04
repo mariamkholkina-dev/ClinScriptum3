@@ -2,6 +2,26 @@
 
 ## 2026-05-04
 
+### Спринт 7 SoA как контекст (commit 3/10): SoA-impact findings в intra-doc-audit
+
+При обработке новой версии документа автоматически создаются findings о добавленных/удалённых процедурах в SoA по сравнению с предыдущей версией. Cell- и visit-уровневые изменения не promote'ятся в findings — они и так видны в diff-view (commit 2), а вот процедуры почти всегда требуют follow-up в тексте протокола, ICF и IB.
+
+Refactor: `apps/api/src/lib/soa-snapshot.ts` → `packages/shared/src/soa-snapshot.ts` (плюс export в `packages/shared/src/index.ts`). Это позволяет workers использовать тот же snapshot/diff без зависимости workers→api. Обновлены импорты в `apps/api/src/services/soa-comparison.service.ts` и тесте.
+
+`apps/workers/src/lib/soa-impact-analyzer.ts`:
+- `runSoaImpactAnalysis(currentVersionId)` — находит предыдущую `DocumentVersion` того же документа (`versionNumber < current`, последняя по убыванию), собирает union-snapshot SoA для обеих версий через `buildSoaSnapshot` из shared, считает diff через `diffSoaSnapshots`, для каждого `addedProcedure` создаёт `Finding type=soa_procedure_added`, для `removedProcedure` — `soa_procedure_removed`.
+- Severity = `medium`, `auditCategory = "soa_impact"`, `issueType` соответствует типу. Suggestion на русском с указанием куда нужно обновить упоминания (раздел 5, ICF, IB).
+- Идемпотентность: перед `createMany` удаляются все ранее созданные findings с `auditCategory = "soa_impact"` для этой же версии, чтобы повторный запуск audit не создавал дубликатов.
+- Skip-кейс: если `versionNumber == 1` (нет предыдущих) — возвращается `{ skipped: true, findingsCreated: 0 }` без обращения к Finding-таблице.
+
+`apps/workers/src/handlers/intra-doc-audit.ts`:
+- В deterministic-step после editorial findings вызывается `runSoaImpactAnalysis(ctx.docVersionId)`. Wrapping в try/catch — failure не должна блокировать audit, только пишется warn-лог. Результат добавлен в step data (`soaImpactFindings`).
+
+Tests:
+- `apps/workers/src/lib/__tests__/soa-impact-analyzer.test.ts` — 5 unit-тестов с mock prisma: skip when no previous version, create added/removed findings, dedupe (deleteMany before createMany), no findings on cell-only/visit-only changes, removed-everything when current has no SoA.
+
+Итого 5 новых тестов, общий счёт по api+workers: 226 unit-тестов проходят.
+
 ### Спринт 7 SoA как контекст (commit 2/10): UI для сравнения SoA версий
 
 Расширение страницы сравнения версий протокола вкладкой «SoA» с side-by-side таблицами и подсветкой изменений.

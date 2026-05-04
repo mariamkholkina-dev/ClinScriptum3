@@ -21,3 +21,18 @@ export {
   type FactExtractionItem,
   type TargetedFact,
 } from "./utils/llm-json.js";
+export {
+  buildSoaSnapshot,
+  diffSoaSnapshots,
+  type SoaSnapshot,
+  type SoaDiff,
+  type SoaCellChange,
+  type SoaFootnoteChange,
+  type SnapshotCell,
+  type SnapshotFootnote,
+  type SnapshotFootnoteAnchor,
+  type SnapshotInputTable,
+  type SnapshotInputCell,
+  type SnapshotInputFootnote,
+  type SnapshotInputFootnoteAnchor,
+} from "./soa-snapshot.js";

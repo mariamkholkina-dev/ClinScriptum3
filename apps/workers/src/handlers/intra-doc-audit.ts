@@ -7,6 +7,7 @@ import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeli
 import { logger } from "../lib/logger.js";
 import { runWithConcurrency } from "../lib/concurrency.js";
 import { loadSections, invalidateSectionsCache } from "../lib/section-cache.js";
+import { runSoaImpactAnalysis } from "../lib/soa-impact-analyzer.js";
 
 interface AuditFinding {
   type: "editorial" | "semantic";
@@ -197,8 +198,22 @@ export async function handleIntraDocAudit(data: {
         });
       }
 
+      // SoA impact analysis (Sprint 7 commit 3): emit findings for procedures
+      // added/removed compared to the previous version of the same document.
+      // Cheap, fully deterministic — runs even when no LLM is configured.
+      let soaImpactCount = 0;
+      try {
+        const impact = await runSoaImpactAnalysis(ctx.docVersionId);
+        soaImpactCount = impact.findingsCreated;
+      } catch (err) {
+        logger.warn("[audit:soa-impact] failed (non-fatal)", {
+          err: err instanceof Error ? err.message : String(err),
+          docVersionId: ctx.docVersionId,
+        });
+      }
+
       return {
-        data: { deterministicFindings: findings.length },
+        data: { deterministicFindings: findings.length, soaImpactFindings: soaImpactCount },
         needsNextStep: true,
       };
     },

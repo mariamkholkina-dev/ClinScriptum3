@@ -7,7 +7,7 @@ import {
   type SoaDiff,
   type SoaSnapshot,
   type SnapshotInputTable,
-} from "../lib/soa-snapshot.js";
+} from "@clinscriptum/shared";
 
 async function loadVersionWithTables(versionId: string) {
   return prisma.documentVersion.findUnique({

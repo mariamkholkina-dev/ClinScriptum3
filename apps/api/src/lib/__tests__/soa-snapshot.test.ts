@@ -4,7 +4,7 @@ import {
   diffSoaSnapshots,
   type SnapshotInputTable,
   type SoaSnapshot,
-} from "../soa-snapshot.js";
+} from "@clinscriptum/shared";
 
 function makeTable(overrides: Partial<SnapshotInputTable> = {}): SnapshotInputTable {
   return {
