@@ -2,6 +2,22 @@
 
 ## 2026-05-04
 
+### Sprint 6 fact-extraction (PR 1): аудит coverage golden-датасета
+
+PR 1 спринта 6 фиксирует исходное состояние golden-датасета по stage `fact_extraction` перед запуском baseline-замеров.
+
+`apps/workers/scripts/audit-golden-fact-extraction-coverage.ts`:
+- Новый аналитический скрипт. Считает кол-во `GoldenSample` в Golden Set tenant'е, у скольких есть `GoldenSampleStageStatus(stage='fact_extraction')` с непустым `expectedResults`, разбивает по статусам (`draft`/`in_review`/`approved`).
+- Терпит три формы `expectedResults`: `{ facts: { factKey: [...] } }`, `{ factKey: [...] }`, `{ factKey: "value" }`.
+- Опции: `--tenant=<uuid>` (по умолчанию Golden Set), `--json` для машинного формата.
+- Печатает сводку + таблицу samples и дефицит до цели в 30 approved.
+
+Снапшот:
+- `docs/baselines/golden-fact-extraction-coverage-2026-05-04.json` — машинная картина
+- `docs/baselines/golden-fact-extraction-coverage-2026-05-04.md` — отчёт + варианты разблокировки A/B/C
+
+Состояние на 2026-05-04: 4 sample'а (FNT-AS-III-2026, STP-08-25, VLT-015-II/2025, Тетра-AHAGGN-11/25), ни один не имеет fact_extraction-разметки. Дефицит до цели 30 — 30. Принята стратегия C: разметить 4 имеющихся sample'а вручную, ship Sprint 6 baseline на cap=4 с relaxed-acceptance (`Brier < 0.15`), цель 30 переезжает в Sprint 7. PR 4 (active-learning UI) не блокируется датасетом, идёт параллельно в worktree `ClinScriptum3-active-learning`.
+
 ### Security: `.gitignore` для локальных secret-файлов
 
 Добавлены паттерны `*.local` и `*.local.*` в `.gitignore`. Триггер: после merge `feat/dev-server-deploy-v2` (PR #46) в `deploy/` остался untracked `restore-passwords.local.txt` — sensitive файл с паролями, который при случайном `git add -A` мог уйти в commit. Существующие `.env.local`/`.env.*.local` покрывали только env-файлы; новые паттерны закрывают любые `*.local.*` (например `deploy/restore-passwords.local.txt`, `*.local.json`, `*.local.yaml`).

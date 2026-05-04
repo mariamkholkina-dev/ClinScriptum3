@@ -1,0 +1,58 @@
+{
+  "summary": {
+    "tenantId": "00000000-0000-0000-0000-000000000002",
+    "stage": "fact_extraction",
+    "totalSamples": 4,
+    "withStageRow": 0,
+    "withNonEmptyExpected": 0,
+    "approvedNonEmpty": 0,
+    "inReviewNonEmpty": 0,
+    "draftNonEmpty": 0,
+    "totalFactKeys": 0,
+    "targetApproved": 30,
+    "gap": 30,
+    "generatedAt": "2026-05-04T12:43:48.277Z"
+  },
+  "samples": [
+    {
+      "id": "5883f8c0-b84d-4c3f-afa9-04a75becc93e",
+      "name": "FNT-AS-III-2026",
+      "stageStatus": null,
+      "factKeyCount": 0,
+      "totalFacts": 0,
+      "hasNonEmptyExpected": false,
+      "reviewedAt": null,
+      "approvedAt": null
+    },
+    {
+      "id": "c0dc009c-3466-4f85-ae89-e8b6374ebf9c",
+      "name": "STP-08-25",
+      "stageStatus": null,
+      "factKeyCount": 0,
+      "totalFacts": 0,
+      "hasNonEmptyExpected": false,
+      "reviewedAt": null,
+      "approvedAt": null
+    },
+    {
+      "id": "f7fbd25b-7ed3-477d-aaa4-ce1c90bf3cea",
+      "name": "VLT-015-II/2025",
+      "stageStatus": null,
+      "factKeyCount": 0,
+      "totalFacts": 0,
+      "hasNonEmptyExpected": false,
+      "reviewedAt": null,
+      "approvedAt": null
+    },
+    {
+      "id": "f149947b-12a4-4fa4-84db-f535af8c52ca",
+      "name": "Тетра-AHAGGN-11/25",
+      "stageStatus": null,
+      "factKeyCount": 0,
+      "totalFacts": 0,
+      "hasNonEmptyExpected": false,
+      "reviewedAt": null,
+      "approvedAt": null
+    }
+  ]
+}
