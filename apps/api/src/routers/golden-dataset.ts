@@ -110,6 +110,37 @@ export const goldenDatasetRouter = router({
       }),
     ),
 
+  upsertExpectedFact: p
+    .input(
+      z.object({
+        goldenSampleId: z.string().uuid(),
+        stage: z.string(),
+        fact: z.object({
+          factKey: z.string().min(1),
+          value: z.string().optional(),
+          factCategory: z.string().optional(),
+          sectionStandardCode: z.string().optional(),
+          sourceText: z.string().optional(),
+          status: z.string().optional(),
+        }),
+      }),
+    )
+    .mutation(({ input }) =>
+      goldenDatasetService.upsertExpectedFact(input.goldenSampleId, input.stage, input.fact),
+    ),
+
+  deleteExpectedFact: p
+    .input(
+      z.object({
+        goldenSampleId: z.string().uuid(),
+        stage: z.string(),
+        factKey: z.string().min(1),
+      }),
+    )
+    .mutation(({ input }) =>
+      goldenDatasetService.deleteExpectedFact(input.goldenSampleId, input.stage, input.factKey),
+    ),
+
   getApprovedStages: p
     .input(z.object({ goldenSampleId: z.string().uuid() }))
     .query(({ input }) =>

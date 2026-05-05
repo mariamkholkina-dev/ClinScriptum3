@@ -2,6 +2,14 @@
 
 ## 2026-05-05
 
+### Feat: облегчение разметки golden dataset — inline edit + prelabel-скрипт
+
+`apps/api/src/services/golden-dataset.service.ts` + `apps/api/src/routers/golden-dataset.ts` — две новые мутации `goldenDataset.upsertExpectedFact` и `goldenDataset.deleteExpectedFact`. Атомарно правят отдельный факт в `GoldenSampleStageStatus.expectedResults.facts[]` без перезаписи всего JSON-блоба.
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — для stage `extraction` `ExpectedResultsViewer` рендерит новую таблицу `EditableFactsTable` вместо `<pre>JSON</pre>`. Таблица: поиск, добавление факта, inline-edit полей `value` / `factCategory` / `sectionStandardCode`, удаление по строке. Закрывает дефер `project_golden_inline_expected_edit.md` — эксперт больше не должен открывать raw-JSON, чтобы поправить одно поле.
+
+`scripts/prelabel-raw-corpus.ts` (new) — пакетный pre-label корпуса. Находит `DocumentVersion`'ы тенанта (`type=protocol` по умолчанию), которые ещё не привязаны ни к одной `GoldenSample`, прогоняет через них pipeline (если ещё не парсились), и создаёт черновик `GoldenSample` + `GoldenSampleStageStatus(stage='fact_extraction', status='draft')` с авто-заполненными `expectedResults.facts[]` из извлечённых `Fact`-строк. Опции: `--limit`, `--dry-run`, `--skip-pipeline`, `--no-wait`, `--tenant`, `--doc-type`. Цель: эксперт не размечает 30 протоколов с нуля, а ревьюит/правит авто-черновики на 200 сырых документах в active-learning loop.
+
 ### Fix: priors не должны отбрасывать факты из секции synopsis (регрессия)
 
 `packages/shared/src/fact-extraction-core.ts` — в `factMatchesSectionPriors` добавлен ранний return для `std === 'synopsis'`. Без этого фикса priors из PR #51 **обнулили deterministic-уровень на всех 4 golden sample'ах** (было 24-38 фактов на документ → стало 0). Причина: deterministic extractor приоритетно работает с секцией synopsis (вес × 2 в `aggregateByCanonical`), но в priors synopsis не входит ни для одного factKey'а, потому что в YAML `topics` это «специфические» разделы (design_plan, population_eligibility и т.п.), а synopsis — каноничный «всё-в-одном» раздел.

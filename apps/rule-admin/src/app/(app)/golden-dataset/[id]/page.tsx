@@ -1134,7 +1134,11 @@ function ReviewCommentModal({
   );
 }
 
-function ExpectedResultsViewer({ data, stageKey }: { data?: unknown; stageKey: string }) {
+function ExpectedResultsViewer({ data, stageKey, goldenSampleId }: { data?: unknown; stageKey: string; goldenSampleId?: string }) {
+  if (stageKey === "extraction" && goldenSampleId) {
+    return <EditableFactsTable data={data} goldenSampleId={goldenSampleId} stage="fact_extraction" />;
+  }
+
   if (!data) {
     return (
       <p className="py-3 text-center text-sm text-gray-400 italic">
@@ -1164,6 +1168,264 @@ function ExpectedResultsViewer({ data, stageKey }: { data?: unknown; stageKey: s
     <pre className="max-h-64 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-xs text-gray-700">
       {JSON.stringify(data, null, 2)}
     </pre>
+  );
+}
+
+interface ExpectedFact {
+  factKey: string;
+  value?: string;
+  factCategory?: string;
+  sectionStandardCode?: string;
+  sourceText?: string;
+  status?: string;
+}
+
+function EditableFactsTable({
+  data,
+  goldenSampleId,
+  stage,
+}: {
+  data?: unknown;
+  goldenSampleId: string;
+  stage: string;
+}) {
+  const utils = trpc.useUtils();
+  const facts = useMemo<ExpectedFact[]>(() => {
+    const obj = (data ?? {}) as { facts?: ExpectedFact[] };
+    return Array.isArray(obj.facts) ? obj.facts : [];
+  }, [data]);
+
+  const upsertMutation = trpc.goldenDataset.upsertExpectedFact.useMutation({
+    onSuccess: () => utils.goldenDataset.getSample.invalidate({ id: goldenSampleId }),
+  });
+  const deleteMutation = trpc.goldenDataset.deleteExpectedFact.useMutation({
+    onSuccess: () => utils.goldenDataset.getSample.invalidate({ id: goldenSampleId }),
+  });
+
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [draft, setDraft] = useState<ExpectedFact | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newFact, setNewFact] = useState<ExpectedFact>({ factKey: "", value: "" });
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    if (!search) return facts;
+    const q = search.toLowerCase();
+    return facts.filter(
+      (f) =>
+        f.factKey.toLowerCase().includes(q) ||
+        (f.value ?? "").toLowerCase().includes(q) ||
+        (f.factCategory ?? "").toLowerCase().includes(q),
+    );
+  }, [facts, search]);
+
+  const startEdit = useCallback((f: ExpectedFact) => {
+    setEditingKey(f.factKey);
+    setDraft({ ...f });
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingKey(null);
+    setDraft(null);
+  }, []);
+
+  const saveEdit = useCallback(() => {
+    if (!draft || !draft.factKey) return;
+    upsertMutation.mutate(
+      { goldenSampleId, stage, fact: draft },
+      { onSuccess: () => { setEditingKey(null); setDraft(null); } },
+    );
+  }, [draft, goldenSampleId, stage, upsertMutation]);
+
+  const handleDelete = useCallback((factKey: string) => {
+    if (!window.confirm(`Удалить ожидаемый факт «${factKey}»?`)) return;
+    deleteMutation.mutate({ goldenSampleId, stage, factKey });
+  }, [goldenSampleId, stage, deleteMutation]);
+
+  const addNewFact = useCallback(() => {
+    if (!newFact.factKey.trim()) return;
+    upsertMutation.mutate(
+      { goldenSampleId, stage, fact: { ...newFact, factKey: newFact.factKey.trim() } },
+      { onSuccess: () => { setNewFact({ factKey: "", value: "" }); setShowAdd(false); } },
+    );
+  }, [newFact, goldenSampleId, stage, upsertMutation]);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Поиск по ключу/значению/категории..."
+          className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:border-brand-500 focus:outline-none"
+        />
+        <span className="text-xs text-gray-500">
+          {filtered.length === facts.length ? `${facts.length} фактов` : `${filtered.length} из ${facts.length}`}
+        </span>
+        <button
+          onClick={() => setShowAdd((v) => !v)}
+          className="flex items-center gap-1 rounded bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700"
+        >
+          <Plus size={12} /> Факт
+        </button>
+      </div>
+
+      {showAdd && (
+        <div className="rounded border border-brand-200 bg-brand-50/30 p-2 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="text"
+              placeholder="factKey *"
+              value={newFact.factKey}
+              onChange={(e) => setNewFact({ ...newFact, factKey: e.target.value })}
+              className="rounded border border-gray-300 px-2 py-1 text-xs font-mono"
+            />
+            <input
+              type="text"
+              placeholder="factCategory"
+              value={newFact.factCategory ?? ""}
+              onChange={(e) => setNewFact({ ...newFact, factCategory: e.target.value })}
+              className="rounded border border-gray-300 px-2 py-1 text-xs"
+            />
+            <input
+              type="text"
+              placeholder="value"
+              value={newFact.value ?? ""}
+              onChange={(e) => setNewFact({ ...newFact, value: e.target.value })}
+              className="rounded border border-gray-300 px-2 py-1 text-xs col-span-2"
+            />
+            <input
+              type="text"
+              placeholder="sectionStandardCode (например, synopsis)"
+              value={newFact.sectionStandardCode ?? ""}
+              onChange={(e) => setNewFact({ ...newFact, sectionStandardCode: e.target.value })}
+              className="rounded border border-gray-300 px-2 py-1 text-xs col-span-2"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setShowAdd(false)} className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100">
+              Отмена
+            </button>
+            <button
+              onClick={addNewFact}
+              disabled={upsertMutation.isPending || !newFact.factKey.trim()}
+              className="flex items-center gap-1 rounded bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+            >
+              {upsertMutation.isPending ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+              Добавить
+            </button>
+          </div>
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <p className="py-4 text-center text-sm italic text-gray-400">
+          {facts.length === 0 ? "Ожидаемые факты не заданы. Используйте «Сгенерировать» или «Добавить»." : "Ничего не найдено."}
+        </p>
+      ) : (
+        <div className="max-h-[400px] overflow-y-auto rounded border border-gray-200 bg-white">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
+              <tr className="text-left text-[10px] font-medium uppercase tracking-wider text-gray-500">
+                <th className="px-2 py-1.5 w-44">factKey</th>
+                <th className="px-2 py-1.5 w-24">Категория</th>
+                <th className="px-2 py-1.5">Значение</th>
+                <th className="px-2 py-1.5 w-32">Секция</th>
+                <th className="px-2 py-1.5 w-20 text-right">Действия</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.map((f) => {
+                const isEdit = editingKey === f.factKey;
+                const d = isEdit ? (draft ?? f) : f;
+                return (
+                  <tr key={f.factKey} className={isEdit ? "bg-brand-50/30" : "hover:bg-gray-50"}>
+                    <td className="px-2 py-1.5 font-mono text-[11px] text-gray-900">{f.factKey}</td>
+                    <td className="px-2 py-1.5">
+                      {isEdit ? (
+                        <input
+                          type="text"
+                          value={d.factCategory ?? ""}
+                          onChange={(e) => setDraft({ ...d, factCategory: e.target.value })}
+                          className="w-full rounded border border-gray-300 px-1 py-0.5 text-[11px]"
+                        />
+                      ) : (
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">{f.factCategory ?? "—"}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {isEdit ? (
+                        <input
+                          type="text"
+                          value={d.value ?? ""}
+                          onChange={(e) => setDraft({ ...d, value: e.target.value })}
+                          className="w-full rounded border border-gray-300 px-1 py-0.5 text-[11px]"
+                          autoFocus
+                        />
+                      ) : (
+                        <span className="text-gray-700" title={f.value}>
+                          {f.value || <span className="italic text-gray-400">пусто</span>}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {isEdit ? (
+                        <input
+                          type="text"
+                          value={d.sectionStandardCode ?? ""}
+                          onChange={(e) => setDraft({ ...d, sectionStandardCode: e.target.value })}
+                          className="w-full rounded border border-gray-300 px-1 py-0.5 text-[11px]"
+                        />
+                      ) : (
+                        <span className="text-[10px] text-gray-500">{f.sectionStandardCode ?? "—"}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      {isEdit ? (
+                        <div className="inline-flex gap-1">
+                          <button
+                            onClick={saveEdit}
+                            disabled={upsertMutation.isPending}
+                            className="rounded p-1 text-green-600 hover:bg-green-50"
+                            title="Сохранить"
+                          >
+                            {upsertMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                          </button>
+                          <button onClick={cancelEdit} className="rounded p-1 text-gray-500 hover:bg-gray-100" title="Отмена">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="inline-flex gap-1">
+                          <button onClick={() => startEdit(f)} className="rounded p-1 text-gray-500 hover:bg-gray-100" title="Редактировать">
+                            <Edit3 size={12} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(f.factKey)}
+                            disabled={deleteMutation.isPending}
+                            className="rounded p-1 text-red-500 hover:bg-red-50 disabled:opacity-40"
+                            title="Удалить"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {(upsertMutation.error || deleteMutation.error) && (
+        <p className="text-xs text-red-600">
+          {upsertMutation.error?.message ?? deleteMutation.error?.message}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -1534,7 +1796,7 @@ function StagePanel({
                 className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             ) : (
-              <ExpectedResultsViewer data={stageStatus?.expectedResults} stageKey={stageKey} />
+              <ExpectedResultsViewer data={stageStatus?.expectedResults} stageKey={stageKey} goldenSampleId={goldenSampleId} />
             )}
           </>
         )}

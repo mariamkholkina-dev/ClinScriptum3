@@ -188,6 +188,75 @@ export const goldenDatasetService = {
     });
   },
 
+  async upsertExpectedFact(
+    goldenSampleId: string,
+    stage: string,
+    fact: {
+      factKey: string;
+      value?: string;
+      factCategory?: string;
+      sectionStandardCode?: string;
+      sourceText?: string;
+      status?: string;
+    },
+  ) {
+    const sample = await prisma.goldenSample.findUnique({ where: { id: goldenSampleId } });
+    if (!sample) {
+      throw new DomainError("NOT_FOUND", "Golden sample not found");
+    }
+
+    const existing = await prisma.goldenSampleStageStatus.findUnique({
+      where: { goldenSampleId_stage: { goldenSampleId, stage } },
+    });
+
+    const current = (existing?.expectedResults as { facts?: Array<Record<string, unknown>> } | null) ?? null;
+    const facts = Array.isArray(current?.facts) ? [...current.facts] : [];
+    const idx = facts.findIndex((f) => (f as { factKey?: string }).factKey === fact.factKey);
+
+    const merged: Record<string, unknown> = idx >= 0 ? { ...facts[idx] } : { factKey: fact.factKey };
+    if (fact.value !== undefined) merged.value = fact.value;
+    if (fact.factCategory !== undefined) merged.factCategory = fact.factCategory;
+    if (fact.sectionStandardCode !== undefined) merged.sectionStandardCode = fact.sectionStandardCode;
+    if (fact.sourceText !== undefined) merged.sourceText = fact.sourceText;
+    if (fact.status !== undefined) merged.status = fact.status;
+
+    if (idx >= 0) facts[idx] = merged;
+    else facts.push(merged);
+
+    const newExpected: unknown = { ...(current ?? {}), facts };
+    const newStatus: GoldenStageStatus = (existing?.status ?? "draft") as GoldenStageStatus;
+
+    return prisma.goldenSampleStageStatus.upsert({
+      where: { goldenSampleId_stage: { goldenSampleId, stage } },
+      create: { goldenSampleId, stage, status: newStatus, expectedResults: newExpected as object },
+      update: { expectedResults: newExpected as object },
+    });
+  },
+
+  async deleteExpectedFact(goldenSampleId: string, stage: string, factKey: string) {
+    const sample = await prisma.goldenSample.findUnique({ where: { id: goldenSampleId } });
+    if (!sample) {
+      throw new DomainError("NOT_FOUND", "Golden sample not found");
+    }
+
+    const existing = await prisma.goldenSampleStageStatus.findUnique({
+      where: { goldenSampleId_stage: { goldenSampleId, stage } },
+    });
+    if (!existing) {
+      throw new DomainError("NOT_FOUND", "Stage status not found");
+    }
+
+    const current = (existing.expectedResults as { facts?: Array<Record<string, unknown>> } | null) ?? null;
+    const facts = Array.isArray(current?.facts) ? current.facts : [];
+    const filtered = facts.filter((f) => (f as { factKey?: string }).factKey !== factKey);
+    const newExpected: unknown = { ...(current ?? {}), facts: filtered };
+
+    return prisma.goldenSampleStageStatus.update({
+      where: { goldenSampleId_stage: { goldenSampleId, stage } },
+      data: { expectedResults: newExpected as object },
+    });
+  },
+
   async getApprovedStages(goldenSampleId: string) {
     const sample = await prisma.goldenSample.findUnique({
       where: { id: goldenSampleId },
