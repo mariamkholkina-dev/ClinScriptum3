@@ -171,7 +171,18 @@ export class SectionClassifier {
       };
     }
 
-    candidates.sort((a, b) => b.score - a.score);
+    // Phase 2 (Sprint 6): при равенстве score предпочитаем БОЛЕЕ ГЛУБОКУЮ
+    // зону (больше точек в standardSection). Это решает subzone gap, когда
+    // parent zone (например `safety.adverse_events`) и subzone того же parent
+    // (например `safety.adverse_events.definitions`) дают одинаковый score
+    // на bare AE-titles типа "Нежелательное явление" — раньше parent выигрывал
+    // через stable sort, теперь побеждает более специфичная subzone.
+    candidates.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aDots = (a.rule.standardSection.match(/\./g) ?? []).length;
+      const bDots = (b.rule.standardSection.match(/\./g) ?? []).length;
+      return bDots - aDots;
+    });
     const best = candidates[0];
     return {
       sectionTitle: title,
