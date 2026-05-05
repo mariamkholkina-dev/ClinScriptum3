@@ -2,6 +2,19 @@
 
 ## 2026-05-05
 
+### Fix: TOC-skip v2 — per-heading правило (без зависимости от parent «Содержание»)
+
+`packages/doc-parser/src/toc-filter.ts` — переписана эвристика. Старая версия (PR #56) требовала чтобы TOC-entries были **детьми** heading-а «Содержание» в иерархии (level > parent.level). На реальных протоколах это не работало: numbered-detection распознаёт записи вроде «1 синопсис 13» как top-level numbered headings (level 1) — то есть **сиблинги** «Содержания», а не дети. После деплоя PR #56 на dev: f1 не сдвинулся (0.590 → 0.587), STP extra 310 → 310 без изменений — старая логика не находила что дропать.
+
+Новая эвристика — per-heading drop, без зависимости от parent:
+1. Heading заканчивается на цифру (`PAGE_NUMBER_TAIL_RE`)
+2. В headings есть «двойник» — текст без leading-номера раздела и trailing-страницы совпадает с другим heading'ом
+3. Сам двойник **не заканчивается цифрой** — гарантия что оставляем чистую версию (реальную секцию) и дропаем page-numbered (TOC reference)
+
+Защита от false positives: если оба кандидата заканчиваются цифрой (e.g. «Глава 1 5» и «Глава 1 100») — не дропаем (ambiguous). «Приложение А», «Этап 2 (визит 4)» не задеваются.
+
+14 тестов в `toc-filter.test.ts` (+2 над PR #56): drop без parent «Содержание», ambiguous twins (оба с digit-tail), legitimate titles с digit в середине строки.
+
 ### Docs: deploy/RESTORE.md — список граблей prod-деплоя
 
 Новый файл `deploy/RESTORE.md` фиксирует 4 неочевидности после реального инцидента деплоя Phase 2 + TOC-skip:

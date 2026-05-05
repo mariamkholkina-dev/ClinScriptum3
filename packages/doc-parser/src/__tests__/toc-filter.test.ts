@@ -7,11 +7,11 @@ function h(text: string, level: number, paragraphIndex: number): DetectedHeading
 }
 
 describe("filterTocChildren", () => {
-  it("drops TOC children when all conditions met", () => {
+  it("drops TOC entries when all conditions met (digit tail + clean twin)", () => {
     const headings: DetectedHeading[] = [
       h("Содержание", 1, 0),
-      h("1 Синопсис 13", 2, 1),
-      h("2 Обоснование 33", 2, 2),
+      h("1 Синопсис 13", 1, 1),
+      h("2 Обоснование 33", 1, 2),
       h("Синопсис", 1, 50),
       h("Обоснование", 1, 100),
     ];
@@ -19,24 +19,52 @@ describe("filterTocChildren", () => {
     expect(result.map((x) => x.text)).toEqual(["Содержание", "Синопсис", "Обоснование"]);
   });
 
-  it("keeps TOC children when at least one has no twin elsewhere", () => {
+  it("works even when «Содержание» parent is missing — per-heading rule", () => {
+    // No «Содержание» heading at all — but TOC duplicates still get dropped
+    // because each has a clean twin in the document body.
+    const headings: DetectedHeading[] = [
+      h("1 Синопсис 13", 1, 0),
+      h("2 Обоснование 33", 1, 1),
+      h("Синопсис", 1, 50),
+      h("Обоснование", 1, 100),
+    ];
+    const result = filterTocChildren(headings);
+    expect(result.map((x) => x.text)).toEqual(["Синопсис", "Обоснование"]);
+  });
+
+  it("partial drop: keeps page-numbered headings without a twin", () => {
     const headings: DetectedHeading[] = [
       h("Содержание", 1, 0),
-      h("1 Синопсис 13", 2, 1),
-      h("2 Обоснование 33", 2, 2),
+      h("1 Синопсис 13", 1, 1),
+      h("2 Обоснование 33", 1, 2),
       h("Синопсис", 1, 50),
-      // Note: no twin for "Обоснование" — heuristic must NOT apply
+      // No twin for «Обоснование» → keep «2 Обоснование 33»
+    ];
+    const result = filterTocChildren(headings);
+    expect(result.map((x) => x.text)).toEqual([
+      "Содержание",
+      "2 Обоснование 33",
+      "Синопсис",
+    ]);
+  });
+
+  it("does not drop a heading that does not end with a digit", () => {
+    const headings: DetectedHeading[] = [
+      h("Содержание", 1, 0),
+      h("Раздел без номера страницы", 1, 1),
+      h("Раздел без номера страницы", 1, 50),
     ];
     const result = filterTocChildren(headings);
     expect(result).toEqual(headings);
   });
 
-  it("keeps TOC children when at least one does not end with a digit", () => {
+  it("does not drop when only candidates have digit tails (no clean twin)", () => {
+    // Both «Глава 1 5» and «Глава 1 100» end with digits — neither is a clean
+    // twin for the other. Without a digit-free version we cannot tell which
+    // one is the TOC reference, so both are kept.
     const headings: DetectedHeading[] = [
-      h("Содержание", 1, 0),
-      h("1 Синопсис 13", 2, 1),
-      h("Раздел без номера страницы", 2, 2),
-      h("Синопсис", 1, 50),
+      h("Глава 1 5", 1, 0),
+      h("Глава 1 100", 1, 50),
     ];
     const result = filterTocChildren(headings);
     expect(result).toEqual(headings);
@@ -45,7 +73,7 @@ describe("filterTocChildren", () => {
   it("works with «Оглавление» variant", () => {
     const headings: DetectedHeading[] = [
       h("Оглавление", 1, 0),
-      h("Введение 5", 2, 1),
+      h("Введение 5", 1, 1),
       h("Введение", 1, 100),
     ];
     const result = filterTocChildren(headings);
@@ -55,14 +83,14 @@ describe("filterTocChildren", () => {
   it("works with English «Table of Contents»", () => {
     const headings: DetectedHeading[] = [
       h("Table of Contents", 1, 0),
-      h("Introduction 5", 2, 1),
+      h("Introduction 5", 1, 1),
       h("Introduction", 1, 100),
     ];
     const result = filterTocChildren(headings);
     expect(result.map((x) => x.text)).toEqual(["Table of Contents", "Introduction"]);
   });
 
-  it("returns headings unchanged when no TOC heading present", () => {
+  it("returns headings unchanged when no TOC duplicates present", () => {
     const headings: DetectedHeading[] = [
       h("Введение", 1, 0),
       h("Глава 1", 1, 10),
@@ -75,25 +103,12 @@ describe("filterTocChildren", () => {
     expect(filterTocChildren([])).toEqual([]);
   });
 
-  it("does NOT touch siblings of TOC at same or shallower level", () => {
+  it("handles nested TOC entries with section numbering (1., 1.1.)", () => {
     const headings: DetectedHeading[] = [
       h("Содержание", 1, 0),
-      h("1 Синопсис 13", 2, 1),
-      h("Синопсис", 1, 50),  // sibling of "Содержание", NOT child
-      h("Заключение", 1, 100),
-    ];
-    const result = filterTocChildren(headings);
-    // "1 Синопсис 13" is a TOC child (level 2), and "Синопсис" is its twin
-    // → drop the TOC child, keep "Содержание", "Синопсис", "Заключение"
-    expect(result.map((x) => x.text)).toEqual(["Содержание", "Синопсис", "Заключение"]);
-  });
-
-  it("handles deep nested TOC entries (multiple levels under TOC)", () => {
-    const headings: DetectedHeading[] = [
-      h("Содержание", 1, 0),
-      h("1. Введение 5", 2, 1),
-      h("1.1. Цель 6", 3, 2),
-      h("1.2. Задачи 7", 3, 3),
+      h("1. Введение 5", 1, 1),
+      h("1.1. Цель 6", 1, 2),
+      h("1.2. Задачи 7", 1, 3),
       h("Введение", 1, 100),
       h("Цель", 2, 110),
       h("Задачи", 2, 120),
@@ -105,38 +120,38 @@ describe("filterTocChildren", () => {
   it("handles TOC entries with dot leaders (……)", () => {
     const headings: DetectedHeading[] = [
       h("Содержание", 1, 0),
-      h("Синопсис………5", 2, 1),
+      h("Синопсис………5", 1, 1),
       h("Синопсис", 1, 100),
     ];
     const result = filterTocChildren(headings);
     expect(result.map((x) => x.text)).toEqual(["Содержание", "Синопсис"]);
   });
 
-  it("does not mistake «Приложение А» (letter-tail) for TOC entry", () => {
+  it("does not mistake «Приложение А» (letter-tail) for a TOC entry", () => {
     const headings: DetectedHeading[] = [
       h("Содержание", 1, 0),
-      h("Приложение А", 2, 1),  // ends with letter, not digit
+      h("Приложение А", 1, 1),
       h("Приложение", 1, 100),
     ];
     const result = filterTocChildren(headings);
     expect(result).toEqual(headings);
   });
 
-  it("applies heuristic per TOC block independently (multiple TOCs)", () => {
+  it("does not drop legitimate numbered titles like «Этап 2 (визит 4)»", () => {
+    // The digit «4» is followed by a closing paren, not a tail-of-line digit.
     const headings: DetectedHeading[] = [
-      h("Содержание", 1, 0),
-      h("Синопсис 5", 2, 1),
-      h("Синопсис", 1, 50),
-      h("Оглавление", 1, 100),
-      h("Глава 1 200", 2, 101),
-      // No twin for "Глава 1" — second TOC block must NOT be filtered
+      h("Этап 2 (визит 4)", 1, 0),
+      h("Этап 2", 1, 50),
     ];
     const result = filterTocChildren(headings);
-    expect(result.map((x) => x.text)).toEqual([
-      "Содержание",
-      "Синопсис",
-      "Оглавление",
-      "Глава 1 200",
-    ]);
+    expect(result).toEqual(headings);
+  });
+
+  it("ignores headings where digit is not at the very end (mid-string number)", () => {
+    const headings: DetectedHeading[] = [
+      h("Глава 5 продолжение", 1, 0),
+      h("Глава 5 продолжение", 1, 50),
+    ];
+    expect(filterTocChildren(headings)).toEqual(headings);
   });
 });
