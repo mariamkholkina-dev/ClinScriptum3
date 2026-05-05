@@ -35,6 +35,8 @@
  *   --no-wait             enqueue pipeline и сразу вернуться (без поллинга на parsed)
  *   --dry-run             только показать план, без записи
  *   --sample-name-prefix  prefix к имени golden sample (default: «Pre-labeled — »)
+ *   --user=<uuid>         createdById для GoldenSample. Если не задан — берётся
+ *                         первый пользователь tenant'а.
  */
 
 import { PrismaClient, type DocumentType } from "@prisma/client";
@@ -55,6 +57,7 @@ interface Args {
   noWait: boolean;
   dryRun: boolean;
   sampleNamePrefix: string;
+  createdById?: string;
 }
 
 function parseArgs(): Args {
@@ -80,7 +83,21 @@ function parseArgs(): Args {
     noWait: has("no-wait"),
     dryRun: has("dry-run"),
     sampleNamePrefix: get("sample-name-prefix") ?? "Pre-labeled — ",
+    createdById: get("user"),
   };
+}
+
+async function resolveCreatorId(prisma: PrismaClient, args: Args): Promise<string> {
+  if (args.createdById) return args.createdById;
+  const user = await prisma.user.findFirst({
+    where: { tenantId: args.tenantId },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  if (!user) {
+    throw new Error(`No user found in tenant ${args.tenantId}. Pass --user=<uuid> or seed a user.`);
+  }
+  return user.id;
 }
 
 interface FactSourceLike {
@@ -110,8 +127,8 @@ async function findCandidates(prisma: PrismaClient, args: Args) {
   const versions = await prisma.documentVersion.findMany({
     where: {
       document: {
-        tenantId: args.tenantId,
         type: args.docType,
+        study: { tenantId: args.tenantId },
       },
     },
     include: {
@@ -199,6 +216,7 @@ async function seedGoldenSample(
   prisma: PrismaClient,
   args: Args,
   version: { id: string; document: { id: string; title: string; type: DocumentType } },
+  createdById: string,
 ): Promise<{ goldenSampleId: string; factCount: number } | null> {
   const facts = await prisma.fact.findMany({
     where: { docVersionId: version.id },
@@ -238,6 +256,7 @@ async function seedGoldenSample(
     return { goldenSampleId: "dry-run", factCount: expectedFacts.length };
   }
 
+  const expectedResultsJson: unknown = { facts: expectedFacts };
   const created = await prisma.$transaction(async (tx) => {
     const sample = await tx.goldenSample.create({
       data: {
@@ -245,6 +264,7 @@ async function seedGoldenSample(
         name: sampleName,
         sampleType: "single_document",
         description: `Auto-prelabeled from DocumentVersion ${version.id} (pipeline-extracted facts; needs expert review)`,
+        createdById,
       },
     });
 
@@ -263,7 +283,7 @@ async function seedGoldenSample(
         goldenSampleId: sample.id,
         stage: "fact_extraction",
         status: "draft",
-        expectedResults: { facts: expectedFacts },
+        expectedResults: expectedResultsJson as object,
       },
     });
 
@@ -284,6 +304,10 @@ async function main() {
   console.log(`Skip pipeline:     ${args.skipPipeline}`);
   console.log(`No-wait:           ${args.noWait}`);
   console.log(`Dry run:           ${args.dryRun}`);
+  console.log("");
+
+  const createdById = await resolveCreatorId(prisma, args);
+  console.log(`Creator user:      ${createdById}`);
   console.log("");
 
   const candidates = await findCandidates(prisma, args);
@@ -331,7 +355,7 @@ async function main() {
       skipped++;
       continue;
     }
-    const result = await seedGoldenSample(prisma, args, v);
+    const result = await seedGoldenSample(prisma, args, v, createdById);
     if (result) {
       console.log(`  ✓ ${v.id.slice(0, 8)} → sample ${result.goldenSampleId.slice(0, 8)} (${result.factCount} facts)`);
       seeded++;

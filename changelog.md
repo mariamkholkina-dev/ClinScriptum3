@@ -8,7 +8,16 @@
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — для stage `extraction` `ExpectedResultsViewer` рендерит новую таблицу `EditableFactsTable` вместо `<pre>JSON</pre>`. Таблица: поиск, добавление факта, inline-edit полей `value` / `factCategory` / `sectionStandardCode`, удаление по строке. Закрывает дефер `project_golden_inline_expected_edit.md` — эксперт больше не должен открывать raw-JSON, чтобы поправить одно поле.
 
-`scripts/prelabel-raw-corpus.ts` (new) — пакетный pre-label корпуса. Находит `DocumentVersion`'ы тенанта (`type=protocol` по умолчанию), которые ещё не привязаны ни к одной `GoldenSample`, прогоняет через них pipeline (если ещё не парсились), и создаёт черновик `GoldenSample` + `GoldenSampleStageStatus(stage='fact_extraction', status='draft')` с авто-заполненными `expectedResults.facts[]` из извлечённых `Fact`-строк. Опции: `--limit`, `--dry-run`, `--skip-pipeline`, `--no-wait`, `--tenant`, `--doc-type`. Цель: эксперт не размечает 30 протоколов с нуля, а ревьюит/правит авто-черновики на 200 сырых документах в active-learning loop.
+`scripts/prelabel-raw-corpus.ts` (new) — пакетный pre-label корпуса. Находит `DocumentVersion`'ы тенанта (`type=protocol` по умолчанию), которые ещё не привязаны ни к одной `GoldenSample`, прогоняет через них pipeline (если ещё не парсились), и создаёт черновик `GoldenSample` + `GoldenSampleStageStatus(stage='fact_extraction', status='draft')` с авто-заполненными `expectedResults.facts[]` из извлечённых `Fact`-строк. Опции: `--limit`, `--dry-run`, `--skip-pipeline`, `--no-wait`, `--tenant`, `--doc-type`, `--user`. Цель: эксперт не размечает 30 протоколов с нуля, а ревьюит/правит авто-черновики на 200 сырых документах в active-learning loop.
+
+`scripts/batch-upload-corpus.ts` (new) — закрывает шаг до prelabel: для директории с DOCX создаёт `Document` + `DocumentVersion` в указанной (или auto-find/create) study, кладёт байты в storage (local FS или S3 по `STORAGE_TYPE`), enqueue'ит `run_pipeline`, и по умолчанию ждёт пока все версии не дойдут до terminal-статуса. Идемпотентность: повторный запуск пропускает Document'ы с тем же title (filename без расширения). Опции: `--corpus`, `--tenant`, `--study|--study-name`, `--doc-type`, `--limit`, `--dry-run`, `--no-wait`, `--version-label`. Полный workflow для разметки корпуса теперь:
+
+```bash
+npx tsx --env-file=.env scripts/batch-upload-corpus.ts --corpus=./protocols
+npx tsx --env-file=.env scripts/prelabel-raw-corpus.ts --skip-pipeline
+```
+
+Также фикс реальных багов в `prelabel-raw-corpus.ts`, обнаруженных при ручном typecheck (workspace-tsconfig не покрывает `scripts/`): неправильный `where: { document: { tenantId } }` (у `Document` нет `tenantId`, нужно через `study`); `GoldenSample.create` без обязательного `createdById`; некорректный cast Json для `expectedResults`.
 
 ### Fix: priors не должны отбрасывать факты из секции synopsis (регрессия)
 
