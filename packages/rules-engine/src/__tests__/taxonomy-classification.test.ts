@@ -315,6 +315,99 @@ describe("taxonomy.yaml → SectionClassifier integration (Phase 2 subzone gap)"
     });
   });
 
+  describe("regression safety — жёсткие правила Уровня 1 не сломались после Phase 2", () => {
+    // Эти classifications были корректны ДО Phase 2 правок (по docs/expert-classification-rules.md
+    // Уровень 1 «жёсткие правила»). После расширения require_patterns/patterns
+    // нельзя ничего сломать — ловим регрессии.
+
+    // Note: edge cases 3.1 («СОДЕРЖАНИЕ → admin») и 3.3 («Использование информации
+    // → ethics.confidentiality») — это **известные taxonomy-gaps**, не охваченные
+    // Phase 2. Для них в taxonomy.yaml нет точечных patterns. Их classify-ит LLM
+    // Check на втором уровне pipeline, не deterministic. Не регрессия Phase 2.
+
+    it("'СПИСОК СОКРАЩЕНИЙ' → overview.definitions", () => {
+      expect(cls("СПИСОК СОКРАЩЕНИЙ")).toBe("overview.definitions");
+    });
+
+    it("'СИНОПСИС' → synopsis", () => {
+      expect(cls("СИНОПСИС")).toBe("synopsis");
+    });
+
+    it("'Конфиденциальность' → ethics.confidentiality", () => {
+      expect(cls("Конфиденциальность", "ethics")).toBe("ethics.confidentiality");
+    });
+
+    it("'Совет по этике при Министерстве здравоохранения Российской Федерации' → ethics.irb_iec", () => {
+      expect(
+        cls("Совет по этике при Министерстве здравоохранения Российской Федерации", "ethics"),
+      ).toBe("ethics.irb_iec");
+    });
+
+    it("'Независимый этический комитет' → ethics.irb_iec", () => {
+      expect(cls("Независимый этический комитет", "ethics")).toBe("ethics.irb_iec");
+    });
+
+    it("'Критерии включения' → population.eligibility_criteria", () => {
+      expect(cls("Критерии включения", "population")).toBe("population.eligibility_criteria");
+    });
+
+    it("'Критерии невключения' → population.eligibility_criteria", () => {
+      expect(cls("Критерии невключения", "population")).toBe("population.eligibility_criteria");
+    });
+
+    it("'Критерии исключения' → population.eligibility_criteria", () => {
+      expect(cls("Критерии исключения", "population")).toBe("population.eligibility_criteria");
+    });
+
+    it("'Цель исследования' → overview.objectives", () => {
+      expect(cls("Цель исследования", "overview")).toBe("overview.objectives");
+    });
+
+    it("'Задачи исследования' → overview.objectives", () => {
+      expect(cls("Задачи исследования", "overview")).toBe("overview.objectives");
+    });
+
+    it("'Поправки к Протоколу' → admin.protocol_amendments", () => {
+      expect(cls("Поправки к Протоколу", "admin")).toBe("admin.protocol_amendments");
+    });
+
+    it("'Страхование' → admin.financing_and_insurance", () => {
+      expect(cls("Страхование", "admin")).toBe("admin.financing_and_insurance");
+    });
+
+    it("'Применяемый уровень значимости' → statistics.sample_size_justification", () => {
+      expect(cls("Применяемый уровень значимости", "statistics")).toBe(
+        "statistics.sample_size_justification",
+      );
+    });
+
+    it("'Маркировка и упаковка исследуемых препаратов' → ip.packaging_and_labeling, NOT description", () => {
+      expect(cls("Маркировка и упаковка исследуемых препаратов", "ip")).toBe(
+        "ip.packaging_and_labeling",
+      );
+    });
+
+    it("'Электрокардиография (ЭКГ)' → procedures.imaging", () => {
+      expect(cls("Электрокардиография (ЭКГ)", "procedures")).toBe("procedures.imaging");
+    });
+
+    it("'Физикальное обследование' → procedures.physical_examination", () => {
+      expect(cls("Физикальное обследование", "procedures")).toBe("procedures.physical_examination");
+    });
+
+    it("'Анализ мочи на содержание наркотических веществ' → procedures.laboratory_assessments", () => {
+      expect(cls("Анализ мочи на содержание наркотических веществ", "procedures")).toBe(
+        "procedures.laboratory_assessments",
+      );
+    });
+
+    // Note: «Сообщения о беременности» и «Регистрация беременности» — pre-existing
+    // FP в `procedures.contraception_requirements` (broad pattern «беременн»),
+    // не связан с Phase 2. Будет починено отдельно (требует более точного regex
+    // engineering чтобы корректно обрабатываться через adapt-for-Cyrillic).
+    // Эти секции на dev обрабатываются на LLM Check level.
+  });
+
   describe("ip.* — отрицательные кейсы (не должны попадать в description/contraindications)", () => {
     it("'Срок годности' → storage_and_accountability, NOT description", () => {
       expect(cls("Срок годности", "ip")).toBe("ip.storage_and_accountability");

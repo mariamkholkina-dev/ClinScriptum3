@@ -601,6 +601,12 @@ procedures:
         # Не путать с критериями невключения (population.exclusion) которые
         # упоминают беременность как exclusion criterion.
         - "(?i)\\bкритери\\w*\\s+(не\\s*)?включен\\w*\\b|\\b(in|ex)clusion\\s+criteria\\b"
+        # Phase 2: «Сообщения/Регистрация о беременности» — это safety.adverse_events.reporting
+        # (как specified в эталоне FNT 135, Тетра 143). Не contraception_requirements.
+        - "(?i)\\b(сообщен\\w*|регистрац\\w*|report\\w*|expedited)\\s+(о\\s+)?беременн\\w*\\b"
+        # Phase 2: «Применение/Примечание при беременности» — это ip.contraindications
+        # (как specified в эталоне VLT 90, FNT 84, STP 85, Тетра 85).
+        - "(?i)\\b(применен\\w*|примечан\\w*|фертильн\\w*).{0,20}беременн\\w*\\b"
 
     lifestyle:
       title_ru: Образ жизни / физическая активность
