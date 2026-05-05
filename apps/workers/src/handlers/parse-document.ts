@@ -28,6 +28,19 @@ export async function handleParseDocument(data: { versionId: string }) {
       },
     });
 
+    // Sprint 7e: сохраняем экспертские isFalseHeading-флаги через reprocess.
+    // Без этого после reprocess все ручные пометки «не заголовок» теряются —
+    // STP-baseline 2026-05-05 показал 224 lonely-extra секций в STP именно из-за
+    // этого: эксперт ранее помечал глубоко-нумерованные подзаголовки как
+    // false_heading, но reprocess через parse-document обнулял флаг.
+    const previousFalseHeadings = await prisma.section.findMany({
+      where: { docVersionId: version.id, isFalseHeading: true },
+      select: { title: true, level: true },
+    });
+    const falseHeadingKeys = new Set(
+      previousFalseHeadings.map((s) => `${s.title.trim().toLowerCase()}::${s.level}`),
+    );
+
     await prisma.contentBlock.deleteMany({
       where: { section: { docVersionId: version.id } },
     });
@@ -35,11 +48,38 @@ export async function handleParseDocument(data: { versionId: string }) {
 
     await saveSections(version.id, parsed.sections, null);
 
+    // Восстановить isFalseHeading для секций которые matched по (title, level).
+    // Match свободный — разные order'ы у одинаковых title не различаем; если
+    // в новой версии добавились новые секции с теми же title и level, флаг
+    // тоже выставится — это false-positive, но эксперт может снять через UI.
+    let restoredFlags = 0;
+    if (falseHeadingKeys.size > 0) {
+      const newSections = await prisma.section.findMany({
+        where: { docVersionId: version.id },
+        select: { id: true, title: true, level: true },
+      });
+      const idsToFlag: string[] = [];
+      for (const s of newSections) {
+        if (falseHeadingKeys.has(`${s.title.trim().toLowerCase()}::${s.level}`)) {
+          idsToFlag.push(s.id);
+        }
+      }
+      if (idsToFlag.length > 0) {
+        await prisma.section.updateMany({
+          where: { id: { in: idsToFlag } },
+          data: { isFalseHeading: true },
+        });
+        restoredFlags = idsToFlag.length;
+      }
+    }
+
     logger.info("Parsed document", {
       versionId: version.id,
       sections: parsed.sections.length,
       tables: parsed.metadata.totalTables,
       footnotes: parsed.metadata.totalFootnotes,
+      restoredFalseHeadings: restoredFlags,
+      previousFalseHeadings: previousFalseHeadings.length,
     });
 
     return { success: true, metadata: parsed.metadata };

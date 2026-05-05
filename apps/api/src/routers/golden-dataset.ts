@@ -96,19 +96,26 @@ export const goldenDatasetRouter = router({
         status: stageStatusEnum,
         expectedResults: z.record(z.unknown()).optional(),
         reviewComment: z.string().optional(),
-        reviewedById: z.string().uuid().optional(),
-        approvedById: z.string().uuid().optional(),
+        // reviewedById/approvedById выводятся автоматически из ctx.user.userId
+        // в зависимости от status. Раньше эти поля были explicit input —
+        // UI их никогда не передавал, поэтому approved_at/reviewed_at всегда
+        // оставались null. См. project_golden_stage_status_timestamps.md
       }),
     )
-    .mutation(({ input }) =>
-      goldenDatasetService.updateStageStatus(input.goldenSampleId, input.stage, {
+    .mutation(({ ctx, input }) => {
+      // Sprint 7d: автоматически выставляем audit-fields:
+      // - status='in_review' → reviewedById = текущий пользователь, reviewedAt = now()
+      // - status='approved' → approvedById = текущий пользователь, approvedAt = now()
+      // - status='draft' → ничего (черновик не имеет review/approve)
+      const userId = ctx.user.userId;
+      return goldenDatasetService.updateStageStatus(input.goldenSampleId, input.stage, {
         status: input.status,
         expectedResults: input.expectedResults,
         reviewComment: input.reviewComment,
-        reviewedById: input.reviewedById,
-        approvedById: input.approvedById,
-      }),
-    ),
+        reviewedById: input.status === "in_review" ? userId : undefined,
+        approvedById: input.status === "approved" ? userId : undefined,
+      });
+    }),
 
   getApprovedStages: p
     .input(z.object({ goldenSampleId: z.string().uuid() }))

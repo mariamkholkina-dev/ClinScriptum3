@@ -2,6 +2,23 @@
 
 ## 2026-05-05
 
+### Sprint 7 (api): approved_at/reviewed_at автоматически при approve через UI
+
+`apps/api/src/routers/golden-dataset.ts` — `updateStageStatus` mutation теперь автоматически выводит `reviewedById` / `approvedById` из `ctx.user.userId` в зависимости от status:
+- `status='in_review'` → `reviewedById` + `reviewedAt = now()`
+- `status='approved'` → `approvedById` + `approvedAt = now()`
+- `status='draft'` → ничего
+
+Раньше эти поля принимались из input mutation, но UI rule-admin их никогда не передавал, поэтому `approved_at`/`reviewed_at` всегда оставались NULL. Невозможно было понять когда эксперт правил эталон в последний раз — мешало диагностике регрессий f1 (см. `project_golden_stage_status_timestamps.md`). Теперь audit-trail заполняется автоматически.
+
+### Sprint 7 (workers): isFalseHeading persistence через reprocess
+
+`apps/workers/src/handlers/parse-document.ts` — перед `deleteMany` сохраняем список (title, level) секций помеченных экспертом как `isFalseHeading=true`, после создания новых Section восстанавливаем флаг для совпадающих.
+
+Без этого reprocess через `apps/workers/scripts/reprocess-golden-samples.ts` обнулял всю ручную работу эксперта по парсингу — мы это видели на STP 2026-05-05: 224 lonely-extra (~½ всех секций), потому что глубоко-нумерованные подзаголовки карточек препаратов снова стали «настоящими» секциями. Match по `(title.trim().toLowerCase(), level)` — простой и достаточный для основных случаев. Если документ структурно изменился — эксперт может скорректировать через UI parsing-viewer.
+
+В лог `Parsed document` добавлены поля `previousFalseHeadings`/`restoredFalseHeadings` для мониторинга.
+
 ### Sprint 7 (rule-admin): inline-sync эталона при правке классификации + warning на «Сгенерировать»
 
 Главный блокирующий UX-баг: правка zone через dropdown в дереве `classification-viewer` писала только в `Section.standardSection`, а эталон (`golden_sample_stage_statuses.expected_results`) оставался прежним. Эксперт не понимал почему f1 не меняется → нажимал «Сгенерировать из результатов» → expected_results становился полной копией текущей разметки → артефактный baseline (incident 2026-05-05, baseline 0.902 пришлось откатывать через `evaluation_results.expected` snapshot).
