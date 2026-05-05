@@ -10,7 +10,13 @@
 
 `scripts/prelabel-raw-corpus.ts` (new) — пакетный pre-label корпуса. Находит `DocumentVersion`'ы тенанта (`type=protocol` по умолчанию), которые ещё не привязаны ни к одной `GoldenSample`, прогоняет через них pipeline (если ещё не парсились), и создаёт черновик `GoldenSample` + `GoldenSampleStageStatus(stage='fact_extraction', status='draft')` с авто-заполненными `expectedResults.facts[]` из извлечённых `Fact`-строк. Опции: `--limit`, `--dry-run`, `--skip-pipeline`, `--no-wait`, `--tenant`, `--doc-type`, `--user`. Цель: эксперт не размечает 30 протоколов с нуля, а ревьюит/правит авто-черновики на 200 сырых документах в active-learning loop.
 
-`scripts/batch-upload-corpus.ts` (new) — закрывает шаг до prelabel: для директории с DOCX создаёт `Document` + `DocumentVersion` в указанной (или auto-find/create) study, кладёт байты в storage (local FS или S3 по `STORAGE_TYPE`), enqueue'ит `run_pipeline`, и по умолчанию ждёт пока все версии не дойдут до terminal-статуса. Идемпотентность: повторный запуск пропускает Document'ы с тем же title (filename без расширения). Опции: `--corpus`, `--tenant`, `--study|--study-name`, `--doc-type`, `--limit`, `--dry-run`, `--no-wait`, `--version-label`. Полный workflow для разметки корпуса теперь:
+`scripts/batch-upload-corpus.ts` (new) — закрывает шаг до prelabel: для директории с DOC/DOCX создаёт `Document` + `DocumentVersion` в указанной (или auto-find/create) study, кладёт байты в storage (local FS или S3 по `STORAGE_TYPE`), enqueue'ит `run_pipeline`, и по умолчанию ждёт пока все версии не дойдут до terminal-статуса. Идемпотентность: повторный запуск пропускает Document'ы с тем же title (filename без расширения).
+
+Расширения этого шага:
+- **Поддержка legacy `.doc`** — `scripts/lib/doc-to-docx.ts` конвертирует `.doc` в `.docx` через LibreOffice headless (`soffice` или `libreoffice` в PATH). mammoth — pipeline-парсер — не работает с legacy compound binary форматом, поэтому нужна предварительная конвертация. Если LibreOffice не найден, файлы пропускаются с подробным сообщением (вместо падения batch'а).
+- **Классификация типа документа** — `scripts/lib/document-classifier.ts` извлекает первые ~5000 символов через mammoth и эвристикой определяет тип (`protocol|icf|ib|csr|unknown`) по RU+EN маркерам. Это защищает от случайно попавших в корпус ICF/IB/CSR (типичная ситуация — все документы по исследованию лежат в одной папке): по умолчанию документы с не-совпадающим классифицированным типом пропускаются. Флаги: `--no-classify` (полный пропуск проверки), `--allow-mismatch` (загрузить как `--doc-type`, но залогировать). Ручной smoke-тест на 6 синтетических текстах: 6/6 OK.
+
+Опции batch-upload: `--corpus`, `--tenant`, `--study|--study-name`, `--doc-type`, `--limit`, `--dry-run`, `--no-wait`, `--no-classify`, `--allow-mismatch`, `--version-label`. Полный workflow для разметки корпуса теперь:
 
 ```bash
 npx tsx --env-file=.env scripts/batch-upload-corpus.ts --corpus=./protocols

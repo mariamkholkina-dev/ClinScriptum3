@@ -1,5 +1,5 @@
 /**
- * Batch upload DOCX-корпуса в указанный tenant + study.
+ * Batch upload корпуса .doc/.docx в указанный tenant + study.
  *
  * Покрывает шаг, который рукой делать дорого: 200 DOCX → 200 DocumentVersion'ов
  * со статусом `parsing` и enqueue'нутыми job'ами `run_pipeline`. Дальше
@@ -7,10 +7,17 @@
  *
  * Что делает:
  *   1. Находит/создаёт Study (default name «Pre-label corpus») в tenant.
- *   2. Для каждого *.docx в --corpus:
- *      - Если Document с таким же title уже существует в study — пропускает (идемпотентность).
+ *   2. Для каждого *.doc / *.docx в --corpus:
+ *      - Legacy .doc сначала конвертируется в .docx через LibreOffice headless
+ *        (`soffice` или `libreoffice` в PATH). Если конвертер недоступен —
+ *        файл пропускается с понятной ошибкой.
+ *      - Извлекаем первые ~5000 символов через mammoth и классифицируем тип
+ *        документа эвристикой (см. lib/document-classifier.ts). Если тип НЕ
+ *        совпадает с --doc-type и не передан --allow-mismatch — пропускаем
+ *        (защита от случайно попавших в корпус ICF/IB/CSR).
+ *      - Если Document с таким же title уже существует в study — пропускает.
  *      - Иначе создаёт Document + DocumentVersion(versionNumber=1, status='uploading').
- *      - Кладёт байты в storage (local FS или S3) по ключу tenant/study/doc/v1.docx.
+ *      - Кладёт байты (.docx) в storage (local FS или S3).
  *      - Меняет статус DocumentVersion на 'parsing' и enqueue'ит `run_pipeline`.
  *   3. По умолчанию — ждёт пока все DocumentVersion не дойдут до terminal-статуса
  *      (parsed/error/ready). Timeout 30 мин на всю партию. С --no-wait сразу выходит.
@@ -18,17 +25,22 @@
  * Запуск:
  *   npx tsx --env-file=.env scripts/batch-upload-corpus.ts --corpus=C:/protocol_corpus
  *   npx tsx --env-file=.env scripts/batch-upload-corpus.ts --corpus=./protocols --limit=10 --dry-run
- *   npx tsx --env-file=.env scripts/batch-upload-corpus.ts --corpus=./protocols --no-wait
+ *   npx tsx --env-file=.env scripts/batch-upload-corpus.ts --corpus=./protocols --allow-mismatch
  *
  * Опции:
- *   --corpus=<dir>          обязательно. Директория с DOCX-файлами.
+ *   --corpus=<dir>          обязательно. Директория с DOC/DOCX-файлами.
  *   --tenant=<uuid>         default: 00000000-0000-0000-0000-000000000002 (Golden Set).
  *   --study=<uuid>          конкретная study; если не задан — find-or-create по name.
  *   --study-name=<str>      default: «Pre-label corpus». Используется при auto-create.
- *   --doc-type=<type>       default: protocol (protocol|icf|ib|csr).
+ *   --doc-type=<type>       default: protocol (protocol|icf|ib|csr). Файлы другого
+ *                           классифицированного типа пропускаются (если не --allow-mismatch).
  *   --limit=<N>             загрузить максимум N файлов.
  *   --dry-run               только показать план, без записи.
  *   --no-wait               enqueue и сразу выйти (без поллинга).
+ *   --no-classify           пропустить классификацию (загрузить всё как --doc-type).
+ *                           Полезно если корпус уже отфильтрован вручную.
+ *   --allow-mismatch        классификация выполнена, но mismatch'и НЕ пропускаются —
+ *                           всё загружается как --doc-type. Логирует mismatch'и.
  *   --version-label=<str>   default: v1.0
  *
  * Идемпотентность: повторный запуск на той же директории НЕ создаёт дубликаты —
@@ -39,7 +51,11 @@ import { PrismaClient, type DocumentType } from "@prisma/client";
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+
+import { classifyDocumentText, extractDocxFirstText, type DocumentTypeGuess } from "./lib/document-classifier.js";
+import { ConverterNotFoundError, convertDocToDocx, isConverterAvailable } from "./lib/doc-to-docx.js";
 
 const GOLDEN_SET_TENANT_ID = "00000000-0000-0000-0000-000000000002";
 const POLL_INTERVAL_MS = 5000;
@@ -57,6 +73,8 @@ interface Args {
   dryRun: boolean;
   noWait: boolean;
   versionLabel: string;
+  noClassify: boolean;
+  allowMismatch: boolean;
 }
 
 function parseArgs(): Args {
@@ -89,6 +107,8 @@ function parseArgs(): Args {
     dryRun: has("dry-run"),
     noWait: has("no-wait"),
     versionLabel: get("version-label") ?? "v1.0",
+    noClassify: has("no-classify"),
+    allowMismatch: has("allow-mismatch"),
   };
 }
 
@@ -186,14 +206,18 @@ async function findOrCreateStudy(prisma: PrismaClient, args: Args) {
   return created;
 }
 
-async function listDocxFiles(corpusDir: string, limit?: number): Promise<string[]> {
+async function listSourceFiles(corpusDir: string, limit?: number): Promise<string[]> {
   const stat = await fs.stat(corpusDir).catch(() => null);
   if (!stat || !stat.isDirectory()) {
     throw new Error(`--corpus=${corpusDir} is not a directory`);
   }
   const entries = await fs.readdir(corpusDir, { withFileTypes: true });
   const files = entries
-    .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".docx") && !e.name.startsWith("~$"))
+    .filter((e) => {
+      if (!e.isFile() || e.name.startsWith("~$")) return false;
+      const lower = e.name.toLowerCase();
+      return lower.endsWith(".doc") || lower.endsWith(".docx");
+    })
     .map((e) => path.join(corpusDir, e.name))
     .sort();
   return limit ? files.slice(0, limit) : files;
@@ -204,6 +228,26 @@ function deriveTitle(filePath: string): string {
   return base.slice(0, 200);
 }
 
+/**
+ * Возвращает путь к .docx-варианту файла. Для .docx — оригинал. Для .doc — конвертирует
+ * в указанную tmp-директорию. Если конвертер недоступен — бросает ConverterNotFoundError.
+ */
+async function ensureDocx(filePath: string, tmpDir: string): Promise<{ docxPath: string; isConverted: boolean }> {
+  if (filePath.toLowerCase().endsWith(".docx")) {
+    return { docxPath: filePath, isConverted: false };
+  }
+  const converted = await convertDocToDocx(filePath, tmpDir);
+  return { docxPath: converted, isConverted: true };
+}
+
+interface UploadResult {
+  status: "uploaded" | "skipped";
+  versionId?: string;
+  reason?: string;
+  classifiedAs?: DocumentTypeGuess;
+  classifierConfidence?: number;
+}
+
 async function uploadOne(
   prisma: PrismaClient,
   queue: Queue,
@@ -211,7 +255,8 @@ async function uploadOne(
   args: Args,
   studyId: string,
   filePath: string,
-): Promise<{ status: "uploaded" | "skipped"; versionId?: string; reason?: string }> {
+  tmpDir: string,
+): Promise<UploadResult> {
   const title = deriveTitle(filePath);
 
   const existing = await prisma.document.findFirst({
@@ -222,11 +267,50 @@ async function uploadOne(
     return { status: "skipped", reason: `document "${title}" already exists` };
   }
 
-  if (args.dryRun) {
-    return { status: "uploaded", reason: "dry-run" };
+  let prepared: { docxPath: string; isConverted: boolean };
+  try {
+    prepared = await ensureDocx(filePath, tmpDir);
+  } catch (err) {
+    if (err instanceof ConverterNotFoundError) {
+      return { status: "skipped", reason: `cannot convert .doc — LibreOffice not in PATH (${err.message.split("\n")[0]})` };
+    }
+    return { status: "skipped", reason: `convert failed: ${(err as Error).message}` };
+  }
+  const { docxPath, isConverted } = prepared;
+  const cleanupConverted = async () => {
+    if (isConverted) await fs.unlink(docxPath).catch(() => {});
+  };
+
+  let classifiedAs: DocumentTypeGuess | undefined;
+  let classifierConfidence: number | undefined;
+  if (!args.noClassify) {
+    try {
+      const text = await extractDocxFirstText(docxPath, 5000);
+      const classification = classifyDocumentText(text);
+      classifiedAs = classification.type;
+      classifierConfidence = classification.confidence;
+
+      if (classification.type !== args.docType && !args.allowMismatch) {
+        await cleanupConverted();
+        return {
+          status: "skipped",
+          reason: `classified as ${classification.type} (conf=${classification.confidence.toFixed(2)}), expected ${args.docType}`,
+          classifiedAs,
+          classifierConfidence,
+        };
+      }
+    } catch (err) {
+      await cleanupConverted();
+      return { status: "skipped", reason: `classifier failed: ${(err as Error).message}` };
+    }
   }
 
-  const buffer = await fs.readFile(filePath);
+  if (args.dryRun) {
+    await cleanupConverted();
+    return { status: "uploaded", reason: "dry-run", classifiedAs, classifierConfidence };
+  }
+
+  const buffer = await fs.readFile(docxPath);
 
   const result = await prisma.$transaction(async (tx) => {
     const doc = await tx.document.create({
@@ -257,7 +341,9 @@ async function uploadOne(
     { attempts: 2, backoff: { type: "exponential", delay: 15000 } },
   );
 
-  return { status: "uploaded", versionId: result.versionId };
+  await cleanupConverted();
+
+  return { status: "uploaded", versionId: result.versionId, classifiedAs, classifierConfidence };
 }
 
 async function waitForPipeline(prisma: PrismaClient, versionIds: string[]) {
@@ -301,16 +387,31 @@ async function main() {
   console.log(`Doc type:       ${args.docType}`);
   console.log(`Limit:          ${args.limit ?? "unlimited"}`);
   console.log(`Storage:        ${process.env.STORAGE_TYPE ?? "local"}`);
+  console.log(`Classify:       ${args.noClassify ? "disabled" : args.allowMismatch ? "log-only" : "strict (skip mismatches)"}`);
   console.log(`Dry run:        ${args.dryRun}`);
   console.log("");
 
-  const files = await listDocxFiles(args.corpusDir, args.limit);
+  const files = await listSourceFiles(args.corpusDir, args.limit);
   if (files.length === 0) {
-    console.log("No .docx files found in corpus dir. Nothing to do.");
+    console.log("No .doc/.docx files found in corpus dir. Nothing to do.");
     await prisma.$disconnect();
     return;
   }
-  console.log(`Found ${files.length} DOCX file(s).`);
+  const docCount = files.filter((f) => f.toLowerCase().endsWith(".doc")).length;
+  const docxCount = files.length - docCount;
+  console.log(`Found ${files.length} file(s): ${docxCount} .docx + ${docCount} .doc`);
+
+  if (docCount > 0) {
+    const hasConverter = await isConverterAvailable();
+    if (!hasConverter) {
+      console.warn(
+        `\n  Внимание: ${docCount} .doc-файл(ов) обнаружено, но LibreOffice (soffice/libreoffice) не найден в PATH.\n` +
+          `  Эти файлы будут пропущены. Установите LibreOffice или предварительно конвертируйте .doc → .docx вручную.\n`,
+      );
+    } else {
+      console.log(`  LibreOffice найден — .doc будут конвертированы в .docx «на лету».`);
+    }
+  }
 
   const study = await findOrCreateStudy(prisma, args);
 
@@ -319,21 +420,32 @@ async function main() {
   const queue = new Queue("processing", { connection });
   const storage = makeStorage();
 
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clinscriptum-batch-"));
+  console.log(`  Tmp dir: ${tmpDir}`);
+
   const uploadedIds: string[] = [];
   let uploaded = 0;
   let skipped = 0;
   let failed = 0;
+  const skipReasonCounts: Record<string, number> = {};
+  const classifyMismatches: { file: string; classifiedAs: DocumentTypeGuess; conf: number }[] = [];
 
   for (const filePath of files) {
     try {
-      const r = await uploadOne(prisma, queue, storage, args, study.id, filePath);
+      const r = await uploadOne(prisma, queue, storage, args, study.id, filePath, tmpDir);
       if (r.status === "uploaded") {
         uploaded++;
         if (r.versionId) uploadedIds.push(r.versionId);
-        console.log(`  ✓ ${path.basename(filePath)}${r.versionId ? ` → ${r.versionId.slice(0, 8)}` : ""}`);
+        const classifierTag = r.classifiedAs ? ` [${r.classifiedAs}=${r.classifierConfidence?.toFixed(2)}]` : "";
+        console.log(`  ✓ ${path.basename(filePath)}${classifierTag}${r.versionId ? ` → ${r.versionId.slice(0, 8)}` : ""}`);
+        if (r.classifiedAs && r.classifiedAs !== args.docType) {
+          classifyMismatches.push({ file: path.basename(filePath), classifiedAs: r.classifiedAs, conf: r.classifierConfidence ?? 0 });
+        }
       } else {
         skipped++;
-        console.log(`  ◦ ${path.basename(filePath)} (skipped: ${r.reason})`);
+        const shortReason = r.reason?.split(":")[0] ?? "skipped";
+        skipReasonCounts[shortReason] = (skipReasonCounts[shortReason] ?? 0) + 1;
+        console.log(`  ◦ ${path.basename(filePath)} (${r.reason})`);
       }
     } catch (err) {
       failed++;
@@ -341,8 +453,21 @@ async function main() {
     }
   }
 
+  // Best-effort cleanup of tmp dir (only if empty — converter outputs were unlinked individually)
+  await fs.rmdir(tmpDir).catch(() => {});
+
   console.log("");
   console.log(`=== Upload phase: uploaded ${uploaded}, skipped ${skipped}, failed ${failed} ===`);
+  if (Object.keys(skipReasonCounts).length > 0) {
+    console.log("Skip breakdown:");
+    for (const [r, c] of Object.entries(skipReasonCounts)) console.log(`  - ${r}: ${c}`);
+  }
+  if (classifyMismatches.length > 0) {
+    console.log(`Classification mismatches uploaded with --allow-mismatch (${classifyMismatches.length}):`);
+    for (const m of classifyMismatches.slice(0, 10)) {
+      console.log(`  - ${m.file} → классифицирован как ${m.classifiedAs} (conf=${m.conf.toFixed(2)})`);
+    }
+  }
 
   if (args.dryRun) {
     console.log("[dry-run] no actual writes were made.");
