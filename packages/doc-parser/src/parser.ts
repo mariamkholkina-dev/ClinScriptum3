@@ -107,7 +107,10 @@ export async function parseDocx(
     }))
   );
 
-  const filteredHeadings = filterTocChildren(headings);
+  const filteredHeadings = filterTocChildren(
+    headings,
+    contentBlocks.map((b) => b.block.sourceAnchor.paragraphIndex),
+  );
   const sections = buildSectionTree(filteredHeadings, contentBlocks, opts.maxHeadingDepth);
 
   let synopsis: ParsedSection | null = null;
