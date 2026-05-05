@@ -2,6 +2,25 @@
 
 ## 2026-05-05
 
+### Phase 2 (Sprint 6): subzone require_patterns + tie-breaker по глубине зоны
+
+Главная остаточная слабость классификатора после очистки эталона — **subzone gap**: алгоритм ставил parent zone (`safety`, `ip`, `statistics`, `ethics`, `endpoints`, `data_management`), эталон требовал subzone. Из baseline `after-clean-fixes-2026-05-05.json` (f1=0.614) видно ~50 случаев такого дрейфа.
+
+`packages/rules-engine/src/section-classifier.ts`:
+- **Tie-breaker по глубине** — при равенстве score побеждает subzone с большим числом точек в `standardSection`. Раньше parent zone и subzone того же parent при одинаковом score решались stable sort'ом → выигрывал parent. Теперь побеждает более специфичная subzone.
+
+`taxonomy.yaml` — расширены require_patterns/patterns для:
+- `safety.adverse_events.{definitions, assessment, reporting}` — bare AE/SAE titles
+- `safety.risk_benefit_assessment` — все «Риски...» секции (правило из expert-rules.md)
+- `ip.{description, contraindications, storage_and_accountability, dosing_and_administration}` — стандартные пункты карточки препарата
+- `statistics.analysis_methods` — bare «Статистический анализ X»
+- `endpoints.efficacy`, `ethics.regulatory_compliance` — bare titles + связанные правила
+
+`packages/rules-engine/src/__tests__/taxonomy-classification.test.ts` (новый):
+44 integration-теста, загружающих живую `taxonomy.yaml` через `flattenTaxonomy` (mirror из `seed-taxonomy.ts`) и проверяющих что confused-titles из `baseline-clean.json` классифицируются в правильные subzones.
+
+Ожидаемый эффект: f1 0.614 → ~0.72-0.78 (на confused-families).
+
 ### Tests: покрытие seed builder + getFactExtractionSummary
 
 Покрыта новая логика из PR #51 (review feedback):
