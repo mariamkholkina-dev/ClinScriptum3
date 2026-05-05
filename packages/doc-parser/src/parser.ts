@@ -1,6 +1,7 @@
 import mammoth from "mammoth";
 import { randomUUID } from "crypto";
 import { detectHeading, type DetectedHeading } from "./heading-detector.js";
+import { filterTocChildren } from "./toc-filter.js";
 import { parseHtmlTable, isSOATable } from "./table-parser.js";
 import { extractFootnotes } from "./footnote-extractor.js";
 import JSZip from "jszip";
@@ -106,7 +107,8 @@ export async function parseDocx(
     }))
   );
 
-  const sections = buildSectionTree(headings, contentBlocks, opts.maxHeadingDepth);
+  const filteredHeadings = filterTocChildren(headings);
+  const sections = buildSectionTree(filteredHeadings, contentBlocks, opts.maxHeadingDepth);
 
   let synopsis: ParsedSection | null = null;
   if (opts.detectSynopsis) {
