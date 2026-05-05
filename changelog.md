@@ -2,6 +2,12 @@
 
 ## 2026-05-05
 
+### Security/Privacy: отключение логирования данных в Yandex Cloud LLM
+
+`packages/llm-gateway/src/gateway.ts` — все 5 fetch-вызовов к Yandex (Native API + Yandex AI Studio через OpenAI-compatible endpoint, включая fallback при `400/422`) теперь отправляют header `x-data-logging-enabled: false`. Header также добавлен в generic OpenAI-compatible путь — если он сконфигурирован против Yandex AI Studio, логирование тоже выключится; для других OpenAI-compatible провайдеров header игнорируется.
+
+Триггер: подготовка к работе с корпусом реальных клинических протоколов в `C:/protocol_last_version`. По правилам Yandex AI Studio, без этого header'а промпты могут сохраняться на серверах Yandex Cloud для улучшения моделей — что неприемлемо для PHI/PII.
+
 ### Tests: покрытие seed builder + getFactExtractionSummary
 
 Покрыта новая логика из PR #51 (review feedback):

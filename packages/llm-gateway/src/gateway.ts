@@ -90,6 +90,10 @@ export class LLMGateway {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${this.config.apiKey}`,
+            // Disable Yandex Cloud data logging when calling Yandex AI Studio
+            // through OpenAI-compatible endpoint. Header is harmless for other
+            // OpenAI-compatible providers (they ignore unknown headers).
+            "x-data-logging-enabled": "false",
           },
           body: jsonBody,
           signal: AbortSignal.timeout(this.config.timeoutMs ?? 50_000),
@@ -121,6 +125,7 @@ export class LLMGateway {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.config.apiKey}`,
+          "x-data-logging-enabled": "false",
         },
         body: fallbackBody,
         signal: AbortSignal.timeout(this.config.timeoutMs ?? 50_000),
@@ -193,6 +198,9 @@ export class LLMGateway {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Api-Key ${this.config.apiKey}`,
+        // Disable Yandex Cloud data logging — required when sending
+        // clinical-trial protocol content through YandexGPT Native API.
+        "x-data-logging-enabled": "false",
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(this.config.timeoutMs ?? 50_000),
@@ -254,6 +262,10 @@ export class LLMGateway {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Api-Key ${this.config.apiKey}`,
+        // Disable Yandex Cloud data logging — required when sending
+        // clinical-trial protocol content through Yandex AI Studio
+        // (OpenAI-compatible endpoint).
+        "x-data-logging-enabled": "false",
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(this.config.timeoutMs ?? 50_000),
@@ -266,6 +278,7 @@ export class LLMGateway {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Api-Key ${this.config.apiKey}`,
+          "x-data-logging-enabled": "false",
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.config.timeoutMs ?? 50_000),
