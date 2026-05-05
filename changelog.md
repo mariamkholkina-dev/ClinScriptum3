@@ -2,6 +2,16 @@
 
 ## 2026-05-05
 
+### Docs: deploy/RESTORE.md — список граблей prod-деплоя
+
+Новый файл `deploy/RESTORE.md` фиксирует 4 неочевидности после реального инцидента деплоя Phase 2 + TOC-skip:
+1. `docker compose build api workers` не пересобирает сервис `migrate` (он отдельный, под `--profile migrate`) — следующий `migrate deploy` берёт старый образ без новых миграций и пишет «No pending migrations»; колонка из новой миграции не появляется в БД
+2. После ручного `ALTER TABLE` миграция не помечена в `_prisma_migrations` — следующий deploy упадёт; нужен `prisma migrate resolve --applied <name>`
+3. Рабочая ветка на dev — `feat/dev-server-deploy`, не `master` (исторически содержит локальные deploy-коммиты); `git pull origin master` на ней даёт divergent branches
+4. Redis настроен с `--maxmemory-policy allkeys-lru` — BullMQ может терять jobs под памятью; должно быть `noeviction`
+
+Плюс — стандартный deploy-чеклист (через `deploy/deploy.sh` и вручную) с шагами sanity check.
+
 ### Fix: parser TOC-skip — не превращать строки оглавления в секции
 
 `packages/doc-parser/src/toc-filter.ts` (новый) — пост-обработка `headings` после детекции: если parent называется «Содержание/Оглавление/Table of Contents/Contents», все его дети заканчиваются цифрой (page number) и для каждого ребёнка существует identical title-twin без хвостовой цифры — отбросить детей TOC-блока из heading-list. С защитой от ложного срабатывания: если хотя бы для одного TOC-ребёнка двойник в документе не найден, эвристика не применяется.
