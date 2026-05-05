@@ -210,7 +210,7 @@ async function loadCalibration(
   return { alpha, beta, gamma, prior };
 }
 
-function factMatchesSectionPriors(
+export function factMatchesSectionPriors(
   fact: ExtractedFact,
   priors: Map<string, Set<string>>,
   titleToStandard: Map<string, string>,
@@ -220,6 +220,12 @@ function factMatchesSectionPriors(
   const title = fact.source.sectionTitle ?? "";
   const std = titleToStandard.get(title);
   if (!std) return true; // unclassified section → allow (don't punish missing classification)
+  // Synopsis is the canonical "everything" section that contains facts of all
+  // categories — never restrict by priors. The deterministic extractor weighs
+  // synopsis sources 2x and would lose all output here if priors dropped them
+  // (regression observed 2026-05-05 on golden samples: priors zeroed the
+  // deterministic level on all 4 docs).
+  if (std === "synopsis") return true;
   for (const expected of allowed) {
     if (std === expected || std.startsWith(`${expected}.`)) return true;
   }

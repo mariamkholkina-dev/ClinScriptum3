@@ -2,6 +2,16 @@
 
 ## 2026-05-05
 
+### Fix: priors не должны отбрасывать факты из секции synopsis (регрессия)
+
+`packages/shared/src/fact-extraction-core.ts` — в `factMatchesSectionPriors` добавлен ранний return для `std === 'synopsis'`. Без этого фикса priors из PR #51 **обнулили deterministic-уровень на всех 4 golden sample'ах** (было 24-38 фактов на документ → стало 0). Причина: deterministic extractor приоритетно работает с секцией synopsis (вес × 2 в `aggregateByCanonical`), но в priors synopsis не входит ни для одного factKey'а, потому что в YAML `topics` это «специфические» разделы (design_plan, population_eligibility и т.п.), а synopsis — каноничный «всё-в-одном» раздел.
+
+Фикс семантически корректен: synopsis по определению содержит факты всех категорий — никогда нельзя его фильтровать по priors.
+
+Регрессия фиксируется явным unit-тестом в `packages/shared/src/__tests__/fact-extraction-priors.test.ts` (новый файл, +vitest.config.ts + test script в `packages/shared/package.json`).
+
+Сравнение метрик до/после фикса будет в следующем re-extract.
+
 ### Security/Privacy: отключение логирования данных в Yandex Cloud LLM
 
 `packages/llm-gateway/src/gateway.ts` — все 5 fetch-вызовов к Yandex (Native API + Yandex AI Studio через OpenAI-compatible endpoint, включая fallback при `400/422`) теперь отправляют header `x-data-logging-enabled: false`. Header также добавлен в generic OpenAI-compatible путь — если он сконфигурирован против Yandex AI Studio, логирование тоже выключится; для других OpenAI-compatible провайдеров header игнорируется.
