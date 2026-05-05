@@ -2,6 +2,38 @@
 
 ## 2026-05-05
 
+### Sprint 7 (api): approved_at/reviewed_at автоматически при approve через UI
+
+`apps/api/src/routers/golden-dataset.ts` — `updateStageStatus` mutation теперь автоматически выводит `reviewedById` / `approvedById` из `ctx.user.userId` в зависимости от status:
+- `status='in_review'` → `reviewedById` + `reviewedAt = now()`
+- `status='approved'` → `approvedById` + `approvedAt = now()`
+- `status='draft'` → ничего
+
+Раньше эти поля принимались из input mutation, но UI rule-admin их никогда не передавал, поэтому `approved_at`/`reviewed_at` всегда оставались NULL. Невозможно было понять когда эксперт правил эталон в последний раз — мешало диагностике регрессий f1 (см. `project_golden_stage_status_timestamps.md`). Теперь audit-trail заполняется автоматически.
+
+### Sprint 7 (workers): isFalseHeading persistence через reprocess
+
+`apps/workers/src/handlers/parse-document.ts` — перед `deleteMany` сохраняем список (title, level) секций помеченных экспертом как `isFalseHeading=true`, после создания новых Section восстанавливаем флаг для совпадающих.
+
+Без этого reprocess через `apps/workers/scripts/reprocess-golden-samples.ts` обнулял всю ручную работу эксперта по парсингу — мы это видели на STP 2026-05-05: 224 lonely-extra (~½ всех секций), потому что глубоко-нумерованные подзаголовки карточек препаратов снова стали «настоящими» секциями. Match по `(title.trim().toLowerCase(), level)` — простой и достаточный для основных случаев. Если документ структурно изменился — эксперт может скорректировать через UI parsing-viewer.
+
+В лог `Parsed document` добавлены поля `previousFalseHeadings`/`restoredFalseHeadings` для мониторинга.
+
+### Sprint 7 (rule-admin): inline-sync эталона при правке классификации + warning на «Сгенерировать»
+
+Главный блокирующий UX-баг: правка zone через dropdown в дереве `classification-viewer` писала только в `Section.standardSection`, а эталон (`golden_sample_stage_statuses.expected_results`) оставался прежним. Эксперт не понимал почему f1 не меняется → нажимал «Сгенерировать из результатов» → expected_results становился полной копией текущей разметки → артефактный baseline (incident 2026-05-05, baseline 0.902 пришлось откатывать через `evaluation_results.expected` snapshot).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/classification-viewer/ClassificationTreeViewer.tsx`:
+- `handleSaveClassification` теперь делает **две** mutation одновременно: `Section.standardSection` (как раньше) **и** точечный update `expected_results.sections[pos].standardSection` через `updateExpected`. Positional match: индекс среди не-`isFalseHeading` секций (тот же принцип что в `diffClassificationWithExpected` — гарантирует синхрон с тем что показано в diff).
+- No-op если zone в эталоне уже совпадает с новым значением.
+- Skip если `goldenSampleId` отсутствует (вне контекста golden-sample) или секция помечена как `isFalseHeading`.
+- `updateExpected` переехал выше — теперь используется и в `handleQuickFix` (diff overlay), и в `handleSaveClassification` (inline).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx`:
+- Кнопка «Сгенерировать из результатов» теперь требует явного `window.confirm` с предупреждением: «перезапишет ВЕСЬ эталон, потеряны все точечные правки, для точечных используйте dropdown». `title` на кнопке тоже подсказывает об этом.
+
+Эффект: эксперт правит dropdown — и эталон обновляется автоматически. «Сгенерировать» остаётся как опция для первоначального создания эталона, но теперь её сложно нажать случайно.
+
 ### Tests: покрытие seed builder + getFactExtractionSummary
 
 Покрыта новая логика из PR #51 (review feedback):
