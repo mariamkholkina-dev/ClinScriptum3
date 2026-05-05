@@ -2,6 +2,16 @@
 
 ## 2026-05-05
 
+### Fix: parser TOC-skip — не превращать строки оглавления в секции
+
+`packages/doc-parser/src/toc-filter.ts` (новый) — пост-обработка `headings` после детекции: если parent называется «Содержание/Оглавление/Table of Contents/Contents», все его дети заканчиваются цифрой (page number) и для каждого ребёнка существует identical title-twin без хвостовой цифры — отбросить детей TOC-блока из heading-list. С защитой от ложного срабатывания: если хотя бы для одного TOC-ребёнка двойник в документе не найден, эвристика не применяется.
+
+`packages/doc-parser/src/parser.ts` — после цикла детекции вызывает `filterTocChildren(headings)` перед `buildSectionTree`.
+
+`packages/doc-parser/src/__tests__/toc-filter.test.ts` (новый) — 12 тестов: drop при выполнении всех условий, keep при отсутствии twin, keep при отсутствии цифрового tail, варианты «Оглавление» / «Table of Contents», nested TOC, dot-leaders «………», защита от «Приложение А» (буква-tail), множественные TOC-блоки.
+
+Триггер: после деплоя Phase 2 (subzone require_patterns + tie-breaker) baseline f1 упал с 0.614 до 0.590, на STP — до 0.353 при precision 0.260, потому что 310 «extra» предсказаний были TOC-entries («1 синопсис 13», «2 обоснование клинического исследования 33»), которые парсер до этого выдавал, но classifier не мог классифицировать (короткий patterns не покрывал текст с цифрами в начале/конце). Phase 2 расширил охват — TOC-дубликаты стали классифицироваться, expected_results их не содержал → 4× FP. Корень — в парсере, не в классификаторе.
+
 ### Fix: priors не должны отбрасывать факты из секции synopsis (регрессия)
 
 `packages/shared/src/fact-extraction-core.ts` — в `factMatchesSectionPriors` добавлен ранний return для `std === 'synopsis'`. Без этого фикса priors из PR #51 **обнулили deterministic-уровень на всех 4 golden sample'ах** (было 24-38 фактов на документ → стало 0). Причина: deterministic extractor приоритетно работает с секцией synopsis (вес × 2 в `aggregateByCanonical`), но в priors synopsis не входит ни для одного factKey'а, потому что в YAML `topics` это «специфические» разделы (design_plan, population_eligibility и т.п.), а synopsis — каноничный «всё-в-одном» раздел.
