@@ -1329,20 +1329,9 @@ export default function ClassificationTreeViewer({
     },
   });
 
-  const handleSaveClassification = useCallback(
-    (sectionId: string, standardSection: string | null) => {
-      updateClassification.mutate({
-        sectionId,
-        standardSection,
-        classificationStatus: "validated",
-      });
-    },
-    [updateClassification],
-  );
-
-  // Мутация обновления expected_results JSON (для extra/missing в diff overlay).
-  // Используется когда нужно добавить/изменить/удалить запись секции в эталоне,
-  // а не только её standardSection в БД.
+  // Мутация обновления expected_results JSON. Используется в двух местах:
+  //  - inline-edit dropdown в дереве (handleSaveClassification, Sprint 7a)
+  //  - quick-fix кнопка в diff overlay (handleQuickFix, для extra/missing/wrong_section)
   // Optimistic update для эталона: патч goldenDataset.getSample в кеше,
   // родительский page.tsx через useQuery подхватит свежий expectedResults.
   // Invalidate только на onError (см. parsing-viewer для подробностей race-fix'а).
@@ -1375,6 +1364,67 @@ export default function ClassificationTreeViewer({
       }
     },
   });
+
+  // Sprint 7a: при правке dropdown в дереве — точечно синхронизируем эталон.
+  // Раньше эта правка писала только в Section.standardSection; expected_results
+  // оставался прежним → эксперт не понимал почему f1 не меняется и нажимал
+  // «Сгенерировать из результатов», что подменяло эталон на алгоритмический output
+  // (артефакт baseline 0.902 от 2026-05-05).
+  // Теперь обе записи идут одновременно. Эталон обновляется через positional match:
+  // n-я не-false-heading секция в rawSections соответствует n-й записи в expected.sections.
+  const handleSaveClassification = useCallback(
+    (sectionId: string, standardSection: string | null) => {
+      // 1) Section.standardSection (текущая разметка алгоритма / эксперта)
+      updateClassification.mutate({
+        sectionId,
+        standardSection,
+        classificationStatus: "validated",
+      });
+
+      // 2) Точечный sync с эталоном (только если работаем в контексте golden sample
+      //    и стадия — classification; для других стадий эта viewer не отображается).
+      if (!goldenSampleId) return;
+
+      const section = rawSections.find((s) => s.id === sectionId);
+      if (!section || section.isFalseHeading) return;
+
+      const current = (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
+      const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
+
+      // Positional match: индекс не-false-heading секции в rawSections (тот же
+      // принцип что в diffClassificationWithExpected — гарантирует синхрон с тем,
+      // что показано в diff).
+      const visible = rawSections.filter((s) => !s.isFalseHeading);
+      const pos = visible.findIndex((s) => s.id === sectionId);
+      if (pos < 0 || pos >= sectionsArr.length) return;
+
+      // No-op если zone в эталоне уже совпадает с новым значением.
+      if ((sectionsArr[pos].standardSection ?? null) === (standardSection ?? null)) return;
+
+      const nextSections = sectionsArr.map((s, i) =>
+        i === pos ? { ...s, title: section.title, standardSection } : s,
+      );
+
+      updateExpected.mutate({
+        goldenSampleId,
+        stage: stageKey,
+        status: (stageStatus === "not_set" ? "draft" : stageStatus) as
+          | "draft"
+          | "in_review"
+          | "approved",
+        expectedResults: { ...current, sections: nextSections },
+      });
+    },
+    [
+      updateClassification,
+      updateExpected,
+      rawSections,
+      expectedResults,
+      goldenSampleId,
+      stageKey,
+      stageStatus,
+    ],
+  );
 
   // Quick-fix для строки diff overlay. Принимает sectionId (если есть в БД),
   // sectionTitle и newZone. Логика по типу entry:

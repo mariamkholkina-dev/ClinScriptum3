@@ -2,6 +2,21 @@
 
 ## 2026-05-05
 
+### Sprint 7 (rule-admin): inline-sync эталона при правке классификации + warning на «Сгенерировать»
+
+Главный блокирующий UX-баг: правка zone через dropdown в дереве `classification-viewer` писала только в `Section.standardSection`, а эталон (`golden_sample_stage_statuses.expected_results`) оставался прежним. Эксперт не понимал почему f1 не меняется → нажимал «Сгенерировать из результатов» → expected_results становился полной копией текущей разметки → артефактный baseline (incident 2026-05-05, baseline 0.902 пришлось откатывать через `evaluation_results.expected` snapshot).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/classification-viewer/ClassificationTreeViewer.tsx`:
+- `handleSaveClassification` теперь делает **две** mutation одновременно: `Section.standardSection` (как раньше) **и** точечный update `expected_results.sections[pos].standardSection` через `updateExpected`. Positional match: индекс среди не-`isFalseHeading` секций (тот же принцип что в `diffClassificationWithExpected` — гарантирует синхрон с тем что показано в diff).
+- No-op если zone в эталоне уже совпадает с новым значением.
+- Skip если `goldenSampleId` отсутствует (вне контекста golden-sample) или секция помечена как `isFalseHeading`.
+- `updateExpected` переехал выше — теперь используется и в `handleQuickFix` (diff overlay), и в `handleSaveClassification` (inline).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx`:
+- Кнопка «Сгенерировать из результатов» теперь требует явного `window.confirm` с предупреждением: «перезапишет ВЕСЬ эталон, потеряны все точечные правки, для точечных используйте dropdown». `title` на кнопке тоже подсказывает об этом.
+
+Эффект: эксперт правит dropdown — и эталон обновляется автоматически. «Сгенерировать» остаётся как опция для первоначального создания эталона, но теперь её сложно нажать случайно.
+
 ### Tests: покрытие seed builder + getFactExtractionSummary
 
 Покрыта новая логика из PR #51 (review feedback):
