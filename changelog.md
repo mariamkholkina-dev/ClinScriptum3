@@ -2,18 +2,19 @@
 
 ## 2026-05-05
 
-### Fix: TOC-skip v2 — per-heading правило (без зависимости от parent «Содержание»)
+### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой
 
 `packages/doc-parser/src/toc-filter.ts` — переписана эвристика. Старая версия (PR #56) требовала чтобы TOC-entries были **детьми** heading-а «Содержание» в иерархии (level > parent.level). На реальных протоколах это не работало: numbered-detection распознаёт записи вроде «1 синопсис 13» как top-level numbered headings (level 1) — то есть **сиблинги** «Содержания», а не дети. После деплоя PR #56 на dev: f1 не сдвинулся (0.590 → 0.587), STP extra 310 → 310 без изменений — старая логика не находила что дропать.
 
-Новая эвристика — per-heading drop, без зависимости от parent:
-1. Heading заканчивается на цифру (`PAGE_NUMBER_TAIL_RE`)
-2. В headings есть «двойник» — текст без leading-номера раздела и trailing-страницы совпадает с другим heading'ом
+Новая эвристика — per-heading drop. Heading дропается только если выполнены **все шесть** условий:
+1. Заканчивается на цифру (page-number tail)
+2. В headings есть «двойник» — нормализованный текст совпадает с другим heading'ом
 3. Сам двойник **не заканчивается цифрой** — гарантия что оставляем чистую версию (реальную секцию) и дропаем page-numbered (TOC reference)
+4. **Своя секция пустая** — между этим heading и следующим нет content-block paragraph'ов. Реальные секции имеют контент, TOC entries — нет
+5. **Хотя бы один сосед тоже часть TOC-блока** — сосед либо «Содержание», либо имеет пустую секцию, либо отсутствует (граница массива). Это блокирует случай одинокого empty heading с digit-tail
+6. **Page-номера соседей не убывают** (prevPage ≤ candidatePage ≤ nextPage) — TOC ссылается на страницы в reading order, нарушение монотонности означает что это не TOC-блок
 
-Защита от false positives: если оба кандидата заканчиваются цифрой (e.g. «Глава 1 5» и «Глава 1 100») — не дропаем (ambiguous). «Приложение А», «Этап 2 (визит 4)» не задеваются.
-
-14 тестов в `toc-filter.test.ts` (+2 над PR #56): drop без parent «Содержание», ambiguous twins (оба с digit-tail), legitimate titles с digit в середине строки.
+22 теста в `toc-filter.test.ts`: drop без parent «Содержание», ambiguous twins (оба с digit-tail), legitimate titles с digit в середине, isolated empty heading (соседи с контентом — keep), monotonicity break (pages идут назад — keep), повторяющиеся pages внутри одной TOC.
 
 ### Docs: deploy/RESTORE.md — список граблей prod-деплоя
 
