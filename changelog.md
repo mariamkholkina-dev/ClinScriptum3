@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-05-06
+
+### Fix: `evaluation.createRun` теперь ставит BullMQ job в очередь
+
+`apps/api/src/services/evaluation.service.ts` — после `prisma.evaluationRun.create` теперь вызывается `enqueueJob()` с правильным jobName в зависимости от `EvaluationRunType`:
+- `single`, `llm_comparison`, `context_window_test` → `run_evaluation`
+- `batch` → `run_batch_evaluation`
+
+До фикса UI создавал run в status='queued', но job в BullMQ не отправлялся — runs зависали навсегда. Workaround был запускать оценку через node-скрипт `apps/workers/scripts/run-baseline-evaluation.ts` через ssh+docker exec.
+
+`apps/api/src/services/__tests__/evaluation.service.test.ts` — добавлен mock для `../../lib/queue.js` и 4 теста на корректный jobName per EvaluationRunType. См. memory `project_evaluation_run_no_enqueue.md`.
+
 ## 2026-05-05
 
 ### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой

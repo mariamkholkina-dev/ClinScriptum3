@@ -2,12 +2,23 @@ import { prisma } from "@clinscriptum/db";
 import type { ContextStrategy, EvaluationRunType } from "@prisma/client";
 import { DomainError } from "./errors.js";
 import { logger } from "../lib/logger.js";
+import { enqueueJob } from "../lib/queue.js";
 import {
   computeSoaMetrics,
   parseExpectedSoa,
   type ActualSoaTable,
   type SoaMetrics,
 } from "../lib/soa-metrics.js";
+
+// EvaluationRunType → BullMQ job name. `batch` runs aggregate confidence/agreement
+// across all DocumentVersions in tenant (different handler); other types run per
+// golden-sample evaluation.
+const JOB_NAME_BY_TYPE: Record<EvaluationRunType, string> = {
+  single: "run_evaluation",
+  llm_comparison: "run_evaluation",
+  context_window_test: "run_evaluation",
+  batch: "run_batch_evaluation",
+};
 
 export const evaluationService = {
   async createRun(
@@ -23,7 +34,7 @@ export const evaluationService = {
       comparedToRunId?: string;
     },
   ) {
-    return prisma.evaluationRun.create({
+    const run = await prisma.evaluationRun.create({
       data: {
         tenantId,
         name: data.name,
@@ -37,6 +48,12 @@ export const evaluationService = {
         comparedToRunId: data.comparedToRunId,
       },
     });
+
+    const jobName = JOB_NAME_BY_TYPE[data.type];
+    await enqueueJob(jobName, { evaluationRunId: run.id });
+    logger.info("evaluation_run_enqueued", { runId: run.id, type: data.type, jobName });
+
+    return run;
   },
 
   async getRun(id: string, tenantId: string) {
