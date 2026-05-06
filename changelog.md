@@ -12,6 +12,21 @@
 
 `apps/api/src/services/__tests__/evaluation.service.test.ts` — добавлен mock для `../../lib/queue.js` и 4 теста на корректный jobName per EvaluationRunType. См. memory `project_evaluation_run_no_enqueue.md`.
 
+### Feat: 6 новых subzones из corpus discovery (Track B)
+
+`taxonomy.yaml` — добавлены 6 новых subzones по результатам анализа 156 protocols:
+
+1. **`admin.investigator_responsibilities`** (78 sections) — «обязанности исследователя» / «responsibilities of the investigator»
+2. **`admin.protocol_approval`** (73) — «страница одобрения протокола» / «protocol approval» / «signatures»
+3. **`design.unscheduled_visits`** (67) — «незапланированные / внеплановые визиты»
+4. **`procedures.protocol_deviations`** (49+17) — «отклонения от протокола» / «protocol deviations»
+5. **`procedures.emergency_actions`** (43) — «процедуры действий в неотложных ситуациях»
+6. **`safety.identified_risks`** (41) — «важные потенциальные риски» / «identified risks»
+
+Каждая зона имеет `require_patterns` (hard gate) + `patterns` (scoring) + `not_keywords` для защиты от очевидных конфликтов (e.g. risk_benefit_assessment vs identified_risks).
+
+Совокупно покрывает ~340 секций которые ранее попадали в parent zones (admin, design, procedures, safety) либо были unclassified.
+
 ## 2026-05-05
 
 ### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой
