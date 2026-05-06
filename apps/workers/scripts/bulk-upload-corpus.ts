@@ -24,9 +24,8 @@
  *
  * Options:
  *   --source=<path>            (required) directory containing .docx files
- *   --tenant-id=<uuid>         use existing tenant; otherwise creates new
- *   --tenant-name=<str>        new-tenant display name (when --tenant-id absent)
- *   --tenant-slug=<str>        new-tenant slug (default: derived from name)
+ *   --tenant-id=<uuid>         use existing tenant; otherwise looked up by name, then created
+ *   --tenant-name=<str>        tenant display name (existing match wins, otherwise creates new)
  *   --study-name=<str>         study name within tenant (default: same as tenant-name)
  *   --admin-user-email=<email> admin user email (default: admin@corpus.local)
  *   --document-type=<str>      protocol|icf|ib|csr (default: protocol)
@@ -50,13 +49,12 @@ import IORedis from "ioredis";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve, basename, extname } from "node:path";
 import { randomUUID } from "node:crypto";
-import * as bcrypt from "bcryptjs";
+import bcrypt from "bcryptjs";
 
 interface Args {
   source: string;
   tenantId?: string;
   tenantName: string;
-  tenantSlug?: string;
   studyName: string;
   adminEmail: string;
   documentType: "protocol" | "icf" | "ib" | "csr";
@@ -96,7 +94,6 @@ function parseArgs(): Args {
     source,
     tenantId: get("tenant-id"),
     tenantName,
-    tenantSlug: get("tenant-slug"),
     studyName: get("study-name") ?? tenantName,
     adminEmail: get("admin-user-email") ?? "admin@corpus.local",
     documentType: (get("document-type") as Args["documentType"]) ?? "protocol",
@@ -104,14 +101,6 @@ function parseArgs(): Args {
     limit: limitStr ? parseInt(limitStr, 10) : undefined,
     dryRun: has("dry-run"),
   };
-}
-
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 50);
 }
 
 async function ensureTenant(args: Args) {
@@ -124,18 +113,23 @@ async function ensureTenant(args: Args) {
     console.log(`Using existing tenant: ${existing.name} (${existing.id})`);
     return existing;
   }
-  const slug = args.tenantSlug ?? slugify(args.tenantName);
-  const existing = await prisma.tenant.findUnique({ where: { slug } });
+  // Tenant doesn't have a unique slug column — use name to find existing.
+  // Note: name is not @unique either, so multiple tenants with the same
+  // name would resolve to the first one (by createdAt asc).
+  const existing = await prisma.tenant.findFirst({
+    where: { name: args.tenantName },
+    orderBy: { createdAt: "asc" },
+  });
   if (existing) {
-    console.log(`Found tenant by slug: ${existing.name} (${existing.id})`);
+    console.log(`Found tenant by name: ${existing.name} (${existing.id})`);
     return existing;
   }
   if (args.dryRun) {
-    console.log(`[dry-run] Would create tenant: ${args.tenantName} (slug=${slug})`);
-    return { id: "dry-run-tenant", name: args.tenantName, slug } as any;
+    console.log(`[dry-run] Would create tenant: ${args.tenantName}`);
+    return { id: "dry-run-tenant", name: args.tenantName } as any;
   }
   const tenant = await prisma.tenant.create({
-    data: { name: args.tenantName, slug },
+    data: { name: args.tenantName },
   });
   console.log(`Created tenant: ${tenant.name} (${tenant.id})`);
   return tenant;
@@ -167,38 +161,41 @@ async function ensureAdminUser(tenantId: string, email: string, dryRun: boolean)
 async function ensureStudy(
   tenantId: string,
   name: string,
-  createdById: string,
+  _createdById: string,
   dryRun: boolean,
 ) {
+  // Study uses `title` (not `name`); has no createdById / indication /
+  // protocolNumber columns. Most fields are optional with sensible defaults.
   const existing = await prisma.study.findFirst({
-    where: { tenantId, name },
+    where: { tenantId, title: name },
   });
-  if (existing) return existing;
+  if (existing) {
+    console.log(`Found study: ${existing.title} (${existing.id})`);
+    return existing;
+  }
   if (dryRun) {
     console.log(`[dry-run] Would create study: ${name}`);
-    return { id: "dry-run-study", name } as any;
+    return { id: "dry-run-study", title: name } as any;
   }
   const study = await prisma.study.create({
     data: {
       tenantId,
-      name,
-      protocolNumber: `CORPUS-${slugify(name)}`,
-      indication: "n/a (corpus)",
-      phase: "n/a",
+      title: name,
       sponsor: "n/a (bulk import)",
-      createdById,
     },
   });
-  console.log(`Created study: ${study.name} (${study.id})`);
+  console.log(`Created study: ${study.title} (${study.id})`);
   return study;
 }
 
-async function uploadFile(filePath: string, storageKey: string, dryRun: boolean): Promise<string> {
-  if (dryRun) return `dry-run://${storageKey}`;
+async function uploadFile(filePath: string, storageKey: string, dryRun: boolean): Promise<void> {
+  if (dryRun) return;
   const data = readFileSync(filePath);
   const storage = createStorageProvider();
   await storage.upload(storageKey, data);
-  return storage.getUrl(storageKey);
+  // Note: do NOT return storage.getUrl(key) — DocumentVersion.fileUrl must
+  // contain the raw KEY (no http:// prefix), so storage.download(version.fileUrl)
+  // in handleParseDocument can call S3 GetObjectCommand with a valid key.
 }
 
 async function main() {
@@ -260,8 +257,9 @@ async function main() {
       const filePath = resolve(args.source, file);
       const documentId = randomUUID();
       const versionId = randomUUID();
-      const storageKey = `${tenant.id}/${documentId}/v1.docx`;
-      const fileUrl = await uploadFile(filePath, storageKey, args.dryRun);
+      // Same key format as documentService in api: tenant/study/doc/v1.docx
+      const storageKey = `${tenant.id}/${study.id}/${documentId}/v1.docx`;
+      await uploadFile(filePath, storageKey, args.dryRun);
 
       if (!args.dryRun) {
         await prisma.$transaction(async (tx) => {
@@ -279,7 +277,7 @@ async function main() {
               documentId: doc.id,
               versionNumber: 1,
               versionLabel: "v1",
-              fileUrl,
+              fileUrl: storageKey,  // raw key, NOT URL — handlers download by key
               status: "uploading",
               isCurrent: true,
             },
