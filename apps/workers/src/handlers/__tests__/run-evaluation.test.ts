@@ -214,6 +214,75 @@ describe("handleRunEvaluation", () => {
     expect(data.status).toBe("pass");
   });
 
+  it("loadActualResults: parsing stage pulls non-false-heading sections and computes hasContent", async () => {
+    // Regression test for #53: parsing evaluation always returned f1=0
+    // because there was no `case "parsing"` in loadActualResults.
+    runFindUnique.mockResolvedValueOnce(makeRun());
+    goldenFindMany.mockResolvedValueOnce([
+      makeSample("s1", [
+        {
+          stage: "parsing",
+          expected: {
+            sections: [
+              { level: 1, order: 0, title: "Введение", hasContent: true },
+              { level: 1, order: 1, title: "Заключение", hasContent: false },
+            ],
+          },
+        },
+      ]),
+    ]);
+    sectionFindMany.mockResolvedValueOnce([
+      { level: 1, order: 0, title: "Введение", contentBlocks: [{ id: "cb1" }] },
+      { level: 1, order: 1, title: "Заключение", contentBlocks: [] },
+    ]);
+
+    await handleRunEvaluation({ evaluationRunId: RUN_ID });
+
+    // Verify the query filters out isFalseHeading sections
+    expect(sectionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { docVersionId: "dv-s1", isFalseHeading: false },
+      }),
+    );
+
+    // f1 should be 1.0 — both expected sections present in actual with same shape
+    const data = resultCreate.mock.calls[0][0].data;
+    expect(data.f1).toBe(1);
+    expect(data.precision).toBe(1);
+    expect(data.recall).toBe(1);
+    expect(data.status).toBe("pass");
+  });
+
+  it("loadActualResults: parsing stage detects mismatch (extra/missing) for partial overlap", async () => {
+    runFindUnique.mockResolvedValueOnce(makeRun());
+    goldenFindMany.mockResolvedValueOnce([
+      makeSample("s1", [
+        {
+          stage: "parsing",
+          expected: {
+            sections: [
+              { level: 1, order: 0, title: "Введение", hasContent: true },
+              { level: 1, order: 1, title: "Заключение", hasContent: true },
+            ],
+          },
+        },
+      ]),
+    ]);
+    // Actual has «Введение» (matching) and a different second section
+    sectionFindMany.mockResolvedValueOnce([
+      { level: 1, order: 0, title: "Введение", contentBlocks: [{ id: "cb1" }] },
+      { level: 1, order: 1, title: "Аннотация", contentBlocks: [{ id: "cb2" }] },
+    ]);
+
+    await handleRunEvaluation({ evaluationRunId: RUN_ID });
+
+    const data = resultCreate.mock.calls[0][0].data;
+    expect(data.f1).toBeGreaterThan(0);
+    expect(data.f1).toBeLessThan(1);
+    expect(data.precision).toBe(0.5);
+    expect(data.recall).toBe(0.5);
+  });
+
   it("computes delta when comparedToRunId is set", async () => {
     runFindUnique.mockResolvedValueOnce(
       makeRun({ comparedToRunId: "prev-run" }),

@@ -245,6 +245,32 @@ async function loadActualResults(
   stage: string,
 ): Promise<Record<string, unknown>> {
   switch (stage) {
+    case "parsing": {
+      // Expected format (from golden_sample_stage_statuses.expected_results):
+      //   { sections: [{ level, order, title, hasContent }, ...] }
+      // extractKeys() will JSON.stringify each object to a key that must match
+      // the expected one byte-for-byte — keep field order and types aligned.
+      // Filter out isFalseHeading sections: those are not part of the document
+      // structure and should not appear in either expected or actual.
+      const sections = await prisma.section.findMany({
+        where: { docVersionId, isFalseHeading: false },
+        orderBy: { order: "asc" },
+        select: {
+          level: true,
+          order: true,
+          title: true,
+          contentBlocks: { select: { id: true }, take: 1 },
+        },
+      });
+      return {
+        sections: sections.map((s) => ({
+          level: s.level,
+          order: s.order,
+          title: s.title,
+          hasContent: s.contentBlocks.length > 0,
+        })),
+      };
+    }
     case "classification": {
       const sections = await prisma.section.findMany({
         where: { docVersionId },
