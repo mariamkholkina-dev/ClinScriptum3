@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import {
   ArrowLeft,
@@ -1403,6 +1404,12 @@ function StagePanel({
                 {updateMutation.isPending && (
                   <Loader2 size={16} className="animate-spin text-gray-400" />
                 )}
+                <Link
+                  href={`/annotate/${goldenSampleId}/${stageKey}`}
+                  className="rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                >
+                  Разметить →
+                </Link>
                 <button
                   onClick={() => handleStatusChange("draft")}
                   disabled={updateMutation.isPending || currentStatus === "draft"}
