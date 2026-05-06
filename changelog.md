@@ -2,6 +2,14 @@
 
 ## 2026-05-06
 
+### Hotfix: bulk-upload-corpus падал на отсутствующем поле `Tenant.slug`
+
+`apps/workers/scripts/bulk-upload-corpus.ts` — модель `Tenant` в Prisma имеет только `id` и `name` (без `slug`). Скрипт пытался искать tenant через `findUnique({where: {slug}})` → PrismaClientValidationError.
+
+Фикс: tenant теперь ищется через `findFirst({where: {name}, orderBy: {createdAt: 'asc'}})` — берётся самый ранний tenant с этим именем (idempotency сохраняется). Удалён аргумент `--tenant-slug`. `slugify` helper удалён, в `protocolNumber` для study используется inline regex.
+
+
+
 ### Fix: classification — сужен require-gate для `ip.preclinical_clinical_data` (B1)
 
 `taxonomy.yaml` — изменения в зоне `ip.preclinical_clinical_data`:
