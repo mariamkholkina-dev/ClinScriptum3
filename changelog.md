@@ -32,6 +32,18 @@
 
 См. memory `project_golden_stage_status_timestamps.md`.
 
+### Tooling: corpus-discovery script для bulk-анализа протоколов
+
+`apps/workers/scripts/corpus-discovery.ts` (новый) — standalone-скрипт без БД и BullMQ. Грузит `taxonomy.yaml` напрямую как rules в `SectionClassifier`, парсит все DOCX из заданной директории (default `C:/protocol_last_version`) и применяет deterministic классификатор. Выводит:
+- `summary.json` — totals (documents, sections, classified rate), zone distribution, top unclassified titles + tokens
+- `per-document.json` — sections per file, distribution per zone, parse errors
+- `unclassified-titles.txt` — line per title (для clustering)
+- `zone-distribution.csv` — zone, count, pct
+
+Назначение — discovery на корпусе из ~150 реальных протоколов перед расширением taxonomy и активным learning'ом. См. план в `project_post_phase2_baseline.md`.
+
+`.gitignore` — добавлен `docs/discovery/` (output может содержать sensitive titles из реальных protocols).
+
 ## 2026-05-05
 
 ### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой

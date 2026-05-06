@@ -17,6 +17,9 @@ Thumbs.db
 uploads/
 .storage/
 
+# Corpus discovery output — may include sensitive titles from real protocols
+docs/discovery/
+
 # IDE
 .idea/
 *.swp
