@@ -18,6 +18,7 @@ import {
   CircleSlash,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { ZoneSelector } from "./ZoneSelector";
 
 /* ═══════════════ Types ═══════════════ */
 
@@ -29,6 +30,7 @@ interface Section {
   classifiedBy: string | null;
   level: number;
   order: number;
+  isFalseHeading?: boolean;
 }
 
 type AnnotationStatusUI = "pending" | "accepted" | "changed" | "question" | "answered";
@@ -116,10 +118,12 @@ export default function AnnotatePage() {
   const [showHotkeys, setShowHotkeys] = useState(false);
   const [filterMode, setFilterMode] = useState<"all" | "pending" | "questions">("all");
 
-  const sections: Section[] = useMemo(
-    () => (versionQuery.data?.sections ?? []) as Section[],
-    [versionQuery.data?.sections],
-  );
+  // Skip sections marked isFalseHeading=true at parsing stage — они не часть
+  // структуры документа и не должны попадать в annotation workflow.
+  const sections: Section[] = useMemo(() => {
+    const all = (versionQuery.data?.sections ?? []) as Section[];
+    return all.filter((s) => !s.isFalseHeading);
+  }, [versionQuery.data?.sections]);
 
   /* ───── Annotation map by sectionKey ───── */
   const annotationMap = useMemo(() => {
@@ -179,12 +183,23 @@ export default function AnnotatePage() {
   const activeKey = activeSection ? sectionKeyFor(stage, activeSection) : null;
   const activeAnnotation = activeKey ? annotationMap.get(activeKey) : null;
 
-  /* ───── Reset question / override on section change ───── */
+  /* ───── Reset question / override on section change ─────
+   *
+   * Триггерим по activeSection.id (не activeAnnotation?.id — он undefined для
+   * непрорезюмированных секций, и тогда переход между такими секциями не
+   * приводил к ре-инициализации zoneOverride). Также перечитываем при изменении
+   * standardSection и proposedZone, чтобы свежие данные с server подтянулись. */
   useEffect(() => {
+    if (!activeSection) return;
     setQuestionMode(false);
     setQuestionText(activeAnnotation?.questionText ?? "");
-    setZoneOverride(activeAnnotation?.proposedZone ?? activeSection?.standardSection ?? "");
-  }, [activeSection?.id, activeAnnotation?.id]);
+    setZoneOverride(activeAnnotation?.proposedZone ?? activeSection.standardSection ?? "");
+  }, [
+    activeSection?.id,
+    activeSection?.standardSection,
+    activeAnnotation?.proposedZone,
+    activeAnnotation?.questionText,
+  ]);
 
   /* ───── Action handlers ───── */
   const submit = useCallback(
@@ -308,12 +323,6 @@ export default function AnnotatePage() {
     );
   }
 
-  const taxonomyOptions = useMemo(() => {
-    return (taxonomyQuery.data ?? []).map((r) => {
-      const cfg = (r.config ?? {}) as { key?: string; titleRu?: string };
-      return { key: cfg.key ?? r.pattern, titleRu: cfg.titleRu ?? "" };
-    });
-  }, [taxonomyQuery.data]);
   const progress = progressQuery.data ?? { open: 0, answered: 0, finalized: 0, openQuestions: 0 };
   const totalAnnotated = (progress.open ?? 0) + (progress.answered ?? 0) + (progress.finalized ?? 0);
 
@@ -477,18 +486,12 @@ export default function AnnotatePage() {
                   <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
                     Твоя зона
                   </div>
-                  <select
+                  <ZoneSelector
+                    rules={taxonomyQuery.data ?? []}
                     value={zoneOverride}
-                    onChange={(e) => setZoneOverride(e.target.value)}
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-                  >
-                    <option value="">— выбери зону —</option>
-                    {taxonomyOptions.map((t) => (
-                      <option key={t.key} value={t.key}>
-                        {t.key} {t.titleRu ? `— ${t.titleRu}` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setZoneOverride}
+                    placeholder="— выбери зону —"
+                  />
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       onClick={handleAccept}

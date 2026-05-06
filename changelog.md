@@ -2,6 +2,16 @@
 
 ## 2026-05-07
 
+### UX: иерархический выбор зоны + skip false-headings + init bug в /annotate
+
+`apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/ZoneSelector.tsx` (новый) — combobox с tree view: zones → subzones, поиск по pattern/key/titleRu, keyboard navigation (↑/↓/Enter), click-outside close. Заменяет flat `<select>` на годной выбор зоны через несколько кликов.
+
+`apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/page.tsx`:
+- Sections с `isFalseHeading=true` (отмеченные на этапе парсинга) больше **не появляются** в дереве разметки. Они не часть структуры документа и в classification workflow не попадают.
+- Fix bug инициализации поля «Твоя зона»: при переходе между секциями без существующей annotation поле то заполнялось то нет. Причина — useEffect зависел от `activeAnnotation?.id` (undefined для непрорезюмированных секций), переход между такими секциями не триггерил re-init. Исправлено: deps теперь включают `activeSection.standardSection` и `activeAnnotation?.proposedZone`.
+
+
+
 ### Feat: annotation workflow UI — annotator + expert pages (Sprint 7b Stages 2-4)
 
 `apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/page.tsx` (новый) — annotator page:
