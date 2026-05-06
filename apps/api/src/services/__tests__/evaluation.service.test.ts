@@ -20,9 +20,16 @@ vi.mock("../../lib/logger.js", () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
+vi.mock("../../lib/queue.js", () => ({
+  enqueueJob: vi.fn().mockResolvedValue({ id: "job-mock" }),
+}));
+
 import { prisma } from "@clinscriptum/db";
 import { evaluationService } from "../evaluation.service.js";
 import { DomainError } from "../errors.js";
+import { enqueueJob } from "../../lib/queue.js";
+
+const mockEnqueueJob = enqueueJob as unknown as ReturnType<typeof vi.fn>;
 
 const mockEvalRun = prisma.evaluationRun as unknown as {
   findUnique: ReturnType<typeof vi.fn>;
@@ -212,6 +219,52 @@ describe("evaluationService — tenant isolation", () => {
       const where = mockEvalRun.findMany.mock.calls[0][0].where;
       expect(where.tenantId).toBe(TENANT_A);
       expect(where.type).toBe("section_classification");
+    });
+  });
+
+  describe("createRun — enqueues BullMQ job", () => {
+    it("enqueues 'run_evaluation' for type='single'", async () => {
+      mockEvalRun.create.mockResolvedValue(makeRun("r-new", TENANT_A));
+
+      await evaluationService.createRun(TENANT_A, {
+        type: "single",
+        createdById: "u1",
+      });
+
+      expect(mockEnqueueJob).toHaveBeenCalledWith("run_evaluation", { evaluationRunId: "r-new" });
+    });
+
+    it("enqueues 'run_batch_evaluation' for type='batch'", async () => {
+      mockEvalRun.create.mockResolvedValue(makeRun("r-batch", TENANT_A));
+
+      await evaluationService.createRun(TENANT_A, {
+        type: "batch",
+        createdById: "u1",
+      });
+
+      expect(mockEnqueueJob).toHaveBeenCalledWith("run_batch_evaluation", { evaluationRunId: "r-batch" });
+    });
+
+    it("enqueues 'run_evaluation' for type='llm_comparison'", async () => {
+      mockEvalRun.create.mockResolvedValue(makeRun("r-llm", TENANT_A));
+
+      await evaluationService.createRun(TENANT_A, {
+        type: "llm_comparison",
+        createdById: "u1",
+      });
+
+      expect(mockEnqueueJob).toHaveBeenCalledWith("run_evaluation", { evaluationRunId: "r-llm" });
+    });
+
+    it("enqueues 'run_evaluation' for type='context_window_test'", async () => {
+      mockEvalRun.create.mockResolvedValue(makeRun("r-ctx", TENANT_A));
+
+      await evaluationService.createRun(TENANT_A, {
+        type: "context_window_test",
+        createdById: "u1",
+      });
+
+      expect(mockEnqueueJob).toHaveBeenCalledWith("run_evaluation", { evaluationRunId: "r-ctx" });
     });
   });
 });
