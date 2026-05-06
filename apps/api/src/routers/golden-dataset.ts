@@ -100,13 +100,19 @@ export const goldenDatasetRouter = router({
         approvedById: z.string().uuid().optional(),
       }),
     )
-    .mutation(({ input }) =>
+    .mutation(({ input, ctx }) =>
       goldenDatasetService.updateStageStatus(input.goldenSampleId, input.stage, {
         status: input.status,
         expectedResults: input.expectedResults,
         reviewComment: input.reviewComment,
-        reviewedById: input.reviewedById,
-        approvedById: input.approvedById,
+        // Auto-fill from auth context: explicit input.reviewedById takes
+        // precedence (e.g. for impersonation), otherwise use the requester.
+        reviewedById:
+          input.reviewedById ??
+          (input.status === "in_review" ? ctx.user.userId : undefined),
+        approvedById:
+          input.approvedById ??
+          (input.status === "approved" ? ctx.user.userId : undefined),
       }),
     ),
 

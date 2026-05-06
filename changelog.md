@@ -22,6 +22,16 @@
 
 `apps/workers/src/handlers/__tests__/run-evaluation.test.ts` — 2 регрессионных теста: full match (f1=1) и partial overlap (f1<1).
 
+### Fix: GoldenSampleStageStatus.approvedAt / reviewedAt теперь выставляются (Task C3)
+
+`apps/api/src/services/golden-dataset.service.ts` — `updateStageStatus` теперь выставляет timestamp по статусу, а не только при передаче `approvedById/reviewedById`:
+- `status='in_review'` → `reviewedAt = now`
+- `status='approved'` → `approvedAt = now`, и `reviewedAt = now` если ещё не выставлен (для прямого draft → approved)
+
+`apps/api/src/routers/golden-dataset.ts` — `updateStageStatus` теперь auto-fills `reviewedById`/`approvedById` из `ctx.user.userId` когда вызывающий не передал их явно. Раньше UI вызывал endpoint без id, timestamps оставались null — терялся audit trail когда эталон правился.
+
+См. memory `project_golden_stage_status_timestamps.md`.
+
 ## 2026-05-05
 
 ### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой
