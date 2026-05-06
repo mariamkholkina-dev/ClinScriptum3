@@ -12,6 +12,17 @@
 
 `apps/api/src/services/__tests__/evaluation.service.test.ts` — добавлен mock для `../../lib/queue.js` и 4 теста на корректный jobName per EvaluationRunType. См. memory `project_evaluation_run_no_enqueue.md`.
 
+### Fix: classification — сужен require-gate для `ip.preclinical_clinical_data`
+
+`taxonomy.yaml` — изменения в зоне `ip.preclinical_clinical_data`:
+- Удалены из require_patterns: `клиническ\\w+ исследован\\w+`, `клиническ\\w+ опыт`, `clinical trials?`. Эти токены ловили «обоснование клинического исследования» (это `overview.rationale`) и сам title протокола, что давало по 20-30 FP/документ на golden set
+- Оставлены только: доклинические тесты (animal/preclinical/tox), «клиническ\\w+ данн\\w+» (без «исследования»), «результат\\w+ … клиническ\\w+» (требует слова «результат»)
+- Добавлены not_keywords: `обоснован\\w+`, `цел\\w+ задач\\w+`, `спонсор\\w+` — финальный guard
+
+`packages/rules-engine/src/__tests__/taxonomy-classification.test.ts` (новый) — 10 тестов: positive cases (доклинические данные, clinical data, токсикология, results), negative cases («обоснование клинического исследования» — не matches, протокольный title — не matches, цели и задачи — не matches), not_keywords boundary checks.
+
+Триггер — после деплоя Phase 2 + TOC v2 (baseline f1=0.638, +0.024 от clean) разбор оставшихся ~100 FP на STP показал что широкий require_pattern для `ip.preclinical_clinical_data` главный источник Phase 2 disagreements. См. `project_post_phase2_baseline.md`.
+
 ## 2026-05-05
 
 ### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой
