@@ -168,11 +168,24 @@ export const goldenDatasetService = {
     }
     if (data.reviewedById) {
       updateData.reviewedById = data.reviewedById;
-      updateData.reviewedAt = new Date();
     }
     if (data.approvedById) {
       updateData.approvedById = data.approvedById;
-      updateData.approvedAt = new Date();
+    }
+    // Status-driven timestamps: write reviewedAt / approvedAt whenever the
+    // stage transitions into the corresponding state, regardless of whether
+    // the caller passed a user id. Without this, audit trails are lost when
+    // the endpoint is called without explicit ids (e.g. UI calls before
+    // 2026-05-06 fix). See memory project_golden_stage_status_timestamps.
+    const now = new Date();
+    if (data.status === "in_review") {
+      updateData.reviewedAt = now;
+    }
+    if (data.status === "approved") {
+      updateData.approvedAt = now;
+      // Approved is the «final» state — also set reviewedAt if it wasn't
+      // already (the row may go straight draft → approved).
+      if (!updateData.reviewedAt) updateData.reviewedAt = now;
     }
 
     return prisma.goldenSampleStageStatus.upsert({
