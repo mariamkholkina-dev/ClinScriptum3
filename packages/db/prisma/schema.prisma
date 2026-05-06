@@ -60,6 +60,8 @@ model User {
   goldenSamplesCreated      GoldenSample[]             @relation("GoldenSampleCreator")
   goldenStageReviews        GoldenSampleStageStatus[]  @relation("StageReviewer")
   goldenStageApprovals      GoldenSampleStageStatus[]  @relation("StageApprover")
+  goldenAnnotations         GoldenAnnotation[]         @relation("AnnotationAnnotator")
+  goldenAnnotationDecisions GoldenAnnotationDecision[] @relation("AnnotationDecider")
   evaluationRunsCreated     EvaluationRun[]
   correctionRecords         CorrectionRecord[]
   correctionRecommendations CorrectionRecommendation[] @relation("RecommendationReviewer")
@@ -1003,6 +1005,7 @@ model GoldenSample {
   createdBy     User                      @relation("GoldenSampleCreator", fields: [createdById], references: [id])
   documents     GoldenSampleDocument[]
   stageStatuses GoldenSampleStageStatus[]
+  annotations   GoldenAnnotation[]
   evaluationResults EvaluationResult[]
 
   @@index([tenantId])
@@ -1053,6 +1056,62 @@ enum GoldenStageStatus {
   draft
   in_review
   approved
+}
+
+// ─── Annotation workflow (Sprint 7b) ──────────────────────────
+// Per-section annotations from the (single) annotator. Each row
+// corresponds to one section in one stage of one golden sample.
+// `proposedZone` is what the annotator chose; if `isQuestion=true`
+// it means they're not sure and want the expert to decide.
+
+model GoldenAnnotation {
+  id              String              @id @default(uuid()) @db.Uuid
+  goldenSampleId  String              @map("golden_sample_id") @db.Uuid
+  stage           String
+  // Stable identifier of the section across reprocesses. For classification
+  // stage we use the section title (lowercased+trimmed); for parsing stage
+  // we use a JSON-stringified {level, order, title, hasContent} signature.
+  // Format is stage-dependent; consumers must match service helpers.
+  sectionKey      String              @map("section_key")
+  annotatorId     String              @map("annotator_id") @db.Uuid
+  proposedZone    String?             @map("proposed_zone")
+  isQuestion      Boolean             @default(false) @map("is_question")
+  questionText    String?             @map("question_text")
+  status          AnnotationStatus    @default(open)
+  annotatedAt     DateTime            @default(now()) @map("annotated_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  goldenSample GoldenSample @relation(fields: [goldenSampleId], references: [id], onDelete: Cascade)
+  annotator    User         @relation("AnnotationAnnotator", fields: [annotatorId], references: [id])
+  decision     GoldenAnnotationDecision?
+
+  // One annotator can mark a section once per stage. Re-annotation = update.
+  @@unique([goldenSampleId, stage, sectionKey, annotatorId])
+  @@index([goldenSampleId, stage, status])
+  @@map("golden_annotations")
+}
+
+enum AnnotationStatus {
+  open       // annotator submitted; if not a question, ready to auto-finalize
+  answered   // expert resolved a question
+  finalized  // pushed into golden_sample_stage_statuses.expected_results
+}
+
+// Expert decision on an annotation that was a question or got disagreement
+// in the future (when we add multi-annotator). 1:1 with annotation.
+model GoldenAnnotationDecision {
+  id           String   @id @default(uuid()) @db.Uuid
+  annotationId String   @unique @map("annotation_id") @db.Uuid
+  finalZone    String   @map("final_zone")
+  decidedById  String   @map("decided_by_id") @db.Uuid
+  decidedAt    DateTime @default(now()) @map("decided_at")
+  // Optional rationale — recorded for future annotators / training material.
+  rationale    String?
+
+  annotation GoldenAnnotation @relation(fields: [annotationId], references: [id], onDelete: Cascade)
+  decidedBy  User             @relation("AnnotationDecider", fields: [decidedById], references: [id])
+
+  @@map("golden_annotation_decisions")
 }
 
 // ─── Evaluation ─────────────────────────────────────────────
