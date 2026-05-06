@@ -2,6 +2,19 @@
 
 ## 2026-05-06
 
+### Tooling: bulk-upload-corpus script (Sprint 7a Block 4)
+
+`apps/workers/scripts/bulk-upload-corpus.ts` (новый) — заливает директорию DOCX-файлов в систему как `Document` + `DocumentVersion` + `GoldenSample` (в status=draft). Затем enqueue'ит `run_pipeline` для каждой версии — parser + classifier работают автоматически.
+
+Idempotent: если Document с тем же `title` уже существует в study — skip (не дублирует).
+
+Назначение — заложить инфраструктуру под Sprint 7 annotation workflow:
+1. Запустить раз для заливки полного корпуса в новый tenant (`corpus_2026_05_06`)
+2. Annotator (1 человек) открывает каждую GoldenSample в rule-admin, проверяет predictions section by section
+3. Expert (1 человек) разрешает questions
+
+Args: `--source` (path), `--tenant-name`, `--study-name`, `--admin-user-email`, `--document-type`, `--enqueue|--no-enqueue`, `--limit`, `--dry-run`.
+
 ### Fix: `evaluation.createRun` теперь ставит BullMQ job в очередь
 
 `apps/api/src/services/evaluation.service.ts` — после `prisma.evaluationRun.create` теперь вызывается `enqueueJob()` с правильным jobName в зависимости от `EvaluationRunType`:
