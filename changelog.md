@@ -2,6 +2,53 @@
 
 ## 2026-05-06
 
+### Fix: classification — сужен require-gate для `ip.preclinical_clinical_data` (B1)
+
+`taxonomy.yaml` — изменения в зоне `ip.preclinical_clinical_data`:
+- Удалены из require_patterns: `клиническ\\w+ исследован\\w+`, `клиническ\\w+ опыт`, `clinical trials?` — ловили «обоснование клинического исследования» (это `overview.rationale`) и сам title протокола, давали 20-30 FP/документ на golden set
+- Оставлены: доклинические тесты (animal/preclinical/tox), «клиническ\\w+ данн\\w+» (без «исследования»), «результат\\w+ … клиническ\\w+» (требует слова «результат»)
+- Добавлены not_keywords: `обоснован\\w+`, `цел\\w+ задач\\w+`, `спонсор\\w+` — финальный guard
+
+`packages/rules-engine/src/__tests__/taxonomy-classification.test.ts` (новый) — 10 тестов.
+
+### Fix: расширены require_patterns `procedures.lifestyle` (Track A из corpus discovery)
+
+`taxonomy.yaml` — добавлены два require_pattern:
+- `(?i)\\bограничен\\w*\\s+(по\\s+)?(питан|пищ|еде|диет|алкогол|курени|активност|образ\\s+жизн)\\w*\\b` — «ограничения по питанию», «ограничения по активности» (predicate перед objects)
+- `(?i)\\bрежим\\w*\\s+(питан|жизн|дн)\\w*\\b` — «режим питания/жизни/дня»
+
+Триггер: corpus discovery показал 46 unclassified секций «ограничения по питанию и активности».
+
+### Feat: 6 новых subzones из corpus discovery (Track B)
+
+`taxonomy.yaml` — добавлены:
+1. **`admin.investigator_responsibilities`** (~78 sections в корпусе)
+2. **`admin.protocol_approval`** (~73)
+3. **`design.unscheduled_visits`** (~67)
+4. **`procedures.protocol_deviations`** (~66)
+5. **`procedures.emergency_actions`** (~43)
+6. **`safety.identified_risks`** (~41)
+
+Каждая зона имеет require_patterns + patterns + not_keywords. Совокупно покрывает ~340 секций.
+
+### Fix: heading-detector skip footnote rows + SoA timepoint cells (Track C)
+
+`packages/doc-parser/src/heading-detector.ts` — добавлены два non-heading фильтра, активные **только без explicit heading style**:
+
+1. **TIMEPOINT_LINE_RE** — `^(день|day|неделя|week|визит|visit|месяц|month)\s+\d+(\s*\(...\))?\s*$`. Ловит SoA-table cells.
+2. **FOOTNOTE_ROW_RE** — `^\d+\s*[-–—]\s+[a-zа-яё]`. Ловит footnote rows «3 – рандомизация...». Lowercase guard защищает «3 - Rationale».
+
+11 новых тестов. Триггер: 50.9% секций корпуса парсились как empty — фильтр снижает до 20.1%.
+
+### Tooling: bulk-upload-corpus script (Sprint 7a Block 4)
+
+`apps/workers/scripts/bulk-upload-corpus.ts` (новый) — заливает DOCX-директорию как Document + DocumentVersion + GoldenSample (draft). 3 режима через `--pipeline`:
+- `full` — enqueue run_pipeline (parse+classify+facts+soa+audit) ~$10-30 LLM, ~3-5h
+- `parse-classify` (default) — in-process parse + classify, ~$1-3 LLM, ~30-60min, достаточно для annotation
+- `none` (alias `--no-enqueue`) — только заливка без processing
+
+Idempotent. Args: `--source --tenant-name --study-name --pipeline --limit --dry-run`.
+
 ### Fix: `evaluation.createRun` теперь ставит BullMQ job в очередь
 
 `apps/api/src/services/evaluation.service.ts` — после `prisma.evaluationRun.create` теперь вызывается `enqueueJob()` с правильным jobName в зависимости от `EvaluationRunType`:

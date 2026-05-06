@@ -16,6 +16,29 @@ export interface DetectedHeading {
 const HEADING_STYLE_RE = /^heading\s*(\d+)$/i;
 const NUMBERED_SECTION_RE = /^(\d+(?:\.\d+)*)\s+/;
 
+// 2026-05-06: фильтры для строк, которые НЕ являются настоящими заголовками,
+// но могут быть приняты за них (особенно numbered-detection):
+//
+//  - TIMEPOINT_LINE_RE: «День 5», «Day 7», «Неделя 2», «Визит 1», «Month 3» —
+//    это ячейки таблицы SoA / расписания визитов. Парсер их раньше тащил как
+//    headings → 50% секций без контента (corpus discovery showed top tokens:
+//    «день» 608 occurrences, «неделя» 260, «визиты» 149).
+//
+//  - FOOTNOTE_ROW_RE: «3 – рандомизация будет осуществлена...», «6 - первый
+//    забор крови...» — footnote rows из таблиц/комментариев. Цифра + dash +
+//    lowercase first letter — характерный паттерн footnote (не heading).
+//    Lowercase guard защищает от ложного отбрасывания «3 - Rationale» где
+//    capital letter указывает на настоящий heading.
+const TIMEPOINT_LINE_RE = /^(день|days?|неделя|weeks?|визит|visits?|месяц|months?)\s+\d+(\s*\([^)]*\))?\s*$/i;
+const FOOTNOTE_ROW_RE = /^\d+\s*[-–—]\s+[a-zа-яё]/;
+
+function isNonHeadingLine(text: string): boolean {
+  const trimmed = text.trim();
+  if (TIMEPOINT_LINE_RE.test(trimmed)) return true;
+  if (FOOTNOTE_ROW_RE.test(trimmed)) return true;
+  return false;
+}
+
 export function detectHeading(
   text: string,
   paragraphIndex: number,
@@ -26,6 +49,12 @@ export function detectHeading(
   baseFontSize?: number
 ): DetectedHeading | null {
   if (!text.trim()) return null;
+
+  // Early exit for SoA timepoint rows и footnote rows. Эти строки иногда
+  // получают heading style в DOCX (или подходят под numbered detection), но
+  // не являются настоящими разделами документа. Если style EXPLICITLY ставит
+  // heading-N — игнорируем фильтр (доверяем эксплицитной разметке Word).
+  if (!style && isNonHeadingLine(text)) return null;
 
   if (style) {
     const match = style.match(HEADING_STYLE_RE);

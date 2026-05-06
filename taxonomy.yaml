@@ -258,6 +258,22 @@ design:
         - "(?i)\\bwithdraw\\w*\\b"
         - "(?i)\\bdiscontinuation\\b"
 
+    unscheduled_visits:
+      title_ru: Незапланированные / внеплановые визиты
+      # 2026-05-06: добавлено по результатам corpus-discovery — 67 секций
+      # «незапланированные визиты» / «внеплановые визиты» / «unscheduled visits».
+      require_patterns:
+        - "(?i)\\b(незапланированн\\w*|внеплан\\w*|внеплановы?х?)\\s+визит\\w*\\b"
+        - "(?i)\\bunscheduled\\s+visits?\\b"
+        - "(?i)\\bдополнительн\\w*\\s+визит\\w*\\b"
+      patterns:
+        - "(?i)\\bнезапланированн\\w*\\s+визит\\w*\\b"
+        - "(?i)\\bвнеплан\\w*\\s+визит\\w*\\b"
+        - "(?i)\\bunscheduled\\s+visits?\\b"
+        - "(?i)\\bвнеочередн\\w*\\s+визит\\w*\\b"
+      not_keywords:
+        - "(?i)\\bplanned\\s+visits?\\b|\\bплановы?х?\\s+визит\\w*\\b"
+
 # -------------------------------
 # IP
 # -------------------------------
@@ -345,21 +361,29 @@ ip:
 
     preclinical_clinical_data:
       title_ru: Результаты значимых доклинических и клинических исследований
-      # Гейт расширен: покрывает и доклинику (animal/in vivo/tox), и клинические данные
-      # (предыдущие исследования препарата у человека). Раньше ключ был preclinical_data —
-      # классификатор путал клинические results с efficacy_assessments. См.
-      # project_known_bugs.md от 2026-05-01.
+      # Гейт сужен (2026-05-05): убраны «клиническ\\w+ исследован\\w+» и «clinical trials»,
+      # потому что они ловили «обоснование клинического исследования» (это overview.rationale)
+      # и сам title протокола. Оставлены только: доклиника (animal/in vivo/tox),
+      # «клинические **данные** / опыт» (без «исследования»), и «**результаты** доклинических
+      # /клинических» (требуется слово «результат\\w*»). См. baseline after-toc-skip-v2.
       require_patterns:
         - "(?i)\\b(доклинич\\w*|preclinical|in\\s+vivo|in\\s+vitro|tox\\w*|токсиколог\\w*)\\b"
-        - "(?i)\\b(клиническ\\w*\\s+(данн\\w*|исследован\\w*|опыт\\w*)|clinical\\s+(data|experience|trials?))\\b"
+        - "(?i)\\b(клиническ\\w*\\s+(данн\\w*|опыт\\w*)|clinical\\s+(data|experience))\\b"
         - "(?i)\\bрезультат\\w*\\s+(значим\\w*\\s+)?(доклинич\\w*|клиническ\\w*)\\b"
+      not_keywords:
+        # «Обоснование клинического исследования» → overview.rationale
+        - "(?i)\\bобоснован\\w*\\b"
+        # «Цели и задачи (клинического) исследования» → overview.objectives
+        - "(?i)\\bцел\\w*\\s+(и\\s+)?задач\\w*\\b"
+        # Sponsor info, не результаты
+        - "(?i)\\bспонсор\\w*\\b"
       patterns:
         - "(?i)\\bдоклинич\\w*\\b|\\bpreclinical\\b"
         - "(?i)\\bтоксиколог\\w*\\b|\\btox\\w*\\b"
         - "(?i)\\bфармаколог\\w*\\b|\\bpharmacolog\\w*\\b"
         - "(?i)\\bживотн\\w*\\b|\\banimal\\b"
-        - "(?i)\\bклиническ\\w*\\s+(данн\\w*|исследован\\w*|опыт\\w*)\\b"
-        - "(?i)\\bclinical\\s+(data|experience|trials?)\\b"
+        - "(?i)\\bклиническ\\w*\\s+данн\\w*\\b"
+        - "(?i)\\bclinical\\s+(data|experience)\\b"
         - "(?i)\\bрезультат\\w*\\s+(значим\\w*\\s+)?(доклинич\\w*|клиническ\\w*)\\b"
 
     comparator:
@@ -503,15 +527,21 @@ procedures:
 
     lifestyle:
       title_ru: Образ жизни / физическая активность
-      # Новая subzone: ограничения по диете, курению, алкоголю, физактивности
-      # на время исследования. Раньше попадало в parent procedures или
-      # population.exclusion. Гейт жёсткий чтобы не путаться с safety.
+      # 2026-05-06: расширены require_patterns. На корпусе из 156 protocols
+      # discovery показала что 46 секций "ограничения по питанию и активности
+      # (добровольца|пациента)" не ловились — питание упоминалось ПЕРЕД
+      # "ограничения" (а не после), и "активности" была отдельным словом.
+      # Также добавлен паттерн "режим (питания|жизни)".
       require_patterns:
         - "(?i)\\bобраз\\s+жизн\\w*\\b"
         - "(?i)\\bфизическ\\w*\\s+(активност\\w*|нагрузк\\w*|упражнен\\w*)\\b"
         - "(?i)\\blifestyle\\s+(modifications?|recommendations?|restrictions?)\\b"
         - "(?i)\\bphysical\\s+activity\\b"
         - "(?i)\\b(диет\\w*|питан\\w*|food|alcohol|алкогол\\w*|курени\\w*|smoking)\\s+(ограничен\\w*|restrictions?|recommendations?)\\b"
+        # Расширено: "ограничения по (питанию|еде|...)" — predicate ставится ПЕРЕД (а не после)
+        - "(?i)\\bограничен\\w*\\s+(по\\s+)?(питан\\w*|пищ\\w*|еде|диет\\w*|алкогол\\w*|курени\\w*|активност\\w*|образ\\w*\\s+жизн\\w*)\\b"
+        # Расширено: «Режим питания / Режим жизни / Режим дня»
+        - "(?i)\\bрежим\\w*\\s+(питан\\w*|жизн\\w*|дн\\w*)\\b"
       patterns:
         - "(?i)\\bобраз\\s+жизн\\w*\\b"
         - "(?i)\\bфизическ\\w*\\s+(активност\\w*|нагрузк\\w*|упражнен\\w*)\\b"
@@ -520,6 +550,8 @@ procedures:
         - "(?i)\\bдиет\\w*\\s+ограничен\\w*\\b|\\bdietary\\s+restrictions?\\b"
         - "(?i)\\b(алкогол\\w*|курени\\w*)\\s+ограничен\\w*\\b"
         - "(?i)\\b(alcohol|smoking|tobacco)\\s+restrictions?\\b"
+        - "(?i)\\bограничен\\w*\\s+(по\\s+)?(питан\\w*|еде|диет\\w*|активност\\w*)\\b"
+        - "(?i)\\bрежим\\w*\\s+(питан\\w*|жизн\\w*)\\b"
       not_keywords:
         # Не критерии отбора и не safety
         - "(?i)\\bкритери\\w*\\s+(не\\s*)?включен\\w*\\b|\\b(in|ex)clusion\\s+criteria\\b"
@@ -633,6 +665,36 @@ procedures:
         - "(?i)\\bуч[её]т\\s+таблет\\w*\\b"
         - "(?i)\\bpill\\s+count\\b"
         - "(?i)\\bвозврат\\s+препарат\\w*\\b"
+
+    protocol_deviations:
+      title_ru: Отклонения от протокола / процедуры регистрации
+      # 2026-05-06: добавлено по результатам corpus-discovery — 49+17 секций
+      require_patterns:
+        - "(?i)\\bотклонен\\w*\\s+(от\\s+)?(протокол\\w*|плана|процедур\\w*)\\b"
+        - "(?i)\\bprotocol\\s+deviations?\\b"
+        - "(?i)\\bпроцедур\\w*\\s+сообщен\\w*\\s+об?\\s+отклонен\\w*\\b"
+      patterns:
+        - "(?i)\\bотклонен\\w*\\s+(от\\s+)?протокол\\w*\\b"
+        - "(?i)\\bprotocol\\s+deviations?\\b"
+        - "(?i)\\bнарушен\\w*\\s+протокол\\w*\\b"
+        - "(?i)\\bprotocol\\s+violations?\\b"
+      not_keywords:
+        - "(?i)\\bпоправк\\w*\\s+(к\\s+)?протокол\\w*\\b|\\bamendment\\w*\\b"
+
+    emergency_actions:
+      title_ru: Действия в неотложных / экстренных ситуациях
+      # 2026-05-06: добавлено по результатам corpus-discovery — 43 секции
+      require_patterns:
+        - "(?i)\\b(неотложн\\w*|экстренн\\w*|emergency)\\s+(ситуац\\w*|меропр\\w*|действ\\w*|procedures?|cases?)\\b"
+        - "(?i)\\bэкстренн\\w*\\s+помощ\\w*\\b"
+        - "(?i)\\bemergency\\s+(actions?|response|management)\\b"
+      patterns:
+        - "(?i)\\bнеотложн\\w*\\s+ситуац\\w*\\b"
+        - "(?i)\\bэкстренн\\w*\\s+(ситуац\\w*|помощ\\w*)\\b"
+        - "(?i)\\bemergency\\s+(actions?|procedures?|response)\\b"
+        - "(?i)\\bраскод\\w*\\s+(в\\s+)?экстренн\\w*\\b"
+      not_keywords:
+        - "(?i)\\b(раскод\\w*\\s+слепог\\w*|unblinding)\\b"
 
 # -------------------------------
 # ENDPOINTS
@@ -807,6 +869,23 @@ safety:
         - "(?i)\\bфармаконадзор\\b"
         - "(?i)\\bpharmacovigilance\\b"
         - "(?i)\\b\\bPV\\b\\b"
+
+    identified_risks:
+      title_ru: Известные / потенциальные риски
+      # 2026-05-06: добавлено по результатам corpus-discovery — 41 секция
+      require_patterns:
+        - "(?i)\\b(важн\\w*|известн\\w*|потенциальн\\w*|идентифицированн\\w*|expected|known|important|potential)\\s+(потенциальн\\w*\\s+)?риск\\w*\\b"
+        - "(?i)\\bidentified\\s+risks?\\b"
+        - "(?i)\\b(important|expected)\\s+risks?\\b"
+        - "(?i)\\bперечен\\w*\\s+риск\\w*\\b"
+      patterns:
+        - "(?i)\\bважн\\w*\\s+(потенциальн\\w*\\s+)?риск\\w*\\b"
+        - "(?i)\\bпотенциальн\\w*\\s+риск\\w*\\b"
+        - "(?i)\\bизвестн\\w*\\s+риск\\w*\\b"
+        - "(?i)\\bidentified\\s+risks?\\b"
+        - "(?i)\\bимеющ\\w*\\s+(значени\\w*|важн\\w*)\\s+риск\\w*\\b"
+      not_keywords:
+        - "(?i)\\b(польза\\s*/\\s*риск|risk\\s*[-/]\\s*benefit|соотношени\\w*\\s+риск)\\b"
 
 # -------------------------------
 # STATISTICS
@@ -1152,6 +1231,40 @@ admin:
         - "(?i)\\bamendment\\w*\\b"
         - "(?i)\\bversion\\s+history\\b"
         - "(?i)\\bprior\\s+protocol\\s+amendments?\\b"
+
+    investigator_responsibilities:
+      title_ru: Обязанности исследователя
+      # 2026-05-06: добавлено по результатам corpus-discovery — 78 секций
+      require_patterns:
+        - "(?i)\\bобязанност\\w*\\s+(главн\\w*\\s+)?исследоват\\w*\\b"
+        - "(?i)\\b(roles?\\s+and\\s+)?responsibilities?\\s+of\\s+(the\\s+)?investigators?\\b"
+        - "(?i)\\bобязанност\\w*\\s+спонсор\\w*\\b"
+        - "(?i)\\bsponsor\\s+responsibilities?\\b"
+      patterns:
+        - "(?i)\\bобязанност\\w*\\s+исследоват\\w*\\b"
+        - "(?i)\\binvestigator\\s+responsibilities?\\b"
+        - "(?i)\\bsponsor\\s+responsibilities?\\b"
+        - "(?i)\\bобязанност\\w*\\s+спонсор\\w*\\b"
+      not_keywords:
+        - "(?i)\\bотчётност\\w*\\b"
+
+    protocol_approval:
+      title_ru: Страница одобрения протокола / signatures
+      # 2026-05-06: добавлено по результатам corpus-discovery — 73 секции
+      require_patterns:
+        - "(?i)\\b(страниц\\w*\\s+)?одобрен\\w*\\s+протокол\\w*\\b"
+        - "(?i)\\b(protocol\\s+)?approval\\s+(page|signature)?\\b"
+        - "(?i)\\bподпис\\w*\\s+(под\\s+)?протокол\\w*\\b"
+        - "(?i)\\bsignatures?\\s+page\\b"
+        - "(?i)\\bпринцип\\w*\\s+согласи\\w*\\s+(спонсор\\w*|исследоват\\w*)\\b"
+      patterns:
+        - "(?i)\\bодобрен\\w*\\s+протокол\\w*\\b"
+        - "(?i)\\bстраниц\\w*\\s+одобрен\\w*\\b"
+        - "(?i)\\bподпис\\w*\\s+(под\\s+)?протокол\\w*\\b"
+        - "(?i)\\bsignatures?\\s+page\\b"
+        - "(?i)\\bprotocol\\s+approval\\b"
+      not_keywords:
+        - "(?i)\\bэтическ\\w*\\s+комитет\\w*\\b|\\bethics?\\s+committee\\b"
 
 # -------------------------------
 # APPENDIX
