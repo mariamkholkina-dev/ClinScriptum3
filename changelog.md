@@ -22,6 +22,17 @@
 
 `apps/workers/src/handlers/__tests__/run-evaluation.test.ts` — 2 регрессионных теста: full match (f1=1) и partial overlap (f1<1).
 
+### Fix: heading-detector skip footnote rows + SoA timepoint cells (Track C)
+
+`packages/doc-parser/src/heading-detector.ts` — добавлены два non-heading фильтра, которые срабатывают **только при отсутствии explicit heading style** (если Word явно указал style="heading 1" — доверяем разметке):
+
+1. **TIMEPOINT_LINE_RE** — `^(день|day|неделя|week|визит|visit|месяц|month)\s+\d+(\s*\(...\))?\s*$`. Ловит ячейки SoA-таблиц вроде «День 5», «Visit 3», «Неделя 2 (визит 4)». Top tokens в unclassified из corpus discovery: `день` 608, `неделя` 260, `визиты` 149 — это именно SoA cells.
+2. **FOOTNOTE_ROW_RE** — `^\d+\s*[-–—]\s+[a-zа-яё]` (digit + dash + lowercase first letter). Ловит footnote rows из таблиц/комментариев типа «3 – рандомизация будет осуществлена...», «6 - первый забор крови...». Lowercase guard защищает legitimate headings вроде «3 - Rationale».
+
+`packages/doc-parser/src/__tests__/heading-detector.test.ts` — 11 новых тестов: timepoint kinds (день/day/week/visit/month), parenthetical tail, footnote rows (en-dash / hyphen / em-dash), respect explicit heading style, KEEPS title case after dash.
+
+Триггер: 50.9% секций корпуса парсились как empty (без content) — гипотеза была в footnote/SoA-row inflation. Этот фильтр их режет в parser.
+
 ## 2026-05-05
 
 ### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой
