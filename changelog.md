@@ -12,6 +12,16 @@
 
 `apps/api/src/services/__tests__/evaluation.service.test.ts` — добавлен mock для `../../lib/queue.js` и 4 теста на корректный jobName per EvaluationRunType. См. memory `project_evaluation_run_no_enqueue.md`.
 
+### Fix: parsing evaluation больше не возвращает f1=0 (Task #53)
+
+`apps/workers/src/handlers/run-evaluation.ts` — добавлен `case "parsing"` в `loadActualResults`. До фикса parsing stage всегда возвращал пустой объект `{}` (default branch switch'а), поэтому `extractKeys(actual)` был пустой Set → recall=0, precision=1, f1=0. Это блокировало мониторинг качества парсера на golden samples.
+
+Фикс возвращает sections в формате expected_results: `{ sections: [{ level, order, title, hasContent }, ...] }`. Поля выбраны идентично формату эталона, чтобы `JSON.stringify(item)` в `extractKeys` давал тот же ключ для совпадающих секций.
+
+`isFalseHeading: false` фильтр исключает помеченные экспертом ложные заголовки — они не часть структуры документа и не должны быть ни в expected, ни в actual (это согласуется с `feedback_false_heading_excluded_from_hierarchy.md`).
+
+`apps/workers/src/handlers/__tests__/run-evaluation.test.ts` — 2 регрессионных теста: full match (f1=1) и partial overlap (f1<1).
+
 ## 2026-05-05
 
 ### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой
