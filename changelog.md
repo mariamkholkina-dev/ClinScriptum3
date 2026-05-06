@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-05-07
+
+### Feat: annotation workflow schema + backend (Sprint 7b Stage 1)
+
+`packages/db/prisma/schema.prisma` + migration `20260507000000_add_annotation_workflow` — две новые модели + enum:
+- **GoldenAnnotation** — per-section annotations от annotator'а. Поля: `goldenSampleId`, `stage`, `sectionKey`, `annotatorId`, `proposedZone?`, `isQuestion`, `questionText?`, `status` (open/answered/finalized). Unique по (`goldenSampleId`, `stage`, `sectionKey`, `annotatorId`).
+- **GoldenAnnotationDecision** — 1:1 с annotation. Запись решения эксперта на question: `finalZone`, `decidedById`, `rationale?`.
+- **AnnotationStatus enum**: `open` | `answered` | `finalized`.
+
+`apps/api/src/services/annotation.service.ts` (новый) — методы: `submitAnnotation()`, `listAnnotations()`, `listExpertQueue(tenantId)`, `resolveQuestion()`, `finalizeAnnotations(sampleId, stage, actorId)`, `getAnnotation(id)`, `getProgress(sampleId, stage)`.
+
+`apps/api/src/routers/annotation.ts` (новый) — tRPC endpoints: `submit`, `list`, `get`, `progress`, `finalizeForReview`, `expertQueue`, `resolveQuestion`. Zod validation на per-input level.
+
+`apps/api/src/services/__tests__/annotation.service.test.ts` — 13 unit tests.
+
+Это **Stage 1 из 4** Sprint 7b — backend готов, UI (Stage 2 annotator + Stage 3 expert) идут отдельными PR. На текущем этапе annotator продолжает работать через временный workflow (см. `docs/annotator-guide.md` раздел 4).
+
 ## 2026-05-06
 
 ### Fix: classification — сужен require-gate для `ip.preclinical_clinical_data` (B1)
