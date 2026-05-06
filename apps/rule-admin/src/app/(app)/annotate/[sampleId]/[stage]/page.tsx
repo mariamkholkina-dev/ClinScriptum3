@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
+import type { LucideIcon } from "lucide-react";
 import {
   Loader2,
   AlertCircle,
@@ -53,7 +54,7 @@ const CONFIDENCE_COLOR = (c: number | null) =>
     : c >= 0.3 ? "text-amber-700"
     : "text-red-700";
 
-const STATUS_BADGE: Record<AnnotationStatusUI, { bg: string; text: string; label: string; icon: React.ComponentType<{ size?: number }> }> = {
+const STATUS_BADGE: Record<AnnotationStatusUI, { bg: string; text: string; label: string; icon: LucideIcon }> = {
   pending: { bg: "bg-gray-100", text: "text-gray-600", label: "Ожидает", icon: CircleSlash },
   accepted: { bg: "bg-green-50", text: "text-green-700", label: "Принято", icon: CheckCircle2 },
   changed: { bg: "bg-blue-50", text: "text-blue-700", label: "Изменено", icon: Check },
@@ -307,7 +308,12 @@ export default function AnnotatePage() {
     );
   }
 
-  const taxonomyOptions = (taxonomyQuery.data ?? []) as Array<{ key: string; titleRu: string }>;
+  const taxonomyOptions = useMemo(() => {
+    return (taxonomyQuery.data ?? []).map((r) => {
+      const cfg = (r.config ?? {}) as { key?: string; titleRu?: string };
+      return { key: cfg.key ?? r.pattern, titleRu: cfg.titleRu ?? "" };
+    });
+  }, [taxonomyQuery.data]);
   const progress = progressQuery.data ?? { open: 0, answered: 0, finalized: 0, openQuestions: 0 };
   const totalAnnotated = (progress.open ?? 0) + (progress.answered ?? 0) + (progress.finalized ?? 0);
 

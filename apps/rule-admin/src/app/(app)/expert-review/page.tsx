@@ -100,7 +100,10 @@ export default function ExpertReviewPage() {
     );
   }
 
-  const taxonomyOptions = (taxonomyQuery.data ?? []) as Array<{ key: string; titleRu: string }>;
+  const taxonomyOptions = (taxonomyQuery.data ?? []).map((r) => {
+    const cfg = (r.config ?? {}) as { key?: string; titleRu?: string };
+    return { key: cfg.key ?? r.pattern, titleRu: cfg.titleRu ?? "" };
+  });
 
   return (
     <div className="flex h-screen flex-col bg-gray-50">
