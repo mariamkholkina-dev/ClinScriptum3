@@ -12,6 +12,14 @@
 
 `apps/api/src/services/__tests__/evaluation.service.test.ts` — добавлен mock для `../../lib/queue.js` и 4 теста на корректный jobName per EvaluationRunType. См. memory `project_evaluation_run_no_enqueue.md`.
 
+### Fix: расширены require_patterns `procedures.lifestyle` (Track A из corpus discovery)
+
+`taxonomy.yaml` — добавлены два require_pattern в зону `procedures.lifestyle`:
+- `(?i)\\bограничен\\w*\\s+(по\\s+)?(питан\\w*|пищ\\w*|еде|диет\\w*|алкогол\\w*|курени\\w*|активност\\w*|образ\\w*\\s+жизн\\w*)\\b` — ловит «ограничения по питанию», «ограничения по активности» (порядок где predicate ставится ПЕРЕД objects)
+- `(?i)\\bрежим\\w*\\s+(питан\\w*|жизн\\w*|дн\\w*)\\b` — «режим питания», «режим жизни», «режим дня»
+
+Триггер: corpus discovery на 156 protocols показал 46 секций «ограничения по питанию и активности (добровольца|пациента)» в unclassified, потому что старые patterns требовали порядок objects ПЕРЕД «ограничен».
+
 ## 2026-05-05
 
 ### Fix: TOC-skip v2 — per-heading правило с многоступенчатой защитой
