@@ -2,6 +2,35 @@
 
 ## 2026-05-07
 
+### Feat: annotation workflow UI — annotator + expert pages (Sprint 7b Stages 2-4)
+
+`apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/page.tsx` (новый) — annotator page:
+- Слева список секций со статусом разметки (Ожидает / Принято / Изменено / Вопрос / Решено), фильтр All / Pending / Questions
+- Справа текущая секция: title + level + order + predicted zone + confidence + already-annotated info
+- Три действия: ✓ Принять (Y) / ✗ Изменить / ? Вопрос эксперту (Q)
+- Hotkeys: Y, Q, ↑/k (prev), ↓/j (next), ? (help)
+- Auto-advance на следующую секцию после submit
+- Кнопка «Отправить на проверку» вверху — finalize annotations → `in_review`
+
+`apps/rule-admin/src/app/(app)/expert-review/page.tsx` (новый) — expert queue:
+- Очередь открытых вопросов через все samples в tenant
+- Filter по stage
+- Per-question: sample name, section, question text, annotator's tentative zone
+- Decision form: zone select + опциональный rationale → resolve → moves to next
+
+`apps/rule-admin/src/app/(app)/layout.tsx` — добавлен пункт меню «Очередь эксперта» (`/expert-review`).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — кнопка «Разметить →» в каждом stage-табе → переход в /annotate/{sampleId}/{stage}.
+
+`docs/annotator-guide.md` (раздел 4 переписан) — описан реальный workflow с тремя кнопками и hotkeys, удалён «временный workflow». Также docx обновлён.
+
+Workflow end-to-end:
+1. Annotator открывает sample → нажимает «Разметить» в этапе → размечает каждую секцию (Y/N/Q)
+2. Открытые вопросы попадают в /expert-review queue эксперта
+3. Annotator нажимает «Отправить на проверку» → annotations пушатся в expected_results, stage → in_review
+4. Expert обрабатывает вопросы → resolve с rationale → annotation status → answered
+5. При следующем finalize answered annotations попадают в expected_results
+
 ### Feat: annotation workflow schema + backend (Sprint 7b Stage 1)
 
 `packages/db/prisma/schema.prisma` + migration `20260507000000_add_annotation_workflow` — две новые модели + enum:

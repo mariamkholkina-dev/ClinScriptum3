@@ -34,6 +34,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Панель управления", href: "/dashboard", icon: <LayoutDashboard size={20} /> },
   { label: "Эталонный набор", href: "/golden-dataset", icon: <Database size={20} /> },
+  { label: "Очередь эксперта", href: "/expert-review", icon: <ShieldCheck size={20} /> },
   { label: "Оценка качества", href: "/evaluation", icon: <FlaskConical size={20} /> },
   { label: "Сравнение LLM", href: "/llm-comparison", icon: <GitCompare size={20} /> },
   { label: "Расхождения", href: "/disagreements", icon: <AlertTriangle size={20} /> },
