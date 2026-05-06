@@ -167,4 +167,78 @@ describe("detectHeading", () => {
       expect(result).toBeNull();
     });
   });
+
+  describe("non-heading filters (footnote rows, SoA timepoints) — 2026-05-06", () => {
+    describe("timepoint lines (День N / Day N / Week N / Visit N)", () => {
+      it("returns null for «День 5» (SoA day cell)", () => {
+        expect(detectHeading("День 5", 0)).toBeNull();
+      });
+
+      it("returns null for «Day 7»", () => {
+        expect(detectHeading("Day 7", 0)).toBeNull();
+      });
+
+      it("returns null for «Неделя 2»", () => {
+        expect(detectHeading("Неделя 2", 0)).toBeNull();
+      });
+
+      it("returns null for «Визит 1»", () => {
+        expect(detectHeading("Визит 1", 0)).toBeNull();
+      });
+
+      it("returns null for «Visit 4»", () => {
+        expect(detectHeading("Visit 4", 0)).toBeNull();
+      });
+
+      it("returns null for «Месяц 3»", () => {
+        expect(detectHeading("Месяц 3", 0)).toBeNull();
+      });
+
+      it("returns null for «День 5 (визит 4)» (with parenthetical)", () => {
+        expect(detectHeading("День 5 (визит 4)", 0)).toBeNull();
+      });
+
+      it("BUT respects explicit heading style — «День 5» with heading 1 style is heading", () => {
+        // Если эксперт явно поставил Heading style — доверяем разметке Word
+        const result = detectHeading("День 5", 0, "heading 1");
+        expect(result).not.toBeNull();
+        expect(result!.level).toBe(1);
+      });
+
+      it("does NOT match «День разработки протокола» (text after digit)", () => {
+        // Только NUMBERED-style timepoints — не general «день» в title
+        const result = detectHeading("День разработки протокола", 0, "heading 2");
+        expect(result).not.toBeNull();
+      });
+    });
+
+    describe("footnote rows (digit + dash + lowercase)", () => {
+      it("returns null for «3 – рандомизация будет осуществлена в день 0»", () => {
+        expect(detectHeading("3 – рандомизация будет осуществлена в день 0", 0)).toBeNull();
+      });
+
+      it("returns null for «6 - первый забор крови» (ASCII dash)", () => {
+        expect(detectHeading("6 - первый забор крови", 0)).toBeNull();
+      });
+
+      it("returns null for «8 — не менее 12 часов» (em-dash)", () => {
+        expect(detectHeading("8 — не менее 12 часов", 0)).toBeNull();
+      });
+
+      it("KEEPS «3 - Rationale» (capital first letter — caught by numbered detection as real heading)", () => {
+        // Numbered detection matches «3 » (digit + space). Footnote filter
+        // requires lowercase first letter after dash; capital R indicates
+        // title case → likely a real numbered heading, not a footnote row.
+        const result = detectHeading("3 - Rationale", 0);
+        expect(result).not.toBeNull();
+        expect(result!.method).toBe("numbered");
+      });
+
+      it("KEEPS «3.1 рандомизация» (numbered с точкой, не dash)", () => {
+        const result = detectHeading("3.1 рандомизация", 0, undefined, undefined, true);
+        expect(result).not.toBeNull();
+        expect(result!.method).toBe("numbered");
+      });
+    });
+  });
 });
