@@ -1,22 +1,65 @@
 import { prisma } from "@clinscriptum/db";
-import type { AnnotationStatus, GoldenStageStatus } from "@prisma/client";
+import type { AnnotationStatus, GoldenStageStatus, Prisma } from "@prisma/client";
 import { DomainError } from "./errors.js";
 import { logger } from "../lib/logger.js";
 
 /**
- * Golden-dataset annotation service (Sprint 7b).
+ * Golden-dataset annotation service (Sprint 7b — H+I auto-save mode).
  *
  * Workflow:
  *  1. Annotator opens a sample → submitAnnotation(sectionKey, proposedZone OR question)
- *  2. If !isQuestion → annotation.status = 'open' → finalizeOpenAnnotations() can
- *     promote it into the stage's expected_results (auto-finalize on submit).
- *  3. If isQuestion → annotation.status = 'open', visible in expert queue.
- *  4. Expert opens queue → resolveQuestion(annotationId, finalZone, rationale)
- *     creates GoldenAnnotationDecision and marks annotation 'answered'.
- *  5. finalizeAnnotations(sample, stage) merges all 'open' (non-question) and
- *     'answered' annotations into the stage's expected_results JSON, marks them
- *     'finalized', and bumps the stage status to in_review (if was draft).
+ *  2. If !isQuestion → annotation 'open' AND expected_results.sections instantly
+ *     updated with the new zone (auto-save).
+ *  3. If isQuestion → annotation 'open', visible in expert queue. The previous
+ *     entry for this section in expected_results.sections (if any) is removed —
+ *     pending question shouldn't influence eval until expert resolves.
+ *  4. Expert resolveQuestion → decision created, annotation 'answered',
+ *     expected_results.sections updated with finalZone.
+ *  5. Stage status changes (draft → in_review → approved) are managed by the
+ *     existing UI on /golden-dataset/[id] — no separate "finalize" step.
  */
+
+// Helper: одна запись секции в expected_results.sections.
+type ExpectedSectionEntry = { title: string; standardSection: string };
+
+/** Мутирующий helper. Принимает tx, модифицирует expected_results.sections atomic. */
+async function upsertSectionInExpected(
+  tx: Prisma.TransactionClient,
+  goldenSampleId: string,
+  stage: string,
+  sectionKey: string,
+  standardSection: string | null, // null => удалить запись
+) {
+  const current = await tx.goldenSampleStageStatus.findUnique({
+    where: { goldenSampleId_stage: { goldenSampleId, stage } },
+  });
+  const expected = (current?.expectedResults ?? {}) as { sections?: ExpectedSectionEntry[] };
+  const sections: ExpectedSectionEntry[] = Array.isArray(expected.sections)
+    ? [...expected.sections]
+    : [];
+
+  const idx = sections.findIndex((s) => s.title === sectionKey);
+  if (standardSection === null) {
+    if (idx >= 0) sections.splice(idx, 1);
+  } else {
+    if (idx >= 0) sections[idx] = { title: sectionKey, standardSection };
+    else sections.push({ title: sectionKey, standardSection });
+  }
+  expected.sections = sections;
+
+  await tx.goldenSampleStageStatus.upsert({
+    where: { goldenSampleId_stage: { goldenSampleId, stage } },
+    create: {
+      goldenSampleId,
+      stage,
+      status: "draft" as GoldenStageStatus,
+      expectedResults: expected as object,
+    },
+    update: {
+      expectedResults: expected as object,
+    },
+  });
+}
 
 interface SubmitInput {
   goldenSampleId: string;
@@ -61,33 +104,48 @@ export const annotationService = {
       throw new DomainError("NOT_FOUND", "Golden sample not found");
     }
 
-    const annotation = await prisma.goldenAnnotation.upsert({
-      where: {
-        goldenSampleId_stage_sectionKey_annotatorId: {
+    const annotation = await prisma.$transaction(async (tx) => {
+      const a = await tx.goldenAnnotation.upsert({
+        where: {
+          goldenSampleId_stage_sectionKey_annotatorId: {
+            goldenSampleId: input.goldenSampleId,
+            stage: input.stage,
+            sectionKey: input.sectionKey,
+            annotatorId: input.annotatorId,
+          },
+        },
+        create: {
           goldenSampleId: input.goldenSampleId,
           stage: input.stage,
           sectionKey: input.sectionKey,
           annotatorId: input.annotatorId,
+          proposedZone: input.proposedZone,
+          isQuestion: input.isQuestion,
+          questionText: input.questionText,
+          status: input.isQuestion ? "open" : "finalized",
         },
-      },
-      create: {
-        goldenSampleId: input.goldenSampleId,
-        stage: input.stage,
-        sectionKey: input.sectionKey,
-        annotatorId: input.annotatorId,
-        proposedZone: input.proposedZone,
-        isQuestion: input.isQuestion,
-        questionText: input.questionText,
-        status: "open",
-      },
-      update: {
-        proposedZone: input.proposedZone,
-        isQuestion: input.isQuestion,
-        questionText: input.questionText,
-        // Re-submission resets status: previously 'finalized' → 'open' so the
-        // change can be re-finalized; previously 'answered' → 'open' too.
-        status: "open",
-      },
+        update: {
+          proposedZone: input.proposedZone,
+          isQuestion: input.isQuestion,
+          questionText: input.questionText,
+          // Auto-save mode: non-question annotations land in expected_results
+          // immediately, so their workflow status is 'finalized' from the start.
+          // Questions stay 'open' until expert resolves.
+          status: input.isQuestion ? "open" : "finalized",
+        },
+      });
+
+      // Auto-save into expected_results.sections — H+I mode.
+      // Question (no zone yet) → удалить запись; zone → upsert.
+      const targetZone = input.isQuestion ? null : (input.proposedZone ?? null);
+      await upsertSectionInExpected(
+        tx,
+        input.goldenSampleId,
+        input.stage,
+        input.sectionKey,
+        targetZone,
+      );
+      return a;
     });
 
     logger.info("annotation_submitted", {
@@ -191,10 +249,19 @@ export const annotationService = {
           rationale: input.rationale,
         },
       });
+      // Auto-save mode: expert decision instantly applied to expected_results,
+      // annotation status → 'finalized' (it's now in the truth set).
       await tx.goldenAnnotation.update({
         where: { id: input.annotationId },
-        data: { status: "answered" },
+        data: { status: "finalized" },
       });
+      await upsertSectionInExpected(
+        tx,
+        annotation.goldenSampleId,
+        annotation.stage,
+        annotation.sectionKey,
+        input.finalZone,
+      );
       return d;
     });
 
@@ -218,48 +285,25 @@ export const annotationService = {
     stage: string,
     actorId: string,
   ) {
+    // H+I auto-save mode: данные уже в expected_results (через submit/resolve).
+    // Этот метод теперь только меняет status stage → in_review для workflow.
+    // Считаем количество pending questions для UI (показать сколько ещё не
+    // решено экспертом).
     const annotations = await prisma.goldenAnnotation.findMany({
-      where: {
-        goldenSampleId,
-        stage,
-        status: { in: ["open", "answered"] },
-      },
+      where: { goldenSampleId, stage },
       include: { decision: true },
     });
-
-    // Skip questions that have no decision yet — they remain in expert queue.
-    const finalizableNow = annotations.filter(
-      (a) => !a.isQuestion || a.decision !== null,
-    );
+    const finalizedCount = annotations.filter((a) => a.status === "finalized").length;
     const pendingQuestions = annotations.filter(
       (a) => a.isQuestion && a.decision === null,
     );
 
-    // Build sections array for expected_results (classification stage shape).
-    const sectionsByKey = new Map<string, string>();
-    for (const a of finalizableNow) {
-      const finalZone = a.decision?.finalZone ?? a.proposedZone;
-      if (finalZone) sectionsByKey.set(a.sectionKey, finalZone);
-    }
-
-    // Read current expected_results to preserve unannotated entries.
     const currentStatus = await prisma.goldenSampleStageStatus.findUnique({
       where: { goldenSampleId_stage: { goldenSampleId, stage } },
     });
-    const currentExpected = (currentStatus?.expectedResults ?? {}) as Record<
-      string,
-      unknown
-    >;
-
-    // For classification: expected_results.sections is array of {title, standardSection}
-    // For other stages we just merge sections-by-key naively.
-    const sectionsArray = Array.from(sectionsByKey.entries()).map(
-      ([sectionKey, standardSection]) => ({
-        title: sectionKey,
-        standardSection,
-      }),
-    );
-    const newExpected = { ...currentExpected, sections: sectionsArray };
+    // Сохраняем текущий expected_results как есть — он уже актуальный благодаря
+    // auto-save в submitAnnotation / resolveQuestion.
+    const newExpected = (currentStatus?.expectedResults ?? {}) as object;
 
     const result = await prisma.$transaction(async (tx) => {
       await tx.goldenSampleStageStatus.upsert({
@@ -273,21 +317,13 @@ export const annotationService = {
           reviewedAt: new Date(),
         },
         update: {
-          expectedResults: newExpected as object,
           status: "in_review" as GoldenStageStatus,
           reviewedById: actorId,
           reviewedAt: new Date(),
         },
       });
-      const finalizedIds = finalizableNow.map((a) => a.id);
-      if (finalizedIds.length > 0) {
-        await tx.goldenAnnotation.updateMany({
-          where: { id: { in: finalizedIds } },
-          data: { status: "finalized" },
-        });
-      }
       return {
-        finalizedCount: finalizedIds.length,
+        finalizedCount,
         pendingQuestionsCount: pendingQuestions.length,
       };
     });

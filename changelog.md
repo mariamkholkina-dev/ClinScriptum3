@@ -2,6 +2,22 @@
 
 ## 2026-05-07
 
+### Feat: annotation auto-save (H+I) — expected_results обновляется per-section
+
+`apps/api/src/services/annotation.service.ts`:
+- `submitAnnotation` теперь auto-обновляет `golden_sample_stage_statuses.expected_results.sections`. Non-question annotation → status=`finalized` сразу. Question → удаляет section из expected (если была).
+- `resolveQuestion` (expert decision) — auto-обновляет expected_results с finalZone, annotation status=`finalized`. Раньше требовало повторного finalize annotator'ом.
+- `finalizeAnnotations` упрощён: больше не дублирует данные в expected (они уже там через auto-save), только меняет stage status `draft → in_review`.
+- Helper `upsertSectionInExpected(tx, sampleId, stage, sectionKey, zone | null)` — atomic update в транзакции с annotation.
+
+`apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/page.tsx`:
+- Кнопка «Отправить на проверку» переименована в **«Готово, на проверку»** — теперь только меняет stage status. Все annotation данные уже в expected (auto-save).
+- В header добавлен индикатор **«Авто-сохранение ✓»** — annotator видит что workflow auto-save включен.
+
+`apps/api/src/services/__tests__/annotation.service.test.ts` — обновлены тесты на новый contract: 14 tests (positive auto-save, question removes from expected, expert resolve also auto-saves, status transitions).
+
+
+
 ### UX: иерархический выбор зоны + skip false-headings + init bug в /annotate
 
 `apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/ZoneSelector.tsx` (новый) — combobox с tree view: zones → subzones, поиск по pattern/key/titleRu, keyboard navigation (↑/↓/Enter), click-outside close. Заменяет flat `<select>` на годной выбор зоны через несколько кликов.

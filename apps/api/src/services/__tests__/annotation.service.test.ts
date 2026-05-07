@@ -1,5 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Auto-save mode: транзакции включают вложенные upsert + read для expected_results.
+// Все tx.* операции мокаем чтобы они возвращали разумные значения.
+const txMock = {
+  goldenAnnotation: {
+    upsert: vi.fn().mockResolvedValue({ id: "a-tx", status: "finalized" }),
+    update: vi.fn().mockResolvedValue({}),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
+  goldenAnnotationDecision: {
+    upsert: vi.fn().mockResolvedValue({ id: "dec-1" }),
+  },
+  goldenSampleStageStatus: {
+    findUnique: vi.fn().mockResolvedValue({ expectedResults: {} }),
+    upsert: vi.fn().mockResolvedValue({}),
+  },
+};
+
 vi.mock("@clinscriptum/db", () => ({
   prisma: {
     goldenSample: { findUnique: vi.fn() },
@@ -20,18 +37,7 @@ vi.mock("@clinscriptum/db", () => ({
     },
     $transaction: vi.fn((fn: (tx: unknown) => unknown) =>
       typeof fn === "function"
-        ? fn({
-            goldenAnnotation: {
-              update: vi.fn().mockResolvedValue({}),
-              updateMany: vi.fn().mockResolvedValue({ count: 0 }),
-            },
-            goldenAnnotationDecision: {
-              upsert: vi.fn().mockResolvedValue({ id: "dec-1" }),
-            },
-            goldenSampleStageStatus: {
-              upsert: vi.fn().mockResolvedValue({}),
-            },
-          })
+        ? fn(txMock)
         : Promise.all(fn as unknown as Promise<unknown>[]),
     ),
   },
@@ -65,10 +71,16 @@ describe("annotationService.submitAnnotation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSample.findUnique.mockResolvedValue({ id: SAMPLE_ID, tenantId: "t1" });
+    txMock.goldenSampleStageStatus.findUnique.mockResolvedValue({ expectedResults: {} });
+    txMock.goldenAnnotation.upsert.mockResolvedValue({ id: "a-tx", status: "finalized" });
   });
 
-  it("creates annotation when annotator selects a zone", async () => {
-    mockAnnotation.upsert.mockResolvedValue({ id: "a1", proposedZone: "ethics.informed_consent" });
+  it("creates annotation with status=finalized when annotator selects a zone (auto-save)", async () => {
+    txMock.goldenAnnotation.upsert.mockResolvedValue({
+      id: "a1",
+      proposedZone: "ethics.informed_consent",
+      status: "finalized",
+    });
 
     const result = await annotationService.submitAnnotation({
       goldenSampleId: SAMPLE_ID,
@@ -80,14 +92,20 @@ describe("annotationService.submitAnnotation", () => {
     });
 
     expect(result.id).toBe("a1");
-    const args = mockAnnotation.upsert.mock.calls[0][0];
+    const args = txMock.goldenAnnotation.upsert.mock.calls[0][0];
     expect(args.create.proposedZone).toBe("ethics.informed_consent");
     expect(args.create.isQuestion).toBe(false);
-    expect(args.create.status).toBe("open");
+    expect(args.create.status).toBe("finalized");
+    // Auto-save: expected_results тоже обновляется
+    expect(txMock.goldenSampleStageStatus.upsert).toHaveBeenCalled();
   });
 
-  it("creates annotation as question with text", async () => {
-    mockAnnotation.upsert.mockResolvedValue({ id: "a2", isQuestion: true });
+  it("creates annotation as question with status=open", async () => {
+    txMock.goldenAnnotation.upsert.mockResolvedValue({
+      id: "a2",
+      isQuestion: true,
+      status: "open",
+    });
 
     await annotationService.submitAnnotation({
       goldenSampleId: SAMPLE_ID,
@@ -98,8 +116,9 @@ describe("annotationService.submitAnnotation", () => {
       questionText: "Не уверена — это safety или ethics?",
     });
 
-    const args = mockAnnotation.upsert.mock.calls[0][0];
+    const args = txMock.goldenAnnotation.upsert.mock.calls[0][0];
     expect(args.create.isQuestion).toBe(true);
+    expect(args.create.status).toBe("open");
     expect(args.create.questionText).toContain("Не уверена");
   });
 
@@ -141,8 +160,8 @@ describe("annotationService.submitAnnotation", () => {
     ).rejects.toThrow(/not found/);
   });
 
-  it("re-submission resets status to open", async () => {
-    mockAnnotation.upsert.mockResolvedValue({ id: "a1", status: "open" });
+  it("re-submission as zone keeps status=finalized (auto-save)", async () => {
+    txMock.goldenAnnotation.upsert.mockResolvedValue({ id: "a1", status: "finalized" });
     await annotationService.submitAnnotation({
       goldenSampleId: SAMPLE_ID,
       stage: "classification",
@@ -151,7 +170,28 @@ describe("annotationService.submitAnnotation", () => {
       proposedZone: "y",
       isQuestion: false,
     });
-    expect(mockAnnotation.upsert.mock.calls[0][0].update.status).toBe("open");
+    expect(txMock.goldenAnnotation.upsert.mock.calls[0][0].update.status).toBe("finalized");
+  });
+
+  it("re-submit as question removes section from expected_results", async () => {
+    // Pre-existing expected with this sectionKey
+    txMock.goldenSampleStageStatus.findUnique.mockResolvedValue({
+      expectedResults: { sections: [{ title: "X", standardSection: "old" }] },
+    });
+    txMock.goldenAnnotation.upsert.mockResolvedValue({ id: "a1", status: "open" });
+
+    await annotationService.submitAnnotation({
+      goldenSampleId: SAMPLE_ID,
+      stage: "classification",
+      sectionKey: "X",
+      annotatorId: ANNOTATOR_ID,
+      isQuestion: true,
+      questionText: "Передумала — задаю вопрос",
+    });
+
+    const upsertArgs = txMock.goldenSampleStageStatus.upsert.mock.calls[0][0];
+    const updatedExpected = upsertArgs.update.expectedResults as { sections: unknown[] };
+    expect(updatedExpected.sections).toEqual([]); // section removed
   });
 });
 
@@ -160,12 +200,16 @@ describe("annotationService.resolveQuestion", () => {
     vi.clearAllMocks();
   });
 
-  it("creates decision and marks annotation as answered", async () => {
+  it("creates decision, marks annotation finalized, and updates expected_results (auto-save)", async () => {
     mockAnnotation.findUnique.mockResolvedValue({
       id: "a-q",
       isQuestion: true,
       status: "open",
+      goldenSampleId: SAMPLE_ID,
+      stage: "classification",
+      sectionKey: "Сообщения о AE",
     });
+    txMock.goldenSampleStageStatus.findUnique.mockResolvedValue({ expectedResults: {} });
 
     const result = await annotationService.resolveQuestion({
       annotationId: "a-q",
@@ -175,6 +219,12 @@ describe("annotationService.resolveQuestion", () => {
     });
 
     expect(result.id).toBe("dec-1");
+    // annotation должен переключиться на finalized
+    expect(txMock.goldenAnnotation.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "finalized" }) }),
+    );
+    // expected_results обновлён с новой секцией
+    expect(txMock.goldenSampleStageStatus.upsert).toHaveBeenCalled();
   });
 
   it("rejects when annotation is not a question", async () => {
