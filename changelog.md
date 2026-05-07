@@ -2,6 +2,23 @@
 
 ## 2026-05-07
 
+### UX: панель «Исходник» на /annotate + перенос «Разметить» в classification toolbar
+
+`apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/page.tsx`:
+- Добавлена кнопка-тогл **«Исходник»** (`Columns2` иконка) в шапке annotate page рядом с «Горячие клавиши».
+- При включении справа появляется третья колонка `SourcePanel` (ширина 28rem) — список всех секций сэмпла с заголовком + `contentBlocks` (HTML через `dangerouslySetInnerHTML` или текст). Активный раздел подсвечен `ring-2 ring-brand-300`.
+- **Автоскролл**: `useEffect` на `focusedSectionId` ищет `[data-section-id="..."]` и плавно скроллит контейнер так, чтобы заголовок раздела оказался у верха. Срабатывает на любую смену активной секции (клик в левом списке, стрелки `↑/↓`, хоткеи).
+- В `Section` interface добавлен опциональный `contentBlocks: ContentBlock[]` (поле уже возвращается `getVersion`, не нужны изменения backend).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx`:
+- Удалена кнопка «Разметить →» из общего блока «Статус этапа». Она показывалась для всех этапов, но workflow аннотации существует только для классификации — место было неподходящее.
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/classification-viewer/ClassificationTreeViewer.tsx`:
+- Кнопка «Разметить →» теперь живёт в `ClassificationToolbar` (первая строка операций) рядом со «Справочник» — то есть среди действий, относящихся именно к этапу классификации.
+- В `ClassificationTreeViewer` добавлен проброс `annotateHref={goldenSampleId ? \`/annotate/${goldenSampleId}/${stageKey}\` : undefined}` — кнопка рендерится только при наличии `goldenSampleId` (viewer переиспользуется без golden-sample контекста).
+
+
+
 ### Feat: LLM-варианты прогнозов на disagreement в annotation page
 
 `apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/page.tsx` — заменён блок «Предсказание алгоритма»:
