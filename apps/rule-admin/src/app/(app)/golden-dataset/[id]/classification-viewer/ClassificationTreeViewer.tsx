@@ -7,6 +7,7 @@ import {
   useRef,
   useEffect,
 } from "react";
+import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import {
   Loader2,
@@ -637,6 +638,7 @@ function ClassificationToolbar({
   onToggleSource,
   onShowHelp,
   bulkPending,
+  annotateHref,
 }: {
   sortKey: SortKey;
   onSortChange: (k: SortKey) => void;
@@ -659,6 +661,7 @@ function ClassificationToolbar({
   onToggleSource: () => void;
   onShowHelp: () => void;
   bulkPending: boolean;
+  annotateHref?: string;
 }) {
   return (
     <div className="space-y-3">
@@ -718,6 +721,16 @@ function ClassificationToolbar({
         >
           <HelpCircle size={12} /> Справочник
         </button>
+
+        {/* Annotate */}
+        {annotateHref && (
+          <Link
+            href={annotateHref}
+            className="flex items-center gap-1 rounded border border-blue-300 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+          >
+            <Edit3 size={12} /> Разметить →
+          </Link>
+        )}
 
         {/* Summary */}
         <span className="ml-auto text-xs text-gray-500">
@@ -1667,6 +1680,7 @@ export default function ClassificationTreeViewer({
         onToggleSource={() => setShowSource((p) => !p)}
         onShowHelp={() => setShowHelp(true)}
         bulkPending={bulkClassificationMutation.isPending}
+        annotateHref={goldenSampleId ? `/annotate/${goldenSampleId}/${stageKey}` : undefined}
       />
 
       {/* Diff results */}
