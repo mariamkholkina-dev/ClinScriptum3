@@ -2,6 +2,16 @@
 
 ## 2026-05-08
 
+### Fix: bulk-upload-corpus — поля Study (`title` вместо `name`)
+
+`apps/workers/scripts/bulk-upload-corpus.ts` (`ensureStudy`):
+- `findFirst({ where: { tenantId, name } })` → `{ where: { tenantId, title: name } }`
+- `create({ data: { name, protocolNumber, indication, phase, sponsor, createdById } })` → `{ data: { title: name, phase, sponsor } }` (модель `Study` не имеет `name`/`protocolNumber`/`indication`/`createdById`)
+- `console.log(\`Created study: ${study.name}…\`)` → `${study.title}`
+- Параметр `createdById` помечен `_createdById` (больше не используется в create)
+
+Скрипт раньше падал с `PrismaClientValidationError: Unknown argument 'name'. Did you mean 'phase'?` — поля удалили из схемы давно, но скрипт не обновили (он не покрыт `tsc --noEmit`, т.к. директория `scripts/` исключена из `tsconfig.include`).
+
 ### Feat: «Не могу определить зону» + «Исходник» для эксперта + расширение панели
 
 `apps/rule-admin/src/components/SourcePanel.tsx` (новый, общий) — выделена прежняя inline-реализация панели «Исходник» из annotate page в переиспользуемый компонент. Ширина увеличена с **28rem → 40rem** (читать содержимое разделов, особенно с таблицами, гораздо комфортнее). Принимает опциональный `loading` для индикатора загрузки.
