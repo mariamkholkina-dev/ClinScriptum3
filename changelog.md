@@ -2,6 +2,17 @@
 
 ## 2026-05-07
 
+### Feat: LLM-варианты прогнозов на disagreement в annotation page
+
+`apps/rule-admin/src/app/(app)/annotate/[sampleId]/[stage]/page.tsx` — заменён блок «Предсказание алгоритма»:
+- Если все три уровня (deterministic / LLM Check / финальная QA) предлагают **одну зону** → показывается компактная одна строка как раньше (минимум noise)
+- Если есть **расхождение** ≥2 разных вариантов → панель «⚠ Расхождение уровней» с таблицей: Deterministic / LLM Check / Финал (QA), каждая строка с кодом зоны + confidence
+- Клик по варианту в panel → подставляет его в поле «Твоя зона» (ZoneSelector)
+
+Использует `Section.algoSection` / `algoConfidence` / `llmSection` / `llmConfidence` (уже возвращались `getVersion`, не нужны изменения backend). Помогает annotator принимать осознанное решение в сложных случаях, не полагаясь только на финальный verdict QA.
+
+
+
 ### Feat: annotation auto-save (H+I) — expected_results обновляется per-section
 
 `apps/api/src/services/annotation.service.ts`:
