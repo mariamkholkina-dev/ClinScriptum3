@@ -31,6 +31,11 @@ interface Section {
   level: number;
   order: number;
   isFalseHeading?: boolean;
+  // Per-level predictions (Sprint 7b LLM variants)
+  algoSection?: string | null;     // deterministic
+  algoConfidence?: number | null;
+  llmSection?: string | null;       // LLM Check
+  llmConfidence?: number | null;
 }
 
 type AnnotationStatusUI = "pending" | "accepted" | "changed" | "question" | "answered";
@@ -449,23 +454,72 @@ export default function AnnotatePage() {
                 <span>Order {activeSection.order}</span>
               </div>
 
-              {/* Predicted zone */}
-              <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
-                <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                  Предсказание алгоритма
-                </div>
-                <div className="mt-2 flex items-center gap-3">
-                  <code className="rounded bg-gray-100 px-2 py-1 font-mono text-sm">
-                    {activeSection.standardSection ?? "—"}
-                  </code>
-                  <span className={`text-xs ${CONFIDENCE_COLOR(activeSection.confidence)}`}>
-                    confidence: {formatConfidence(activeSection.confidence)}
-                  </span>
-                  {activeSection.classifiedBy && (
-                    <span className="text-xs text-gray-400">via {activeSection.classifiedBy}</span>
-                  )}
-                </div>
-              </div>
+              {/* Predicted zone — с детектом расхождения уровней */}
+              {(() => {
+                const det = activeSection.algoSection;
+                const llm = activeSection.llmSection;
+                const final = activeSection.standardSection;
+                // Disagreement если хотя бы 2 не-null значения отличаются
+                const candidates = [det, llm, final].filter((v): v is string => Boolean(v));
+                const uniq = new Set(candidates);
+                const hasDisagreement = uniq.size >= 2;
+
+                if (!hasDisagreement) {
+                  return (
+                    <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
+                      <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        Предсказание алгоритма
+                      </div>
+                      <div className="mt-2 flex items-center gap-3">
+                        <code className="rounded bg-gray-100 px-2 py-1 font-mono text-sm">
+                          {final ?? "—"}
+                        </code>
+                        <span className={`text-xs ${CONFIDENCE_COLOR(activeSection.confidence)}`}>
+                          confidence: {formatConfidence(activeSection.confidence)}
+                        </span>
+                        {activeSection.classifiedBy && (
+                          <span className="text-xs text-gray-400">via {activeSection.classifiedBy}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Disagreement panel
+                const Row = ({ label, zone, conf }: { label: string; zone: string | null | undefined; conf: number | null | undefined }) => (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="w-24 shrink-0 text-gray-500">{label}</span>
+                    <button
+                      type="button"
+                      onClick={() => zone && setZoneOverride(zone)}
+                      disabled={!zone}
+                      className="rounded bg-gray-100 px-2 py-0.5 font-mono hover:bg-brand-100 disabled:opacity-40"
+                      title={zone ? `Подставить ${zone} в «Твоя зона»` : "нет данных"}
+                    >
+                      {zone ?? "—"}
+                    </button>
+                    {conf !== null && conf !== undefined && (
+                      <span className={CONFIDENCE_COLOR(conf)}>{formatConfidence(conf)}</span>
+                    )}
+                  </div>
+                );
+
+                return (
+                  <div className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
+                    <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-amber-800">
+                      ⚠ Расхождение уровней
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      <Row label="Deterministic" zone={det} conf={activeSection.algoConfidence} />
+                      <Row label="LLM Check" zone={llm} conf={activeSection.llmConfidence} />
+                      <Row label="Финал (QA)" zone={final} conf={activeSection.confidence} />
+                    </div>
+                    <p className="mt-2 text-xs text-amber-700">
+                      Уровни предложили разные зоны — выбери осознанно. Клик по варианту подставит его в поле «Твоя зона».
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Existing annotation indicator */}
               {activeAnnotation && (
