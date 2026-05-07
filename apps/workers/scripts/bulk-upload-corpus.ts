@@ -167,29 +167,29 @@ async function ensureAdminUser(tenantId: string, email: string, dryRun: boolean)
 async function ensureStudy(
   tenantId: string,
   name: string,
-  createdById: string,
+  _createdById: string,
   dryRun: boolean,
 ) {
+  // Study schema uses `title`, not `name`. The other historical fields
+  // (`protocolNumber`, `indication`, `createdById`) were removed from the
+  // model — keep only what the current Prisma client exposes.
   const existing = await prisma.study.findFirst({
-    where: { tenantId, name },
+    where: { tenantId, title: name },
   });
   if (existing) return existing;
   if (dryRun) {
     console.log(`[dry-run] Would create study: ${name}`);
-    return { id: "dry-run-study", name } as any;
+    return { id: "dry-run-study", title: name } as { id: string; title: string };
   }
   const study = await prisma.study.create({
     data: {
       tenantId,
-      name,
-      protocolNumber: `CORPUS-${slugify(name)}`,
-      indication: "n/a (corpus)",
+      title: name,
       phase: "n/a",
       sponsor: "n/a (bulk import)",
-      createdById,
     },
   });
-  console.log(`Created study: ${study.name} (${study.id})`);
+  console.log(`Created study: ${study.title} (${study.id})`);
   return study;
 }
 
