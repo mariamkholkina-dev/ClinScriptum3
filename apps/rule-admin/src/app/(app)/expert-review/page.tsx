@@ -38,6 +38,7 @@ export default function ExpertReviewPage() {
   const [finalZone, setFinalZone] = useState("");
   const [rationale, setRationale] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
+  const [sampleFilter, setSampleFilter] = useState<string>("all");
   const [showSource, setShowSource] = useState(false);
 
   const queueQuery = trpc.annotation.expertQueue.useQuery({ limit: 100 });
@@ -64,10 +65,25 @@ export default function ExpertReviewPage() {
     return Array.from(s).sort();
   }, [items]);
 
-  const filteredItems = useMemo(
-    () => (stageFilter === "all" ? items : items.filter((i) => i.stage === stageFilter)),
-    [items, stageFilter],
-  );
+  // Уникальные protocol-samples из текущего queue, чтобы фильтр-dropdown
+  // показывал только те sample'ы, по которым реально есть открытые вопросы.
+  const samples = useMemo(() => {
+    const m = new Map<string, string>(); // id → name
+    for (const it of items) {
+      if (!m.has(it.goldenSample.id)) m.set(it.goldenSample.id, it.goldenSample.name);
+    }
+    return Array.from(m.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [items]);
+
+  const filteredItems = useMemo(() => {
+    return items.filter((i) => {
+      if (stageFilter !== "all" && i.stage !== stageFilter) return false;
+      if (sampleFilter !== "all" && i.goldenSample.id !== sampleFilter) return false;
+      return true;
+    });
+  }, [items, stageFilter, sampleFilter]);
 
   const selectedItem = items.find((i) => i.id === selectedId) ?? null;
 
@@ -165,6 +181,17 @@ export default function ExpertReviewPage() {
             <option value="all">Все этапы</option>
             {stages.map((s) => (
               <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <select
+            value={sampleFilter}
+            onChange={(e) => setSampleFilter(e.target.value)}
+            className="max-w-[20rem] rounded border border-gray-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none"
+            title="Фильтр вопросов по протоколу (sample)"
+          >
+            <option value="all">Все протоколы</option>
+            {samples.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
         </div>
