@@ -355,13 +355,17 @@ export default function AnnotatePage() {
           >
             <Keyboard size={16} />
           </button>
+          <span className="text-xs text-gray-400" title="Auto-save: каждое изменение сразу сохраняется в эталон">
+            Авто-сохранение ✓
+          </span>
           <button
             onClick={handleFinalize}
             disabled={finalizeMut.isPending || totalAnnotated === 0}
             className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+            title="Меняет статус этапа на «На проверку» — эксперт увидит готовый эталон"
           >
             {finalizeMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-            Отправить на проверку
+            Готово, на проверку
           </button>
         </div>
       </header>
