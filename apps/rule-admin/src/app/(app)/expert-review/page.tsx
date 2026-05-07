@@ -11,7 +11,9 @@ import {
   CheckCircle2,
   ExternalLink,
   Filter,
+  Columns2,
 } from "lucide-react";
+import { SourcePanel, type SourceSection } from "@/components/SourcePanel";
 
 /* ═══════════════ Types ═══════════════ */
 
@@ -36,6 +38,7 @@ export default function ExpertReviewPage() {
   const [finalZone, setFinalZone] = useState("");
   const [rationale, setRationale] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
+  const [showSource, setShowSource] = useState(false);
 
   const queueQuery = trpc.annotation.expertQueue.useQuery({ limit: 100 });
   const taxonomyQuery = trpc.document.getTaxonomy.useQuery(undefined, {
@@ -68,8 +71,35 @@ export default function ExpertReviewPage() {
 
   const selectedItem = items.find((i) => i.id === selectedId) ?? null;
 
-  // Try to load full annotation detail (for now we use queue data — it has everything we need)
-  // Could fetch annotation.get if more context needed.
+  /* ───── Source preview data (for the «Исходник» toggle panel) ─────
+   *
+   * Загружаем версию документа активного sample только когда нужно (источник
+   * включён + есть выбранный вопрос), чтобы не дёргать API без причины. */
+  const sampleQuery = trpc.goldenDataset.getSample.useQuery(
+    { id: selectedItem?.goldenSampleId ?? "" },
+    { enabled: showSource && Boolean(selectedItem?.goldenSampleId) },
+  );
+  const sourceVersionId = sampleQuery.data?.documents?.[0]?.documentVersion?.id;
+  const sourceVersionQuery = trpc.document.getVersion.useQuery(
+    { versionId: sourceVersionId as string },
+    { enabled: showSource && Boolean(sourceVersionId) },
+  );
+
+  const sourceSections: SourceSection[] = useMemo(
+    () => (sourceVersionQuery.data?.sections ?? []) as SourceSection[],
+    [sourceVersionQuery.data?.sections],
+  );
+
+  // sectionKey хранится в lower-cased trim'нутом виде (см. annotate page);
+  // ищем секцию с тем же canonical title — это и есть focused для скролла.
+  const sourceFocusedId = useMemo(() => {
+    if (!selectedItem) return null;
+    const target = selectedItem.sectionKey;
+    const found = sourceSections.find(
+      (s) => (s.title ?? "").trim().toLowerCase() === target,
+    );
+    return found?.id ?? null;
+  }, [sourceSections, selectedItem]);
 
   const handleResolve = async () => {
     if (!selectedItem || !finalZone) return;
@@ -115,6 +145,17 @@ export default function ExpertReviewPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm">
+          <button
+            onClick={() => setShowSource((v) => !v)}
+            className={`flex items-center gap-1 rounded border px-2 py-1 text-xs transition-colors ${
+              showSource
+                ? "border-brand-300 bg-brand-50 text-brand-700"
+                : "border-gray-300 text-gray-600 hover:bg-gray-50"
+            }`}
+            title="Показать/скрыть панель «Исходник» (содержимое разделов выбранного sample)"
+          >
+            <Columns2 size={12} /> Исходник
+          </button>
           <Filter size={14} className="text-gray-400" />
           <select
             value={stageFilter}
@@ -276,6 +317,18 @@ export default function ExpertReviewPage() {
             </div>
           )}
         </main>
+
+        {/* Right: source preview */}
+        {showSource && (
+          <SourcePanel
+            sections={sourceSections}
+            focusedSectionId={sourceFocusedId}
+            loading={
+              Boolean(selectedItem) &&
+              (sampleQuery.isLoading || sourceVersionQuery.isLoading)
+            }
+          />
+        )}
       </div>
     </div>
   );
