@@ -194,11 +194,16 @@ async function ensureStudy(
 }
 
 async function uploadFile(filePath: string, storageKey: string, dryRun: boolean): Promise<string> {
-  if (dryRun) return `dry-run://${storageKey}`;
+  // ВАЖНО: parse-document.ts передаёт `version.fileUrl` напрямую как `Key` в
+  // S3 GetObjectCommand, поэтому здесь возвращаем именно key (storageKey),
+  // а не полный URL — иначе MinIO падает с
+  // `XMinioInvalidObjectName: Object name contains unsupported characters`,
+  // т.к. в S3-key недопустимы `:` и `//`.
+  if (dryRun) return storageKey;
   const data = readFileSync(filePath);
   const storage = createStorageProvider();
   await storage.upload(storageKey, data);
-  return storage.getUrl(storageKey);
+  return storageKey;
 }
 
 async function main() {
