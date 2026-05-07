@@ -2,6 +2,23 @@
 
 ## 2026-05-08
 
+### Fix: bulk-upload-corpus — `file_url` теперь storage key, не полный URL
+
+`apps/workers/scripts/bulk-upload-corpus.ts` (`uploadFile`):
+- Возвращает `storageKey` (`<tenant>/<doc>/v1.docx`) вместо `storage.getUrl(storageKey)` (`http://minio:9000/clinscriptum-dev/<tenant>/<doc>/v1.docx`).
+- `parse-document.ts:21` передаёт `version.fileUrl` напрямую как `Key` в S3 GetObjectCommand. URL содержит `:` и `//` — недопустимые символы в S3-key → MinIO возвращал `XMinioInvalidObjectName: Object name contains unsupported characters` → парсер падал ДО создания processing_run, version.status='error', никаких диагностических следов в БД.
+- Sample'ы загруженные через API (5 ready) хранили в `file_url` уже просто key — поэтому они парсились нормально, а bulk-uploaded — нет.
+
+### Feat: reprocess-bulk-error-versions.ts — починка уже-загруженных версий с битым `file_url`
+
+`apps/workers/scripts/reprocess-bulk-error-versions.ts` (новый):
+- Находит все `DocumentVersion` со `status=error` для tenant/study.
+- Если `fileUrl` имеет формат `http(s)://host/bucket/<key>` — вырезает префикс, оставляет только key.
+- Сбрасывает `status=uploading`, запускает in-process `handleParseDocument` + `handleClassifySections`, ставит `ready` или `error` (с trace через processing_run уже).
+- Запуск: `npx tsx apps/workers/scripts/reprocess-bulk-error-versions.ts --tenant-id=<uuid> [--study-id=<uuid>] [--limit=N] [--dry-run]`.
+
+Нужен для починки 151 sample'ов «Bulk Corpus 156 protocols» — без перезаливки в MinIO (файлы там уже есть, проблема была только в `file_url`).
+
 ### Feat: фильтр вопросов по протоколу на /expert-review
 
 `apps/rule-admin/src/app/(app)/expert-review/page.tsx`:
