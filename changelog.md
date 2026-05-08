@@ -19,6 +19,59 @@
 
 Не входит: ручное добавление секций (PR 3 — нужна интеграция с Office.js getSelection), diff с эталоном (PR 4).
 
+### Feat: cascade cleanup zone on mark-false-heading + confirm dialog
+
+При пометке секции `isFalseHeading=true` accumulated «грязь»: классификация (standardSection/algoSection/llmSection) оставалась выставленной, GoldenAnnotation от пользователей повисали orphan'ами, expected_results.sections содержал ложные заголовки. Теперь mark-false-heading атомарно чистит всё связанное.
+
+**Phase 1 — service refactor (commit `dadab11`):**
+
+`apps/api/src/services/document.service.ts`:
+- `markSectionFalseHeading` — refactor: при transition `false → true` в одной транзакции:
+  1. Section update — clear `standardSection / algoSection / algoConfidence / llmSection / llmConfidence / classifiedBy / confidence / classificationStatus / classificationComment`.
+  2. `GoldenAnnotation.deleteMany` по `sectionKey = title.lower().trim()` для всех golden_samples этого doc_version'а (decisions удаляются каскадно).
+  3. Filter `expected_results.sections` (JSON в `GoldenSampleStageStatus`) по всем стадиям этого sample'а — убрать entries с этим title.
+  - Возврат расширен `cleanupSummary: { clearedClassification, deletedAnnotations, clearedExpectedEntries, clearedStageStatuses }`.
+  - Un-mark (`true → false`) ничего не восстанавливает — следующий reprocess заполнит классификацию.
+- `previewFalseHeadingCleanup` — новый метод: возвращает что именно будет удалено (без выполнения), для UI confirm-диалога.
+
+`apps/api/src/routers/document.ts`:
+- `previewFalseHeadingCleanup` — новый query endpoint.
+
+**Phase 2 — тесты:**
+
+`apps/api/src/services/__tests__/document.service.test.ts`:
+- 7 тест-кейсов на `markSectionFalseHeading`/`previewFalseHeadingCleanup`: transition `false → true` (с annotations + expected; без cleanup данных), no-op (`true → true`), un-mark, cross-tenant, missing section, preview для уже-false секции.
+- Mock $transaction через txMock объект — паттерн из `annotation.service.test.ts`.
+
+**Phase 3 — backfill script:**
+
+`apps/api/scripts/cleanup-orphan-false-heading-classifications.ts`:
+- One-shot CLI для retroactive cleanup данных накопленных ДО deploy: ищет секции с `isFalseHeading=true` И (`standardSection != null` OR `algoSection != null` OR `llmSection != null`), применяет тот же cleanup что и service-метод.
+- `--tenant-id=<uuid>` (required), `--dry-run` для preview.
+- Per-section transaction → idempotent. Можно гонять повторно (после первого прогона ничего не находит).
+
+**Phase 4 — UI confirm dialog:**
+
+`apps/rule-admin/.../parsing-viewer/ParsingTreeViewer.tsx`:
+- При клике toggle false-heading (transition `false → true`) — сначала `previewFalseHeadingCleanup.fetch()`, потом:
+  - Если есть annotations или expectedEntries — модалка `ConfirmFalseHeadingDialog` со списком (имена аннотаторов, число записей в эталоне).
+  - Иначе — тихая мутация без диалога.
+- Un-mark (`true → false`) — без диалога, ничего не удаляет.
+- На успех мутации с непустым cleanupSummary — `goldenDataset.getSample.invalidate` (expected refresh).
+- Тот же flow применён в `handleQuickFix` для `mark_false_heading` из ParsingDiffOverlay.
+
+**Команда для запуска cleanup на dev** (после merge'a + deploy):
+
+```
+ssh root@141.105.71.244
+cd /opt/clinscriptum
+docker compose -f docker-compose.prod.yml exec -T api \
+  npx tsx apps/api/scripts/cleanup-orphan-false-heading-classifications.ts \
+    --tenant-id=4dae44bf-2397-4b94-a3d7-b4224d093d68 --dry-run
+```
+
+После проверки вывода — запустить без `--dry-run`.
+
 ### Feat: structureComment readback + manual sections в parsing-viewer
 
 **Bug fix — комментарий «На доработку» не сохранялся для просмотра:**
