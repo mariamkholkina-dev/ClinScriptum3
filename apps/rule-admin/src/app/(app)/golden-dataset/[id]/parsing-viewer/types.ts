@@ -28,7 +28,12 @@ export interface Section {
 export type AnomalyType = "empty" | "orphaned" | "duplicate_title" | "short";
 
 export interface DiffEntry {
-  type: "missing" | "extra" | "wrong_level" | "wrong_order";
+  /**
+   * `orphaned` появляется только при relational diff (PR E):
+   * запись в эталоне есть, но `realSectionId === null` после re-parse —
+   * автомэтч не нашёл подходящей секции в новом дереве, нужно re-pin'нуть.
+   */
+  type: "missing" | "extra" | "wrong_level" | "wrong_order" | "orphaned";
   sectionTitle: string;
   expected?: { level: number; order: number };
   actual?: { level: number; order: number };
@@ -37,6 +42,9 @@ export interface DiffEntry {
       одинаковое название, и без id нельзя определить какая именно
       попала в diff. */
   actualSectionId?: string;
+  /** ID `ExpectedSection` в БД (для wrong_level, missing, orphaned).
+      Нужен для прицельного update / delete / pin без поиска по title. */
+  expectedSectionId?: string;
 }
 
 export type SortKey = "order" | "title" | "level" | "structureStatus" | "blockCount";
@@ -57,6 +65,9 @@ export const EMPTY_FILTERS: FilterState = {
   anomaliesOnly: false,
 };
 
+/** @deprecated Старая JSON-форма. Используется только в legacy `diffWithExpected`
+    (classification-viewer / annotate page до миграции). Новая relational-форма —
+    `ExpectedSectionNode`. */
 export interface ExpectedSection {
   title: string;
   level: number;
@@ -64,6 +75,33 @@ export interface ExpectedSection {
   children?: ExpectedSection[];
 }
 
+/** @deprecated См. `ExpectedSection`. */
 export interface ExpectedResults {
   sections?: ExpectedSection[];
+}
+
+/**
+ * Relational expected section (PR #92 + PR E). Дерево, где каждый узел —
+ * запись в БД (`ExpectedSection`) с anchor'ом и опциональной привязкой к
+ * реальной секции (`realSectionId`). Когда `realSectionId === null` после
+ * re-parse — это «orphaned» (anchor не нашёл подходящей секции).
+ */
+export interface ExpectedAnchor {
+  paragraphIndex?: number;
+  textSnippet?: string;
+  occurrenceIndex?: number;
+  contentBlockDigest?: string;
+}
+
+export interface ExpectedSectionNode {
+  id: string;
+  title: string;
+  level: number;
+  standardSection: string | null;
+  anchor: ExpectedAnchor;
+  realSectionId: string | null;
+  matchMethod: string | null;
+  parentId: string | null;
+  order: number;
+  children: ExpectedSectionNode[];
 }

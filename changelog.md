@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-05-09
+
+### Feat: parsing-viewer читает эталон через relational endpoint (PR E v2)
+
+В `apps/rule-admin/.../parsing-viewer/ParsingTreeViewer.tsx` заменён
+JSON `goldenSampleStageStatus.expectedResults` на relational
+`trpc.expectedSection.list({goldenSampleId, stage})` (PR #92).
+
+**Что меняется:**
+- Diff-overlay строится из `ExpectedSection`-дерева, новый bucket
+  «Потеряны» (orphaned) — фиолетовый, для записей где `realSectionId === null`
+  после re-parse.
+- Quick-fix actions переписаны под новые мутации:
+  - `accept_extra` → `expectedSection.create` с anchor'ом из real-секции
+    (incl. occurrenceIndex computed client-side).
+  - `apply_level` (wrong_level) → `expectedSection.update({ patch: { level } })`.
+  - `remove_expected` (missing/orphaned) → `expectedSection.delete`.
+  - `repin` (orphaned) → новый `<PinPickerDialog>` с поиском по title +
+    `expectedSection.pin({ expectedId, realSectionId })`.
+- Кнопка «Не заголовок» (`mark_false_heading`) — без изменений, тот же
+  flow с `previewFalseHeadingCleanup` + `ConfirmFalseHeadingDialog` (PR #91).
+- Manual sections (PR #88) и structure-comment readback / prefill
+  (PR #88) сохранены без изменений.
+
+**API изменения (NONE):** consumers — только UI rule-admin.
+
+`apps/rule-admin/.../parsing-viewer/types.ts`:
+- `DiffEntry.type` расширен типом `'orphaned'`; добавлено поле
+  `expectedSectionId`.
+- Старые `ExpectedSection` / `ExpectedResults` помечены `@deprecated`.
+- Новый `ExpectedSectionNode` (relational shape).
+
+`apps/rule-admin/.../parsing-viewer/utils.ts`:
+- Новая функция `diffWithExpectedSections(realSections, expectedRoots)` —
+  читает relational tree, генерирует orphaned/extra/wrong_level entries.
+- Хелпер `flattenExpectedNodes(roots)`.
+- Старая `diffWithExpected(sections, expectedResults)` помечена
+  `@deprecated` (используется classification-viewer + annotate page до
+  миграции в PR F).
+
+`apps/rule-admin/.../golden-dataset/[id]/page.tsx`:
+- Передаёт `stageStatusId` в `ParsingTreeViewer` (нужен для
+  `expectedSection.create` — указывает в какой stageStatus добавить).
+- Тип `stageStatus` в `StagePanel` расширен полем `id`.
+
 ## 2026-05-08
 
 ### Feat (PR 4/4 v2): diff с эталоном + quick-fix actions (Word add-in)
