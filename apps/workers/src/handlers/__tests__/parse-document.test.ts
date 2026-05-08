@@ -123,7 +123,15 @@ describe("handleParseDocument", () => {
       include: { document: { include: { study: true } } },
     });
     expect(storage.download).toHaveBeenCalledWith("uploads/test.docx");
-    expect(mockParseDocx).toHaveBeenCalledWith(Buffer.from("fake-docx"));
+    // parseDocx now receives an opts object (llmFallback callback +
+    // llmFallbackThreshold) for handling poorly-authored DOCX.
+    expect(mockParseDocx).toHaveBeenCalledWith(
+      Buffer.from("fake-docx"),
+      expect.objectContaining({
+        llmFallback: expect.any(Function),
+        llmFallbackThreshold: expect.any(Number),
+      }),
+    );
     expect(mockTransaction).toHaveBeenCalled();
   });
 
