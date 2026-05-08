@@ -117,6 +117,35 @@ export async function clearHighlights(): Promise<void> {
   });
 }
 
+/**
+ * Прыгнуть на текст в Word по фрагменту (первые 80 символов) — выделить
+ * найденное место и подсветить жёлтым. Используется при клике на секцию
+ * в дереве ParsingPanel: annotator видит, какой кусок документа соответствует
+ * текущему заголовку.
+ *
+ * Возвращает true если совпадение найдено, false если нет.
+ */
+export async function jumpToTextInWord(text: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    Word.run(async (ctx: any) => {
+      const ranges = ctx.document.body.search(text.slice(0, 80), {
+        matchCase: false,
+        matchWholeWord: false,
+      });
+      ranges.load("items");
+      await ctx.sync();
+      if (ranges.items.length === 0) {
+        resolve(false);
+        return;
+      }
+      ranges.items[0].select();
+      ranges.items[0].font.highlightColor = "yellow";
+      await ctx.sync();
+      resolve(true);
+    }).catch(() => resolve(false));
+  });
+}
+
 export async function insertTextAtCursor(text: string): Promise<void> {
   return Word.run(async (context: any) => {
     const selection = context.document.getSelection();

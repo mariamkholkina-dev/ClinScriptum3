@@ -25,6 +25,7 @@ import { FindingsPanel } from "./findings/FindingsPanel";
 import { InterAuditPanel } from "./inter-audit/InterAuditPanel";
 import { GenerationPanel } from "./generation/GenerationPanel";
 import { UploadPanel } from "./upload/UploadPanel";
+import { ParsingPanel } from "./parsing/ParsingPanel";
 import { trpcCall } from "./api";
 
 const useStyles = makeStyles({
@@ -150,21 +151,11 @@ function AppContent() {
       )}
 
       {mode === "parsing" && docVersionId && (
-        <div className={styles.content} style={{ padding: 16 }}>
-          <Text weight="semibold" size={400}>Парсинг и разметка структуры</Text>
-          <Text block size={200} style={{ marginTop: 8, color: tokens.colorNeutralForeground3 }}>
-            Документ открыт в режиме парсинга. UI для просмотра и редактирования
-            структуры разделов будет добавлен в следующих PR.
-          </Text>
-          <Text block size={100} style={{ marginTop: 8, color: tokens.colorNeutralForeground3 }}>
-            docVersionId: {docVersionId}
-            {sessionContext.goldenSampleId && (
-              <>
-                <br />
-                goldenSampleId: {sessionContext.goldenSampleId}
-              </>
-            )}
-          </Text>
+        <div className={styles.content}>
+          <ParsingPanel
+            docVersionId={docVersionId}
+            goldenSampleId={sessionContext.goldenSampleId}
+          />
         </div>
       )}
 
