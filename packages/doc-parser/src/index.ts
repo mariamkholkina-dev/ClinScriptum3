@@ -26,5 +26,8 @@ export type {
   ParsedFootnote,
   SourceAnchor,
   ParserOptions,
+  LlmFallbackParagraph,
+  LlmDetectedHeading,
+  LlmHeadingFallback,
 } from "./types.js";
 export { DEFAULT_PARSER_OPTIONS } from "./types.js";

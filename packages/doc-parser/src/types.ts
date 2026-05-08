@@ -77,11 +77,46 @@ export interface SourceAnchor {
   sectionPath?: string[];
 }
 
+/**
+ * Описание элемента документа для LLM-fallback heading detection.
+ * paragraphIndex — позиция в `elements` массиве parser'а (= порядок появления
+ * в HTML mammoth output'е, ≈ document order).
+ */
+export interface LlmFallbackParagraph {
+  paragraphIndex: number;
+  text: string;
+  isBold?: boolean;
+  fontSize?: number;
+}
+
+/** Возврат LLM-fallback'а — список paragraphIndex'ов и их level'ов. */
+export interface LlmDetectedHeading {
+  paragraphIndex: number;
+  level: number;
+}
+
+export type LlmHeadingFallback = (
+  paragraphs: LlmFallbackParagraph[],
+) => Promise<LlmDetectedHeading[]>;
+
 export interface ParserOptions {
   maxHeadingDepth: number;
   detectSynopsis: boolean;
   detectSOA: boolean;
   ignoreHeadersFooters: boolean;
+  /**
+   * Опциональный callback. Вызывается когда rule-based heading detection
+   * нашёл слишком мало заголовков (< llmFallbackThreshold). Получает все
+   * paragraph'ы документа, должен вернуть paragraphIndex+level для каждого
+   * детектированного heading'а. Используется для плохо-оформленных DOCX
+   * где автор не применял Heading-стили и не сделал жирный текст.
+   *
+   * Параметры (provider, model, prompt, валидация) живут в caller'е —
+   * парсер не зависит от llm-gateway.
+   */
+  llmFallback?: LlmHeadingFallback;
+  /** Порог запуска llmFallback. Если headings.length < threshold → fallback. Default 20. */
+  llmFallbackThreshold?: number;
 }
 
 export const DEFAULT_PARSER_OPTIONS: ParserOptions = {
