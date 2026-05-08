@@ -28,6 +28,7 @@ const useStyles = makeStyles({
     paddingRight: "8px",
     cursor: "pointer",
     borderTop: `1px solid ${tokens.colorNeutralStroke3}`,
+    borderLeft: "3px solid transparent",
     "&:hover": { backgroundColor: tokens.colorNeutralBackground1Hover },
   },
   rowFalse: {
@@ -35,6 +36,15 @@ const useStyles = makeStyles({
   },
   rowSelected: {
     backgroundColor: tokens.colorBrandBackground2,
+  },
+  // Diff border colors — extra (amber) и wrong_level (blue) подсвечиваем
+  // левую границу строки. Missing-entries не отображаются на дереве (их секции
+  // в документе нет), поэтому соответствующего стиля нет.
+  rowDiffExtra: {
+    borderLeftColor: tokens.colorPaletteMarigoldBorder2,
+  },
+  rowDiffWrongLevel: {
+    borderLeftColor: tokens.colorPaletteBlueBorderActive,
   },
   title: {
     flex: 1,
@@ -88,6 +98,10 @@ interface Props {
   onActivateSection: (section: Section) => void;
   onToggleFalseHeading: (section: Section) => void;
   togglingFalseHeadingId: string | null;
+  /** Map sectionId → diff type (extra | wrong_level). Missing-entries не
+   *  имеют id и в карте не присутствуют. Если не передано — diff-индикация
+   *  отключена. */
+  diffTypeBySectionId?: Map<string, "extra" | "wrong_level">;
 }
 
 /**
@@ -109,6 +123,7 @@ export function SectionTree({
   onActivateSection,
   onToggleFalseHeading,
   togglingFalseHeadingId,
+  diffTypeBySectionId,
 }: Props) {
   const styles = useStyles();
 
@@ -134,6 +149,7 @@ export function SectionTree({
         const isFalse = section.isFalseHeading;
         const isSelected = selectedIds.has(section.id);
         const isActive = section.id === activeSectionId;
+        const diffType = diffTypeBySectionId?.get(section.id);
         return (
           <div
             key={section.id}
@@ -141,6 +157,8 @@ export function SectionTree({
               styles.row,
               isFalse && styles.rowFalse,
               (isSelected || isActive) && styles.rowSelected,
+              diffType === "extra" && styles.rowDiffExtra,
+              diffType === "wrong_level" && styles.rowDiffWrongLevel,
             )}
             style={{ paddingLeft: `${4 + section.level * 14}px` }}
             onClick={() => onActivateSection(section)}

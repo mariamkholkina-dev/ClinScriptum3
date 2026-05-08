@@ -2,6 +2,33 @@
 
 ## 2026-05-08
 
+### Feat (PR 4/4): Diff с эталоном + quick-fix actions в Word add-in
+
+`apps/word-addin/src/parsing/diffWithExpected.ts` (новый):
+- Чистая функция `diffWithExpected(sections, expectedResults)` — порт из `apps/rule-admin/.../parsing-viewer/utils.ts`. Возвращает `DiffEntry[]` с типами `missing` / `extra` / `wrong_level`. Секции с `isFalseHeading=true` исключаются (каскадно, как в rule-admin).
+- Типы `ExpectedSection`, `ExpectedResults`, `DiffEntry` локально (без импортов rule-admin).
+
+`apps/word-addin/src/parsing/DiffPanel.tsx` (новый):
+- Список diff entries (FluentUI v9), сгруппирован по типу: «Пропущено» / «Лишних» / «Неверный уровень». Бейджи-счётчики сверху.
+- Quick-fix кнопки на каждой строке:
+  - **extra** → «Принять в эталон» (добавить запись в `expected.sections`) + «Не заголовок» (`document.markSectionFalseHeading`)
+  - **missing** → «Удалить из эталона» (вычеркнуть запись из `expected.sections`)
+  - **wrong_level** → Dropdown выбора уровня + «Применить» (обновить `level` в `expected.sections`)
+- Click на строку (вне кнопок) → `jumpToTextInWord(textSnippet)` — Word скроллит к этому месту. Для missing-entries секции в документе нет, click ничего не делает.
+- Loading state через `fixPending` + Spinner.
+
+`apps/word-addin/src/parsing/ParsingPanel.tsx`:
+- TabList с двумя табами: «Дерево» (`SectionTree` из PR 2) и «Diff с эталоном» (`DiffPanel`). Бейдж-счётчик количества diff entries рядом с лейблом таба.
+- Таб «Diff» виден только при наличии `goldenSampleId`. Empty-state «Эталон для этой стадии не задан» если parsing-стадии в golden sample нет.
+- При loading грузим параллельно `document.getVersion` и `goldenDataset.getSample` (если есть `goldenSampleId`). Изоляция ошибок: failed sample-load → diff-таб показывает empty-state, дерево работает.
+- Quick-fix mutations через `goldenDataset.updateStageStatus` (правка expected_results JSON; status сохраняется текущий, `not_set` → `draft`) и `document.markSectionFalseHeading`. После каждого fix — `load()` → автоматическое перерисовка дерева и diff.
+- Bulk-actions показываются только на табе «Дерево».
+
+`apps/word-addin/src/parsing/SectionTree.tsx`:
+- Новый prop `diffTypeBySectionId?: Map<string, "extra" | "wrong_level">`. Если передан — строки с diff подсвечиваются левой границей: amber для extra, blue (`colorPaletteBlueBorderActive`) для wrong_level. Missing-entries не отображаются на дереве (секций в документе нет).
+
+Не входит: ручное добавление секций через Office.js getSelection (PR 3 — параллельная ветка другого агента; после её мержа возможен rebase-конфликт в `ParsingPanel.tsx` и `SectionTree.tsx`).
+
 ### Feat (PR 2/4): ParsingPanel в Word add-in — section tree + bulk actions
 
 `apps/word-addin/src/parsing/` (новая директория):
