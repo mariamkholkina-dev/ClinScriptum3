@@ -2,6 +2,30 @@
 
 ## 2026-05-08
 
+### Feat: parser — извлечение font-size/bold из OOXML + bold-only fallback heading detection (Вариант 1 из 2-этапного гибрида)
+
+`packages/doc-parser/src/paragraph-properties.ts` (новый):
+- Читает `word/document.xml` через `fast-xml-parser` в `preserveOrder` mode чтобы сохранить document-order между `<w:p>` и `<w:tbl>`.
+- Извлекает per-paragraph `fontSize` (max по всем runs) и `isBold` (≥80% символов параграфа bold).
+- Walker рекурсивно входит в таблицы (`<w:tbl>` → `<w:tr>` → `<w:tc>` → `<w:p>`), включая nested-tables.
+- `computeBaseFontSize(props)` — медиана по всем нон-empty paragraph'ам с заданным fontSize. Используется как dynamic baseFontSize в heading-detector. Default 12pt если данных <5 paragraph'ов.
+- `buildPropsByText(props)` — Map<fingerprint, ParagraphProperties[]> для матчинга OOXML props с mammoth-output по тексту параграфа (вместо хрупкого matching по индексу — mammoth merge'ит/skip'ает paragraph'ы).
+
+`packages/doc-parser/src/parser.ts`:
+- JSZip-блок (`word/document.xml`, `word/footnotes.xml`) перенесён в начало `parseDocx()` чтобы paragraphProperties были готовы до `splitHtmlElements()`.
+- `splitHtmlElements(html, propsByText)` — для каждого HTML-элемента lookup'ит OOXML-props по text fingerprint'у, обогащает `el.fontSize` и предпочитает OOXML-isBold (по доле жирных символов) над html-`<strong>`/`<b>` (наличие тега).
+- `detectHeading(... baseFontSize)` теперь получает реальный baseFontSize из медианы документа, а не хардкоженый 12.
+
+`packages/doc-parser/src/heading-detector.ts`:
+- Добавлен **bold-only fallback** после numbered detection. Если параграф жирный целиком (≥80% символов) и font-size не больше base (или не задан) — всё равно distan распознаётся как heading.
+- Жёсткие фильтры против ложных срабатываний: длина 5..120 chars, не оканчивается на `,` `;` `:` `.`, первая буква — заглавная или цифра.
+- Эвристика level: ALL-CAPS короткие → h1, длиннее 60 chars → h2, остальное → h3.
+- Тест `does not detect bold text at base size` обновлён на новое поведение (намеренное изменение). Добавлены 4 новых теста для filter cases.
+
+**Эффект:** документы где автор использовал жирный текст вместо Heading-стилей теперь должны иметь распознанную структуру. После merge'а — re-parse 13 проблемных доков из «Bulk Corpus 156 protocols» через `reprocess-bulk-error-versions.ts` (предварительно сбросив их status в `error`).
+
+**Следующий шаг (PR 2):** LLM-fallback в `parse-document.ts` для случаев когда даже после улучшений heading-detection всё равно <30 секций.
+
 ### Fix: bulk-upload-corpus — `file_url` теперь storage key, не полный URL
 
 `apps/workers/scripts/bulk-upload-corpus.ts` (`uploadFile`):

@@ -119,5 +119,44 @@ export function detectHeading(
     return { text: trimmed, level: dots, method: "numbered", paragraphIndex };
   }
 
+  // Bold-only fallback: если параграф жирный целиком, но font-size такой же
+  // как у body text (или fontSize не известен) — это всё ещё может быть
+  // заголовок. Распространённый случай в плохо-оформленных протоколах:
+  // автор не применял Heading-стили, просто делал жирный текст ≈Body-size.
+  //
+  // Идёт ПОСЛЕ numbered detection чтобы пронумерованные ловились через
+  // правильный method='numbered', а не сюда.
+  //
+  // Жёсткие фильтры чтобы не ловить inline-bold внутри текста:
+  //   - длина 5..120 chars (длинные параграфы — точно не заголовок)
+  //   - не оканчивается на запятую / точку с запятой / двоеточие / точку
+  //   - первая буква — заглавная или цифра
+  //   - не подходит под уже отброшенные scale-row / footnote-row паттерны
+  //     (isNonHeadingLine уже отработал выше)
+  if (isBold) {
+    const trimmed = text.trim();
+    const len = trimmed.length;
+    if (len < 5 || len > 120) return null;
+    const lastChar = trimmed.charAt(len - 1);
+    if (lastChar === "," || lastChar === ";" || lastChar === ":" || lastChar === ".") {
+      return null;
+    }
+    const firstChar = trimmed.charAt(0);
+    const isUpperOrDigit = /^[A-ZА-ЯЁ0-9]/.test(firstChar);
+    if (!isUpperOrDigit) return null;
+
+    // Эвристика level: very short и all-caps → top-level (h1), иначе h2/h3.
+    let level = 3;
+    if (len <= 60 && trimmed === trimmed.toUpperCase()) level = 1;
+    else if (len <= 80) level = 2;
+
+    return {
+      text: trimmed,
+      level,
+      method: "visual",
+      paragraphIndex,
+    };
+  }
+
   return null;
 }
