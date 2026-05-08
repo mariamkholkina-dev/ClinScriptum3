@@ -153,12 +153,25 @@ export async function handleParseDocument(data: { versionId: string }) {
       },
     });
 
+    // Сохраняем manual sections (isManual=true) при re-parse: annotator
+    // мог добавить разделы которые auto-парсер пропустил, и их нельзя терять
+    // при каждом reprocess'е. Удаляем только auto-detected sections.
     await prisma.contentBlock.deleteMany({
-      where: { section: { docVersionId: version.id } },
+      where: { section: { docVersionId: version.id, isManual: false } },
     });
-    await prisma.section.deleteMany({ where: { docVersionId: version.id } });
+    await prisma.section.deleteMany({
+      where: { docVersionId: version.id, isManual: false },
+    });
 
     await saveSections(version.id, parsed.sections, null);
+
+    // После сохранения новых auto-секций пересчитываем `order` так чтобы manual
+    // секции встали в правильную позицию по их sourceAnchor.paragraphIndex.
+    // Это уже делается в saveSectionsBatch через counter — но manual'ы там не
+    // участвуют (они УЖЕ в БД). Поэтому делаем post-fix: read all sections,
+    // sort by paragraphIndex (auto) или manualSourceAnchor.paragraphIndex
+    // (manual), reassign order.
+    await reorderSectionsByAnchor(version.id);
 
     logger.info("Parsed document", {
       versionId: version.id,
@@ -175,6 +188,67 @@ export async function handleParseDocument(data: { versionId: string }) {
     });
     throw error;
   }
+}
+
+/**
+ * После save новых auto-секций пересчитывает `order` так, чтобы manual
+ * секции (isManual=true) встали по своему sourceAnchor.paragraphIndex
+ * относительно auto-секций.
+ *
+ * Алгоритм:
+ *  1. Загрузить все секции (auto + manual) с их paragraphIndex.
+ *     - auto: уже отсортированы по `order` после save (counter-based)
+ *     - manual: paragraphIndex из sourceAnchor.paragraphIndex
+ *  2. Sort by paragraphIndex (для auto — берём min(paragraphIndex) среди
+ *     contentBlocks или anchor поля; для manual — sourceAnchor.paragraphIndex).
+ *  3. Reassign sequential order'ы.
+ */
+async function reorderSectionsByAnchor(docVersionId: string) {
+  const sections = await prisma.section.findMany({
+    where: { docVersionId },
+    select: {
+      id: true,
+      isManual: true,
+      sourceAnchor: true,
+      order: true,
+    },
+  });
+  if (sections.length === 0) return;
+
+  // Если manual нет — порядок auto-секций уже правильный, не трогаем.
+  const hasManual = sections.some((s) => s.isManual);
+  if (!hasManual) return;
+
+  const withParagraphIndex = sections.map((s) => {
+    const anchor = (s.sourceAnchor ?? {}) as { paragraphIndex?: number };
+    return {
+      id: s.id,
+      isManual: s.isManual,
+      paragraphIndex: typeof anchor.paragraphIndex === "number" ? anchor.paragraphIndex : Number.MAX_SAFE_INTEGER,
+      currentOrder: s.order,
+    };
+  });
+
+  // Sort: by paragraphIndex; ties — auto перед manual (stable-ish);
+  // если paragraphIndex отсутствует (manual orphaned после re-parse) —
+  // в самый конец.
+  withParagraphIndex.sort((a, b) => {
+    if (a.paragraphIndex !== b.paragraphIndex) return a.paragraphIndex - b.paragraphIndex;
+    if (a.isManual && !b.isManual) return 1;
+    if (!a.isManual && b.isManual) return -1;
+    return a.currentOrder - b.currentOrder;
+  });
+
+  // Применить новые order'ы только если что-то поменялось.
+  await prisma.$transaction(
+    withParagraphIndex
+      .map((s, i) =>
+        s.currentOrder !== i
+          ? prisma.section.update({ where: { id: s.id }, data: { order: i } })
+          : null,
+      )
+      .filter((q): q is NonNullable<typeof q> => q !== null),
+  );
 }
 
 async function saveSections(

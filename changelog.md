@@ -2,6 +2,43 @@
 
 ## 2026-05-08
 
+### Feat: structureComment readback + manual sections в parsing-viewer
+
+**Bug fix — комментарий «На доработку» не сохранялся для просмотра:**
+- `apps/api/src/services/document.service.ts:228` — добавлено `structureComment: true` в SELECT (раньше включался только `classificationComment`).
+- `getVersionSectionsRaw` (raw-fallback) — также добавлен `structure_comment AS "structureComment"`.
+- `apps/rule-admin/.../parsing-viewer/types.ts` — `Section.structureComment?: string | null`.
+- `apps/rule-admin/.../parsing-viewer/ParsingTreeViewer.tsx`:
+  - При открытии диалога «На доработку» pre-fill в textarea существующим комментарием (annotator может поправить).
+  - В строке секции с непустым `structureComment` — иконка 💬 с tooltip'ом «Комментарий к доработке: ...».
+
+**Feature — manual sections (добавление разделов вручную):**
+
+`packages/db/prisma/schema.prisma`:
+- В модель `Section` добавлены `isManual: Boolean @default(false)` и `manualCreatedById: String?`.
+- Migration `20260508120000_add_section_manual_fields` (with index on `is_manual`).
+
+`apps/api/src/services/document.service.ts`:
+- `addManualSection({tenantId, userId, docVersionId, title, level, paragraphIndex, textSnippet, afterSectionId?, contentBlockId?})` — создаёт section с `isManual=true`, сохраняет hybrid anchor (`paragraphIndex` + `textSnippet` + опционально `contentBlockId`), вставляет в нужный order (renumber в transaction если `afterSectionId`).
+- `deleteManualSection({tenantId, sectionId})` — удаляет ТОЛЬКО `isManual=true`. Auto-detected секции защищены (для них `markSectionFalseHeading=true`).
+
+`apps/api/src/routers/document.ts`:
+- `addManualSection`, `deleteManualSection` tRPC mutations с zod validation.
+
+`apps/workers/src/handlers/parse-document.ts`:
+- При `re-parse` удаляются ТОЛЬКО `isManual=false` sections+blocks. Manual sections выживают через все reprocess'ы.
+- После save новых auto-секций — `reorderSectionsByAnchor()` пересчитывает `order` так, чтобы manual sections встали на свою позицию по `sourceAnchor.paragraphIndex` (документный порядок сохраняется).
+
+`apps/rule-admin/.../parsing-viewer/ParsingTreeViewer.tsx`:
+- Toolbar: кнопка **«+ Добавить раздел»** открывает модалку.
+- Модалка `AddManualSectionDialog`: title, level (1-5), 2 anchor режима (radio):
+  - «После раздела X» (select из существующих секций)
+  - «На блоке контента N» (select из всех content blocks с превью текста)
+- Бейдж **`✱ manual`** в строке секции для `isManual=true`.
+- Кнопка **`X`** (delete) для удаления manual section с подтверждением.
+
+**Конфликт-detection при re-parse:** если auto-парсер нашёл раздел который annotator ранее добавил вручную (тот же title), оба останутся в БД (manual выживет, auto тоже создастся). Дедупликацию делает annotator вручную через UI «удалить manual». Автоматическая дедупликация не реализована в этой версии — добавим в follow-up если потребуется.
+
 ### Feat: parser — quality-threshold для LLM-fallback (PR #87, дофиксинг гибрида)
 
 После реальной обработки 156 doc'ов на dev стало видно: 19 doc'ов остались с <50 секций даже после PR #85+#86. Анализ логов показал что `LLM heading fallback detected` сработал только 1 раз — для остальных 18 rule-based+bold-only ловил ≥20 «псевдо-headings» (строки шкал, footnote rows), threshold обманывался, LLM не звался.
