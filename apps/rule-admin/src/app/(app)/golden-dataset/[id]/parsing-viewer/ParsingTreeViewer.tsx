@@ -34,6 +34,7 @@ import type {
   DiffEntry,
   SortKey,
   FilterState,
+  ExpectedSectionNode,
 } from "./types";
 import { EMPTY_FILTERS } from "./types";
 import {
@@ -41,7 +42,8 @@ import {
   detectAnomalies,
   sortSections,
   filterSections,
-  diffWithExpected,
+  diffWithExpectedSections,
+  flattenExpectedNodes,
   getVisibleSectionIds,
   getParentChain,
   hasChildren,
@@ -153,15 +155,17 @@ function ContentBlockPanel({ blocks }: { blocks: Section["contentBlocks"] }) {
 /* ═══════════════ ParsingDiffOverlay ═══════════════ */
 
 type ParsingQuickFix =
-  // extra → принять заголовок в эталон (добавить запись в expected.sections)
+  // extra → принять заголовок в эталон (создать ExpectedSection с anchor'ом из real-секции).
   | { kind: "accept_extra"; sectionId: string; sectionTitle: string; level: number }
   // extra → пометить как ложный заголовок (Section.isFalseHeading=true). Каскадно скрывает
   // секцию из diff Парсинга и Классификации.
   | { kind: "mark_false_heading"; sectionId: string; sectionTitle: string }
-  // missing → эксперт согласен, что в эталоне этой записи быть не должно
-  | { kind: "remove_missing"; sectionTitle: string }
-  // wrong_level → синхронизировать уровень в эталоне с фактическим (правим эталон, не секцию)
-  | { kind: "apply_level"; sectionTitle: string; newLevel: number };
+  // missing / orphaned → эксперт согласен, что записи в эталоне быть не должно (delete).
+  | { kind: "remove_expected"; expectedSectionId: string; sectionTitle: string }
+  // wrong_level → обновить level у существующего ExpectedSection.
+  | { kind: "apply_level"; expectedSectionId: string; sectionTitle: string; newLevel: number }
+  // orphaned → re-pin'нуть ExpectedSection на конкретную real-секцию.
+  | { kind: "repin"; expectedSectionId: string; sectionTitle: string; realSectionId: string };
 
 interface ParsingDiffOverlayProps {
   entries: DiffEntry[];
@@ -206,6 +210,9 @@ function ParsingDiffOverlay({
   // Локальный per-row выбор уровня для wrong_level — initial = expected.level.
   const [pendingLevels, setPendingLevels] = useState<Map<string, number>>(new Map());
 
+  // Открытый pin-picker для orphaned-строки (по rowKey, чтобы попасть в нужную запись).
+  const [repinTargetId, setRepinTargetId] = useState<string | null>(null);
+
   if (entries.length === 0) {
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
@@ -217,6 +224,7 @@ function ParsingDiffOverlay({
   const missing = entries.filter((e) => e.type === "missing");
   const extra = entries.filter((e) => e.type === "extra");
   const wrongLevel = entries.filter((e) => e.type === "wrong_level");
+  const orphaned = entries.filter((e) => e.type === "orphaned");
 
   const getRowKey = (e: DiffEntry, idx: number) => `${e.type}:${e.sectionTitle}:${idx}`;
 
@@ -226,6 +234,12 @@ function ParsingDiffOverlay({
         <span className="rounded bg-red-100 px-2 py-1 text-red-700">Пропущено: {missing.length}</span>
         <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">Лишних: {extra.length}</span>
         <span className="rounded bg-blue-100 px-2 py-1 text-blue-700">Неверный уровень: {wrongLevel.length}</span>
+        <span
+          className="rounded bg-purple-100 px-2 py-1 text-purple-700"
+          title="После re-parse автомэтч не нашёл подходящей секции — нужен re-pin"
+        >
+          Потеряны: {orphaned.length}
+        </span>
       </div>
 
       <div className="max-h-80 overflow-y-auto space-y-1.5">
@@ -239,15 +253,25 @@ function ParsingDiffOverlay({
               ? "border-red-200 bg-red-50"
               : e.type === "extra"
                 ? "border-amber-200 bg-amber-50"
-                : "border-blue-200 bg-blue-50";
+                : e.type === "wrong_level"
+                  ? "border-blue-200 bg-blue-50"
+                  : "border-purple-200 bg-purple-50";
           const labelColor =
             e.type === "missing"
               ? "text-red-700"
               : e.type === "extra"
                 ? "text-amber-700"
-                : "text-blue-700";
+                : e.type === "wrong_level"
+                  ? "text-blue-700"
+                  : "text-purple-700";
           const labelText =
-            e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверный уровень";
+            e.type === "missing"
+              ? "Пропущено"
+              : e.type === "extra"
+                ? "Лишняя"
+                : e.type === "wrong_level"
+                  ? "Неверный уровень"
+                  : "Потеряна (orphaned)";
 
           // Цепочка родителей для контекста (extra и wrong_level — берём из реальной
           // секции; missing — секции в документе нет, breadcrumb недоступен).
@@ -289,6 +313,11 @@ function ParsingDiffOverlay({
                       ожидался L{e.expected.level}, нет в документе
                     </div>
                   )}
+                  {e.type === "orphaned" && e.expected && (
+                    <div className="mt-0.5 text-gray-500">
+                      L{e.expected.level} в эталоне, anchor не нашёл секцию после re-parse
+                    </div>
+                  )}
                 </div>
                 {matchedSection && (
                   <button
@@ -308,6 +337,7 @@ function ParsingDiffOverlay({
                   <>
                     <button
                       type="button"
+                      disabled={fixPending}
                       onClick={() =>
                         onQuickFix({
                           kind: "accept_extra",
@@ -317,12 +347,13 @@ function ParsingDiffOverlay({
                         })
                       }
                       className="rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-                      title="Добавить запись в expected_results"
+                      title="Создать ExpectedSection с anchor'ом из этой секции"
                     >
                       Принять в эталон
                     </button>
                     <button
                       type="button"
+                      disabled={fixPending}
                       onClick={() =>
                         onQuickFix({
                           kind: "mark_false_heading",
@@ -338,18 +369,54 @@ function ParsingDiffOverlay({
                   </>
                 )}
 
-                {e.type === "missing" && (
+                {e.type === "missing" && e.expectedSectionId && (
                   <button
                     type="button"
-                    onClick={() => onQuickFix({ kind: "remove_missing", sectionTitle: e.sectionTitle })}
-                    className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700"
-                    title="Удалить запись из expected_results"
+                    disabled={fixPending}
+                    onClick={() =>
+                      onQuickFix({
+                        kind: "remove_expected",
+                        expectedSectionId: e.expectedSectionId!,
+                        sectionTitle: e.sectionTitle,
+                      })
+                    }
+                    className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                    title="Удалить запись ExpectedSection"
                   >
                     Удалить из эталона
                   </button>
                 )}
 
-                {e.type === "wrong_level" && e.actual && e.expected && (
+                {e.type === "orphaned" && e.expectedSectionId && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={fixPending}
+                      onClick={() => setRepinTargetId(rowKey)}
+                      className="rounded bg-purple-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+                      title="Привязать запись к реальной секции"
+                    >
+                      Восстановить anchor
+                    </button>
+                    <button
+                      type="button"
+                      disabled={fixPending}
+                      onClick={() =>
+                        onQuickFix({
+                          kind: "remove_expected",
+                          expectedSectionId: e.expectedSectionId!,
+                          sectionTitle: e.sectionTitle,
+                        })
+                      }
+                      className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                      title="Удалить запись ExpectedSection"
+                    >
+                      Удалить из эталона
+                    </button>
+                  </>
+                )}
+
+                {e.type === "wrong_level" && e.actual && e.expected && e.expectedSectionId && (
                   <>
                     <select
                       value={pendingLevels.get(rowKey) ?? e.actual.level}
@@ -363,32 +430,156 @@ function ParsingDiffOverlay({
                       }}
                       className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs"
                     >
-                      {[0, 1, 2, 3, 4, 5].map((lvl) => (
+                      {[1, 2, 3, 4, 5, 6].map((lvl) => (
                         <option key={lvl} value={lvl}>
-                          Уровень {lvl + 1}
+                          Уровень {lvl}
                         </option>
                       ))}
                     </select>
                     <button
                       type="button"
+                      disabled={fixPending}
                       onClick={() =>
                         onQuickFix({
                           kind: "apply_level",
+                          expectedSectionId: e.expectedSectionId!,
                           sectionTitle: e.sectionTitle,
                           newLevel: pendingLevels.get(rowKey) ?? e.actual!.level,
                         })
                       }
                       className="rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-                      title="Обновить уровень в expected_results"
+                      title="Обновить level у ExpectedSection"
                     >
                       Применить уровень в эталон
                     </button>
                   </>
                 )}
               </div>
+
+              {repinTargetId === rowKey && e.type === "orphaned" && e.expectedSectionId && (
+                <PinPickerDialog
+                  expectedTitle={e.sectionTitle}
+                  sections={sections}
+                  onCancel={() => setRepinTargetId(null)}
+                  onPick={(realSectionId) => {
+                    onQuickFix({
+                      kind: "repin",
+                      expectedSectionId: e.expectedSectionId!,
+                      sectionTitle: e.sectionTitle,
+                      realSectionId,
+                    });
+                    setRepinTargetId(null);
+                  }}
+                  isPending={fixPending}
+                />
+              )}
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ PinPickerDialog ═══════════════ */
+
+function PinPickerDialog({
+  expectedTitle,
+  sections,
+  onCancel,
+  onPick,
+  isPending,
+}: {
+  expectedTitle: string;
+  sections: Section[];
+  onCancel: () => void;
+  onPick: (realSectionId: string) => void;
+  isPending: boolean;
+}) {
+  const [filter, setFilter] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Сначала «похожие» секции по нижнему регистру, потом остальные.
+  const candidates = useMemo(() => {
+    const needle = (filter || expectedTitle).trim().toLowerCase();
+    if (!needle) return sections.filter((s) => !s.isFalseHeading);
+    const scored = sections
+      .filter((s) => !s.isFalseHeading)
+      .map((s) => {
+        const title = s.title.toLowerCase();
+        const score = title.includes(needle)
+          ? 2
+          : title.split(/\s+/).some((w) => needle.includes(w))
+            ? 1
+            : 0;
+        return { s, score };
+      });
+    scored.sort((a, b) => b.score - a.score || a.s.order - b.s.order);
+    return scored.map((x) => x.s);
+  }, [filter, expectedTitle, sections]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <h3 className="text-lg font-semibold text-gray-900">Восстановить anchor</h3>
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-3 p-6">
+          <p className="text-sm text-gray-600">
+            Выберите секцию, к которой нужно привязать запись эталона{" "}
+            <span className="font-medium">«{expectedTitle}»</span>.
+          </p>
+          <input
+            type="text"
+            value={filter}
+            onChange={(ev) => setFilter(ev.target.value)}
+            placeholder={`Фильтр (по умолчанию — ищет «${expectedTitle.slice(0, 40)}»)`}
+            className="w-full rounded border border-gray-300 px-3 py-1.5 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <div className="max-h-72 overflow-y-auto rounded border border-gray-200 bg-white">
+            {candidates.length === 0 ? (
+              <p className="px-3 py-4 text-center text-xs italic text-gray-400">
+                Нет секций по фильтру.
+              </p>
+            ) : (
+              candidates.slice(0, 200).map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setSelectedId(s.id)}
+                  className={`flex w-full items-center gap-2 border-b border-gray-100 px-3 py-1.5 text-left text-xs hover:bg-gray-50 ${
+                    selectedId === s.id ? "bg-purple-50 ring-1 ring-purple-300" : ""
+                  }`}
+                >
+                  <span className="font-mono text-[10px] text-gray-400">L{s.level}</span>
+                  <span className="flex-1 truncate text-gray-700" title={s.title}>
+                    {s.title || "(без названия)"}
+                  </span>
+                  <span className="text-[10px] text-gray-400">{s.contentBlocks.length} бл.</span>
+                </button>
+              ))
+            )}
+          </div>
+          <div className="flex justify-end gap-3 pt-1">
+            <button
+              onClick={onCancel}
+              disabled={isPending}
+              className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Отмена
+            </button>
+            <button
+              onClick={() => selectedId && onPick(selectedId)}
+              disabled={!selectedId || isPending}
+              className="rounded bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+            >
+              {isPending ? <Loader2 size={14} className="animate-spin" /> : "Привязать"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -966,18 +1157,20 @@ function SectionTreeRow({
 
 export default function ParsingTreeViewer({
   versionId,
-  expectedResults,
   goldenSampleId,
   stageKey = "parsing",
-  stageStatus = "draft",
+  stageStatusId,
 }: {
   versionId: string;
-  expectedResults?: unknown;
-  /** Опционально — нужен для quick-fix действий с expected_results JSON.
+  /** Опционально — нужен для quick-fix действий с expected_sections.
       Если не передан, доступна только пометка isFalseHeading на секции. */
   goldenSampleId?: string;
   stageKey?: string;
-  stageStatus?: string;
+  /** ID `GoldenSampleStageStatus` для текущего (sample, stage). Нужен для
+      `expectedSection.create` (parent-id записей). Если не передан,
+      создание новых записей в эталон недоступно — diff и пометка
+      false-heading работают, остальные действия отключены. */
+  stageStatusId?: string;
 }) {
   const q = trpc.document.getVersion.useQuery(
     { versionId },
@@ -1030,6 +1223,8 @@ export default function ParsingTreeViewer({
     return undefined;
   }, [rawSections, selectedIds]);
 
+  const utils = trpc.useUtils();
+
   /* ── Manual sections ─────────────────────────────────────────────
    *
    * Аннотатор может добавить раздел вручную если парсер его пропустил.
@@ -1043,27 +1238,63 @@ export default function ParsingTreeViewer({
     onSuccess: () => utils.document.getVersion.invalidate({ versionId }),
   });
 
+  /* ── Relational expected sections (PR #92 + PR E) ────────────────
+   *
+   * Читаем relational `ExpectedSection` через trpc.expectedSection.list.
+   * Это полностью заменяет старый JSON expected_results.sections (legacy
+   * остался у classification-viewer / annotate page до миграции).
+   */
+  const expectedQuery = trpc.expectedSection.list.useQuery(
+    { goldenSampleId: goldenSampleId!, stage: stageKey },
+    { enabled: !!goldenSampleId },
+  );
+  const expectedRoots = (expectedQuery.data ?? []) as ExpectedSectionNode[];
+
+  const invalidateExpected = useCallback(() => {
+    if (goldenSampleId) {
+      utils.expectedSection.list.invalidate({ goldenSampleId, stage: stageKey });
+    }
+  }, [utils, goldenSampleId, stageKey]);
+
+  const createExpectedMut = trpc.expectedSection.create.useMutation({
+    onSuccess: invalidateExpected,
+  });
+  const updateExpectedMut = trpc.expectedSection.update.useMutation({
+    onSuccess: invalidateExpected,
+  });
+  const deleteExpectedMut = trpc.expectedSection.delete.useMutation({
+    onSuccess: invalidateExpected,
+  });
+  const pinExpectedMut = trpc.expectedSection.pin.useMutation({
+    onSuccess: invalidateExpected,
+  });
+
+  const expectedFixPending =
+    createExpectedMut.isPending ||
+    updateExpectedMut.isPending ||
+    deleteExpectedMut.isPending ||
+    pinExpectedMut.isPending;
+
   const diffEntries = useMemo(
-    () => (showDiff ? diffWithExpected(rawSections, expectedResults) : []),
-    [showDiff, rawSections, expectedResults],
+    () => (showDiff ? diffWithExpectedSections(rawSections, expectedRoots) : []),
+    [showDiff, rawSections, expectedRoots],
   );
 
+  // diffMap: realSectionId → diff type. Используется для подсветки строк в дереве.
+  // orphaned не имеет real-секции, но может иметь её через `actualSectionId` (нет, не имеет).
   const diffMap = useMemo(() => {
     const m = new Map<string, DiffEntry["type"]>();
     for (const e of diffEntries) {
-      const sec = rawSections.find((s) => s.title.trim().toLowerCase() === e.sectionTitle.trim().toLowerCase());
-      if (sec) m.set(sec.id, e.type);
+      if (e.actualSectionId) m.set(e.actualSectionId, e.type);
     }
     return m;
-  }, [diffEntries, rawSections]);
+  }, [diffEntries]);
 
-  const hasDiffData = !!expectedResults && typeof expectedResults === "object" &&
-    Array.isArray((expectedResults as Record<string, unknown>).sections);
+  const hasDiffData = expectedRoots.length > 0;
 
   const anomalyCount = anomalies.size;
 
   // Bulk status update
-  const utils = trpc.useUtils();
   const bulkStructureMutation = trpc.processing.bulkUpdateSectionStructureStatus.useMutation({
     onSuccess: () => {
       utils.document.getVersion.invalidate({ versionId });
@@ -1189,47 +1420,12 @@ export default function ParsingTreeViewer({
     [markFalseHeading, utils.document.previewFalseHeadingCleanup],
   );
 
-  // Optimistic update для эталона: патчим `goldenDataset.getSample` в кеше,
-  // родительский page.tsx через useQuery подхватит и пробросит свежий expectedResults
-  // обратно сюда через props — overlay перерисуется мгновенно.
-  // Invalidate только на onError (та же причина, что выше — race с параллельными мутациями).
-  const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onMutate: async (input) => {
-      if (!goldenSampleId) return undefined;
-      await utils.goldenDataset.getSample.cancel({ id: goldenSampleId });
-      const prev = utils.goldenDataset.getSample.getData({ id: goldenSampleId });
-      utils.goldenDataset.getSample.setData({ id: goldenSampleId }, (old) => {
-        if (!old) return old;
-        // Cast: input.expectedResults — Record<string, unknown>|undefined из zod-схемы,
-        // в кеше тип JsonValue. Структурно совместимо, проблема только в null vs undefined.
-        return {
-          ...old,
-          stageStatuses: old.stageStatuses.map((ss) =>
-            ss.stage === input.stage
-              ? {
-                  ...ss,
-                  expectedResults: (input.expectedResults ?? {}) as typeof ss.expectedResults,
-                  status: input.status as typeof ss.status,
-                }
-              : ss,
-          ),
-        };
-      });
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev && goldenSampleId) {
-        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
-        utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
-      }
-    },
-  });
-
-  // Quick-fix для строки diff overlay. Логика по типу:
-  //  - accept_extra: добавить запись в expected.sections (берём level из секции)
-  //  - mark_false_heading: только Section.isFalseHeading=true (без правок эталона)
-  //  - remove_missing: убрать запись из expected.sections
-  //  - apply_level: обновить level у существующей записи в expected.sections
+  // Quick-fix для строки diff overlay. Логика по типу (relational):
+  //  - accept_extra: создать ExpectedSection с anchor'ом из real-секции (incl. occurrenceIndex).
+  //  - mark_false_heading: только Section.isFalseHeading=true (без правок эталона).
+  //  - remove_expected: deleteExpected (для missing и orphaned).
+  //  - apply_level: updateExpected({ patch: { level } }).
+  //  - repin: pinExpected({ realSectionId }).
   const handleQuickFix = useCallback(
     (fix: ParsingQuickFix) => {
       if (fix.kind === "mark_false_heading") {
@@ -1248,49 +1444,93 @@ export default function ParsingTreeViewer({
       // Остальные действия требуют контекст golden-sample (правка эталона).
       if (!goldenSampleId) return;
 
-      const current = (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
-      const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
-
-      const findIdx = (title: string) => {
-        const lower = title.trim().toLowerCase();
-        return sectionsArr.findIndex(
-          (s) => String(s.title ?? "").trim().toLowerCase() === lower,
-        );
-      };
-
-      let nextSections: Array<Record<string, unknown>> = sectionsArr;
       if (fix.kind === "accept_extra") {
-        const idx = findIdx(fix.sectionTitle);
-        if (idx >= 0) {
-          nextSections = sectionsArr.map((s, i) =>
-            i === idx ? { ...s, title: fix.sectionTitle, level: fix.level } : s,
-          );
-        } else {
-          nextSections = [...sectionsArr, { title: fix.sectionTitle, level: fix.level }];
+        if (!stageStatusId) {
+          // Нет stageStatusId — backend не сможет создать запись. Просто
+          // no-op'аем (page.tsx должен передавать id; если нет — это баг
+          // выше, но не должен крашить UI).
+          return;
         }
-      } else if (fix.kind === "remove_missing") {
-        const idx = findIdx(fix.sectionTitle);
-        if (idx < 0) return;
-        nextSections = sectionsArr.filter((_, i) => i !== idx);
-      } else if (fix.kind === "apply_level") {
-        const idx = findIdx(fix.sectionTitle);
-        if (idx < 0) return;
-        nextSections = sectionsArr.map((s, i) =>
-          i === idx ? { ...s, level: fix.newLevel } : s,
-        );
+        const sec = rawSections.find((s) => s.id === fix.sectionId);
+        if (!sec) return;
+
+        // Compute occurrenceIndex client-side: 0-based count of sections with
+        // the same (case-insensitive, trimmed) title в порядке документа,
+        // считая до этой секции.
+        const norm = (t: string) => t.trim().toLowerCase();
+        const target = norm(sec.title);
+        let occurrenceIndex = 0;
+        for (const s of rawSections) {
+          if (norm(s.title) !== target) continue;
+          if (s.id === sec.id) break;
+          occurrenceIndex += 1;
+        }
+
+        const anchor = {
+          paragraphIndex:
+            typeof sec.sourceAnchor?.paragraphIndex === "number"
+              ? sec.sourceAnchor.paragraphIndex
+              : undefined,
+          textSnippet: sec.sourceAnchor?.textSnippet || sec.title,
+          occurrenceIndex,
+          // contentBlockDigest не считаем на клиенте (нужен sha256 первых
+          // 200 chars); follow-up `pin` пересчитает digest на сервере.
+        };
+
+        // Section.level и ExpectedSection.level — оба 1-based (см. headings
+        // h1..h9 в parser.ts). Защищаемся от synthetic root (level=0):
+        // если так — clamp к 1, чтобы Zod (`min(1)`) не отверг запрос.
+        const apiLevel = Math.max(1, fix.level);
+
+        // order: ставим в конец списка expected (упрощение, эксперт может
+        // потом перетащить).
+        const flatLen = flattenExpectedNodes(expectedRoots).length;
+
+        createExpectedMut.mutate({
+          stageStatusId,
+          parentId: null,
+          title: fix.sectionTitle,
+          level: apiLevel,
+          anchor,
+          order: flatLen,
+        });
+        return;
       }
 
-      updateExpected.mutate({
-        goldenSampleId,
-        stage: stageKey,
-        status: (stageStatus === "not_set" ? "draft" : stageStatus) as
-          | "draft"
-          | "in_review"
-          | "approved",
-        expectedResults: { ...current, sections: nextSections },
-      });
+      if (fix.kind === "remove_expected") {
+        deleteExpectedMut.mutate({ id: fix.expectedSectionId });
+        return;
+      }
+
+      if (fix.kind === "apply_level") {
+        // newLevel уже совпадает с Section.level (1-based). Clamp на min=1.
+        const apiLevel = Math.max(1, fix.newLevel);
+        updateExpectedMut.mutate({
+          id: fix.expectedSectionId,
+          patch: { level: apiLevel },
+        });
+        return;
+      }
+
+      if (fix.kind === "repin") {
+        pinExpectedMut.mutate({
+          expectedId: fix.expectedSectionId,
+          realSectionId: fix.realSectionId,
+        });
+        return;
+      }
     },
-    [requestMarkFalseHeading, rawSections, updateExpected, expectedResults, goldenSampleId, stageKey, stageStatus],
+    [
+      requestMarkFalseHeading,
+      rawSections,
+      goldenSampleId,
+      stageStatusId,
+      expectedRoots,
+      createExpectedMut,
+      updateExpectedMut,
+      deleteExpectedMut,
+      pinExpectedMut,
+    ],
   );
 
   // Toggle helpers
@@ -1513,7 +1753,7 @@ export default function ParsingTreeViewer({
             setActiveSectionId(sectionId);
             requestAnimationFrame(() => containerRef.current?.focus());
           }}
-          fixPending={markFalseHeading.isPending || updateExpected.isPending}
+          fixPending={markFalseHeading.isPending || expectedFixPending}
         />
       )}
 

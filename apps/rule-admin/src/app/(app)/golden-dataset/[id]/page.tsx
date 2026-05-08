@@ -1028,12 +1028,16 @@ function StageDataViewer({
   expectedResults,
   goldenSampleId,
   currentStatus,
+  stageStatusId,
 }: {
   stageKey: string;
   versionIds: string[];
   expectedResults?: unknown;
   goldenSampleId: string;
   currentStatus: string;
+  /** ID `GoldenSampleStageStatus` — нужен parsing-viewer'у для создания
+      записей в `expected_sections` через relational endpoint. */
+  stageStatusId?: string;
 }) {
   if (versionIds.length === 0) {
     return <EmptyMsg text="Добавьте документы, чтобы увидеть результаты обработки." />;
@@ -1045,10 +1049,9 @@ function StageDataViewer({
       return (
         <ParsingTreeViewer
           versionId={vid}
-          expectedResults={expectedResults}
           goldenSampleId={goldenSampleId}
           stageKey={stageKey}
-          stageStatus={currentStatus}
+          stageStatusId={stageStatusId}
         />
       );
     case "classification":
@@ -1175,7 +1178,7 @@ function StagePanel({
 }: {
   goldenSampleId: string;
   stageKey: string;
-  stageStatus?: { status: string; expectedResults: unknown; reviewComment?: string | null };
+  stageStatus?: { id: string; status: string; expectedResults: unknown; reviewComment?: string | null };
   documentVersionIds: string[];
 }) {
   const utils = trpc.useUtils();
@@ -1460,6 +1463,7 @@ function StagePanel({
           expectedResults={stageStatus?.expectedResults}
           goldenSampleId={goldenSampleId}
           currentStatus={currentStatus}
+          stageStatusId={stageStatus?.id}
         />
       </div>
 
@@ -1783,7 +1787,7 @@ export default function GoldenDatasetDetailPage() {
             stageKey={activeStage}
             stageStatus={
               stageStatusMap.get(activeStage) as
-                | { status: string; expectedResults: unknown; reviewComment?: string | null }
+                | { id: string; status: string; expectedResults: unknown; reviewComment?: string | null }
                 | undefined
             }
             documentVersionIds={

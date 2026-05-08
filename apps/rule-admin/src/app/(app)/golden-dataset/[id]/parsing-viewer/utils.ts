@@ -5,6 +5,7 @@ import type {
   SortKey,
   FilterState,
   ExpectedResults,
+  ExpectedSectionNode,
 } from "./types";
 
 export function buildNumbering(sections: Section[]): Map<string, string> {
@@ -118,6 +119,11 @@ function flattenExpected(
   return result;
 }
 
+/**
+ * @deprecated Используется classification-viewer'ом и annotate page'ом до миграции
+ * на relational `ExpectedSection` (PR F + последующие). В parsing-viewer'е
+ * заменено на `diffWithExpectedSections`. Сохранено для backward-compat.
+ */
 export function diffWithExpected(
   sections: Section[],
   expectedResults: unknown,
@@ -187,6 +193,97 @@ export function diffWithExpected(
         actualSectionId: s.id,
       });
     }
+  }
+
+  return entries;
+}
+
+/**
+ * Flatten relational expected tree (children nested) в плоский список
+ * в порядке обхода. Используется для построения diff-списков и пикеров.
+ */
+export function flattenExpectedNodes(
+  roots: ExpectedSectionNode[],
+): ExpectedSectionNode[] {
+  const out: ExpectedSectionNode[] = [];
+  const walk = (nodes: ExpectedSectionNode[]) => {
+    for (const n of nodes) {
+      out.push(n);
+      if (n.children?.length) walk(n.children);
+    }
+  };
+  walk(roots);
+  return out;
+}
+
+/**
+ * Diff реальных секций документа против relational `ExpectedSection`-дерева.
+ *
+ * Алгоритм (отличается от legacy `diffWithExpected`):
+ *  - Для каждой expected-записи смотрим `realSectionId`:
+ *      • null → `orphaned` (после re-parse anchor не нашёл секцию).
+ *      • валидный id, секция существует, не isFalseHeading → match.
+ *        Если `level !== expected.level` → `wrong_level`.
+ *      • валидный id, но реальной секции нет / она isFalseHeading →
+ *        `orphaned` (тот же исход — нужен re-pin).
+ *  - Реальные секции, не привязанные ни к одной expected → `extra`.
+ *  - `missing` в relational-модели возникает редко (только если у нас
+ *    expected без realSectionId и без anchor вообще), но мы его не
+ *    генерируем здесь — orphaned покрывает этот сценарий.
+ */
+export function diffWithExpectedSections(
+  realSections: Section[],
+  expectedRoots: ExpectedSectionNode[],
+): DiffEntry[] {
+  const entries: DiffEntry[] = [];
+  const sectionById = new Map<string, Section>();
+  for (const s of realSections) sectionById.set(s.id, s);
+
+  const flatExpected = flattenExpectedNodes(expectedRoots);
+  const matchedRealIds = new Set<string>();
+
+  for (const exp of flatExpected) {
+    if (!exp.realSectionId) {
+      entries.push({
+        type: "orphaned",
+        sectionTitle: exp.title,
+        expected: { level: exp.level, order: exp.order },
+        expectedSectionId: exp.id,
+      });
+      continue;
+    }
+    const real = sectionById.get(exp.realSectionId);
+    if (!real || real.isFalseHeading) {
+      entries.push({
+        type: "orphaned",
+        sectionTitle: exp.title,
+        expected: { level: exp.level, order: exp.order },
+        expectedSectionId: exp.id,
+      });
+      continue;
+    }
+    matchedRealIds.add(real.id);
+    if (real.level !== exp.level) {
+      entries.push({
+        type: "wrong_level",
+        sectionTitle: exp.title,
+        expected: { level: exp.level, order: exp.order },
+        actual: { level: real.level, order: real.order },
+        actualSectionId: real.id,
+        expectedSectionId: exp.id,
+      });
+    }
+  }
+
+  for (const s of realSections) {
+    if (s.isFalseHeading) continue;
+    if (matchedRealIds.has(s.id)) continue;
+    entries.push({
+      type: "extra",
+      sectionTitle: s.title,
+      actual: { level: s.level, order: s.order },
+      actualSectionId: s.id,
+    });
   }
 
   return entries;
