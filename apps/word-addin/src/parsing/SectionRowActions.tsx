@@ -1,18 +1,29 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Field,
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  Spinner,
   Text,
+  Textarea,
   Tooltip,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
 import {
-  EyeOff20Regular,
-  Eye20Regular,
   Comment20Regular,
+  CommentEdit20Regular,
+  Delete20Regular,
+  Eye20Regular,
+  EyeOff20Regular,
 } from "@fluentui/react-icons";
 import type { Section } from "./types";
 
@@ -36,18 +47,68 @@ const useStyles = makeStyles({
 
 interface Props {
   section: Section;
-  onToggleFalseHeading: () => void;
   pending: boolean;
+  onToggleFalseHeading: () => void;
+  /** Сохранить новый structureComment (status оставить тем же). */
+  onUpdateComment: (newComment: string) => Promise<void>;
+  /** Удалить вручную добавленный раздел (только если section.isManual). */
+  onDeleteManual?: () => Promise<void>;
 }
 
 /**
- * Per-section actions: переключить флаг ложного заголовка и просмотреть
- * structureComment в popover'е (если есть). Кнопки — миниатюрные subtle, чтобы
- * вписаться в строку дерева.
+ * Per-section actions: переключить флаг ложного заголовка, посмотреть/редактировать
+ * structureComment, удалить вручную добавленный раздел.
+ *
+ * Comment-flow:
+ *  - Если есть structureComment — отображаем popover-просмотр (💬) + кнопку
+ *    редактирования (✏ CommentEdit) которая открывает диалог с textarea.
+ *  - Если comment отсутствует — показываем только кнопку «✏» для добавления
+ *    комментария без перевода в requires_rework через bulk-actions.
+ *
+ * Delete-flow:
+ *  - Кнопка-корзина показывается только при section.isManual=true.
+ *  - Confirm через Dialog → onDeleteManual.
  */
-export function SectionRowActions({ section, onToggleFalseHeading, pending }: Props) {
+export function SectionRowActions({
+  section,
+  pending,
+  onToggleFalseHeading,
+  onUpdateComment,
+  onDeleteManual,
+}: Props) {
   const styles = useStyles();
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [savingComment, setSavingComment] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const isFalse = section.isFalseHeading;
+
+  useEffect(() => {
+    if (editOpen) setDraft(section.structureComment ?? "");
+  }, [editOpen, section.structureComment]);
+
+  const handleSaveComment = async () => {
+    setSavingComment(true);
+    try {
+      await onUpdateComment(draft.trim());
+      setEditOpen(false);
+    } finally {
+      setSavingComment(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!onDeleteManual) return;
+    setDeleting(true);
+    try {
+      await onDeleteManual();
+      setConfirmDeleteOpen(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className={styles.actions} onClick={(e) => e.stopPropagation()}>
       {section.structureComment && (
@@ -69,6 +130,20 @@ export function SectionRowActions({ section, onToggleFalseHeading, pending }: Pr
       )}
 
       <Tooltip
+        content={section.structureComment ? "Редактировать комментарий" : "Добавить комментарий"}
+        relationship="label"
+      >
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<CommentEdit20Regular />}
+          onClick={() => setEditOpen(true)}
+          disabled={pending}
+          aria-label="Редактировать комментарий"
+        />
+      </Tooltip>
+
+      <Tooltip
         content={isFalse ? "Восстановить как заголовок" : "Пометить как ложный заголовок"}
         relationship="label"
       >
@@ -80,6 +155,89 @@ export function SectionRowActions({ section, onToggleFalseHeading, pending }: Pr
           disabled={pending}
         />
       </Tooltip>
+
+      {section.isManual && onDeleteManual && (
+        <Tooltip content="Удалить вручную добавленный раздел" relationship="label">
+          <Button
+            size="small"
+            appearance="subtle"
+            icon={<Delete20Regular />}
+            onClick={() => setConfirmDeleteOpen(true)}
+            disabled={pending}
+            aria-label="Удалить раздел"
+          />
+        </Tooltip>
+      )}
+
+      <Dialog open={editOpen} onOpenChange={(_, d) => !d.open && setEditOpen(false)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>
+              {section.structureComment ? "Редактировать комментарий" : "Добавить комментарий"}
+            </DialogTitle>
+            <DialogContent>
+              <Field label="Комментарий к разделу">
+                <Textarea
+                  value={draft}
+                  onChange={(_, d) => setDraft(d.value)}
+                  rows={5}
+                  resize="vertical"
+                  placeholder="Опишите, что именно нужно исправить или прокомментировать..."
+                />
+              </Field>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="secondary"
+                onClick={() => setEditOpen(false)}
+                disabled={savingComment}
+              >
+                Отмена
+              </Button>
+              <Button
+                appearance="primary"
+                onClick={() => void handleSaveComment()}
+                disabled={savingComment}
+              >
+                {savingComment ? <Spinner size="tiny" /> : "Сохранить"}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog
+        open={confirmDeleteOpen}
+        onOpenChange={(_, d) => !d.open && setConfirmDeleteOpen(false)}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Удалить раздел</DialogTitle>
+            <DialogContent>
+              <Text>
+                Удалить вручную добавленный раздел «{section.title || "(без названия)"}»? Это
+                действие нельзя отменить.
+              </Text>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="secondary"
+                onClick={() => setConfirmDeleteOpen(false)}
+                disabled={deleting}
+              >
+                Отмена
+              </Button>
+              <Button
+                appearance="primary"
+                onClick={() => void handleDelete()}
+                disabled={deleting}
+              >
+                {deleting ? <Spinner size="tiny" /> : "Удалить"}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   );
 }

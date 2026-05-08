@@ -9,11 +9,12 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { ArrowSync20Regular } from "@fluentui/react-icons";
+import { Add20Regular, ArrowSync20Regular } from "@fluentui/react-icons";
 import { trpcCall } from "../api";
-import { jumpToTextInWord } from "../office-helpers";
+import { getSelectionContext, jumpToTextInWord } from "../office-helpers";
 import { SectionTree } from "./SectionTree";
 import { BulkActionsBar } from "./BulkActionsBar";
+import { AddManualSectionDialog, type AddManualSectionInput } from "./AddManualSectionDialog";
 import type { DocumentVersionResponse, Section } from "./types";
 
 const useStyles = makeStyles({
@@ -81,6 +82,12 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
   const [togglingFalseHeadingId, setTogglingFalseHeadingId] = useState<string | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "success" | "warning" | "error"; text: string } | null>(null);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addPending, setAddPending] = useState(false);
+  const [selectionContext, setSelectionContext] = useState<{
+    text: string;
+    paragraphIndex: number;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -215,6 +222,92 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
     [selectedIds, load],
   );
 
+  const handleOpenAddDialog = useCallback(async () => {
+    // Пробуем взять текущее выделение из Word. Если ничего не выделено —
+    // показываем уведомление и не открываем диалог; пользователь всё ещё может
+    // открыть его без выделения и выбрать "после раздела X" (но мы предпочитаем
+    // быстрый flow «выделил → нажал»).
+    try {
+      const ctx = await getSelectionContext();
+      if (!ctx) {
+        setFeedback({
+          kind: "warning",
+          text: "Выделите текст в документе или откройте диалог из меню.",
+        });
+        setSelectionContext(null);
+        setAddDialogOpen(true);
+        return;
+      }
+      setSelectionContext(ctx);
+      setAddDialogOpen(true);
+    } catch {
+      setSelectionContext(null);
+      setAddDialogOpen(true);
+    }
+  }, []);
+
+  const handleAddManualSubmit = useCallback(
+    async (input: AddManualSectionInput) => {
+      setAddPending(true);
+      try {
+        await trpcCall(
+          "document.addManualSection",
+          { docVersionId, ...input },
+          "mutation",
+        );
+        setAddDialogOpen(false);
+        setSelectionContext(null);
+        await load();
+        setFeedback({ kind: "success", text: "Раздел добавлен" });
+      } catch (e) {
+        setFeedback({ kind: "error", text: (e as Error).message ?? "Не удалось добавить раздел" });
+      } finally {
+        setAddPending(false);
+      }
+    },
+    [docVersionId, load],
+  );
+
+  const handleDeleteManual = useCallback(
+    async (section: Section) => {
+      try {
+        await trpcCall(
+          "document.deleteManualSection",
+          { sectionId: section.id },
+          "mutation",
+        );
+        await load();
+        setFeedback({ kind: "success", text: "Раздел удалён" });
+      } catch (e) {
+        setFeedback({ kind: "error", text: (e as Error).message ?? "Не удалось удалить раздел" });
+        throw e;
+      }
+    },
+    [load],
+  );
+
+  const handleUpdateComment = useCallback(
+    async (section: Section, newComment: string) => {
+      try {
+        await trpcCall(
+          "processing.bulkUpdateSectionStructureStatus",
+          {
+            sectionIds: [section.id],
+            status: section.structureStatus,
+            structureComment: newComment,
+          },
+          "mutation",
+        );
+        await load();
+        setFeedback({ kind: "success", text: "Комментарий сохранён" });
+      } catch (e) {
+        setFeedback({ kind: "error", text: (e as Error).message ?? "Не удалось сохранить комментарий" });
+        throw e;
+      }
+    },
+    [load],
+  );
+
   if (error) {
     return (
       <div className={styles.empty}>
@@ -245,6 +338,17 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
         <Badge size="small" appearance="outline" title="Всего секций">
           {sections.length}
         </Badge>
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<Add20Regular />}
+          onClick={() => void handleOpenAddDialog()}
+          disabled={loading || addPending}
+          title="Добавить раздел из выделения"
+          aria-label="Добавить раздел"
+        >
+          Добавить
+        </Button>
         <Button
           size="small"
           appearance="subtle"
@@ -295,6 +399,8 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
             onActivateSection={(s) => void handleActivateSection(s)}
             onToggleFalseHeading={(s) => void handleToggleFalseHeading(s)}
             togglingFalseHeadingId={togglingFalseHeadingId}
+            onUpdateComment={handleUpdateComment}
+            onDeleteManual={handleDeleteManual}
           />
         )}
       </div>
@@ -306,6 +412,19 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
         onValidate={() => void handleBulkValidate()}
         onRework={(comment) => void handleBulkRework(comment)}
         onClearSelection={() => setSelectedIds(new Set())}
+      />
+
+      <AddManualSectionDialog
+        open={addDialogOpen}
+        selectionText={selectionContext?.text ?? null}
+        selectionParagraphIndex={selectionContext?.paragraphIndex ?? null}
+        sections={sections}
+        pending={addPending}
+        onClose={() => {
+          setAddDialogOpen(false);
+          setSelectionContext(null);
+        }}
+        onSubmit={handleAddManualSubmit}
       />
     </div>
   );

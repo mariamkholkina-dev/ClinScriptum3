@@ -88,6 +88,8 @@ interface Props {
   onActivateSection: (section: Section) => void;
   onToggleFalseHeading: (section: Section) => void;
   togglingFalseHeadingId: string | null;
+  onUpdateComment: (section: Section, newComment: string) => Promise<void>;
+  onDeleteManual: (section: Section) => Promise<void>;
 }
 
 /**
@@ -109,6 +111,8 @@ export function SectionTree({
   onActivateSection,
   onToggleFalseHeading,
   togglingFalseHeadingId,
+  onUpdateComment,
+  onDeleteManual,
 }: Props) {
   const styles = useStyles();
 
@@ -188,6 +192,10 @@ export function SectionTree({
               section={section}
               pending={togglingFalseHeadingId === section.id}
               onToggleFalseHeading={() => onToggleFalseHeading(section)}
+              onUpdateComment={(newComment) => onUpdateComment(section, newComment)}
+              onDeleteManual={
+                section.isManual ? () => onDeleteManual(section) : undefined
+              }
             />
           </div>
         );

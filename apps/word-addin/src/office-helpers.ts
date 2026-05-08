@@ -146,6 +146,55 @@ export async function jumpToTextInWord(text: string): Promise<boolean> {
   });
 }
 
+/**
+ * Возвращает текст текущего выделения + paragraphIndex (примерный — позиция
+ * параграфа, в котором находится начало выделения, среди всех параграфов body).
+ *
+ * Если ничего не выделено или выделение пустое — возвращает null.
+ *
+ * paragraphIndex рассчитывается как индекс первого параграфа, чей текст совпадает
+ * с первой строкой выделения, в `body.paragraphs`. Это совместимо с тем, как
+ * doc-parser индексирует параграфы при разборе DOCX (см. `paragraph-walker`).
+ */
+export async function getSelectionContext(): Promise<{
+  text: string;
+  paragraphIndex: number;
+} | null> {
+  return new Promise((resolve) => {
+    Word.run(async (ctx: any) => {
+      const selection = ctx.document.getSelection();
+      selection.load("text");
+      const allParagraphs = ctx.document.body.paragraphs;
+      allParagraphs.load("items/text");
+      await ctx.sync();
+
+      const selectedText: string = (selection.text ?? "").toString();
+      if (!selectedText || selectedText.trim().length === 0) {
+        resolve(null);
+        return;
+      }
+
+      // Берём первую непустую строку выделения и ищем её в полном списке
+      // параграфов. Это даёт стабильный paragraphIndex даже если выделение
+      // охватывает несколько параграфов.
+      const firstLine = selectedText.split(/\r?\n/).map((s) => s.trim()).find((s) => s.length > 0) ?? selectedText.trim();
+      const needle = firstLine.slice(0, 80);
+
+      let paragraphIndex = 0;
+      const items = allParagraphs.items as Array<{ text: string }>;
+      for (let i = 0; i < items.length; i++) {
+        const paraText = (items[i].text ?? "").trim();
+        if (paraText.length > 0 && paraText.includes(needle)) {
+          paragraphIndex = i;
+          break;
+        }
+      }
+
+      resolve({ text: selectedText, paragraphIndex });
+    }).catch(() => resolve(null));
+  });
+}
+
 export async function insertTextAtCursor(text: string): Promise<void> {
   return Word.run(async (context: any) => {
     const selection = context.document.getSelection();
