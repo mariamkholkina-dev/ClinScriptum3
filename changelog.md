@@ -2,6 +2,23 @@
 
 ## 2026-05-08
 
+### Feat (PR 2/4): ParsingPanel в Word add-in — section tree + bulk actions
+
+`apps/word-addin/src/parsing/` (новая директория):
+- `types.ts` — типы `Section`, `ContentBlock`, `DocumentVersionResponse` (зеркало `apps/rule-admin/.../parsing-viewer/types.ts`, т.к. word-addin не импортирует AppRouter напрямую).
+- `ParsingPanel.tsx` — главная панель режима `mode='parsing'`. Грузит sections через `document.getVersion`, состояние выбора + активной секции локальное; на каждое действие — refetch (без оптимистичных апдейтов; для add-in приемлемо).
+- `SectionTree.tsx` — линейное дерево с indent по `level`. Бейджи `L{n}` + статус структуры (validated / not_validated / requires_rework), маркер `✱` для `isManual`, line-through для `isFalseHeading`. Чекбокс на каждой строке. Click на строку → highlight в Word через `jumpToTextInWord`.
+- `SectionRowActions.tsx` — per-section actions: Eye/EyeOff toggle для `isFalseHeading` (через `document.markSectionFalseHeading`) + popover с `structureComment` (если есть).
+- `BulkActionsBar.tsx` — показывается когда `selectedCount > 0`. Кнопки «Подтвердить» (status=validated) и «На доработку» (открывает `Dialog` с `Textarea`; pre-fill существующим `structureComment` одной из выделенных секций). Bulk через `processing.bulkUpdateSectionStructureStatus`.
+
+`apps/word-addin/src/office-helpers.ts`:
+- Добавлена `jumpToTextInWord(text)` — `body.search` на первых 80 символах + select + highlight в жёлтый. Используется при клике на строку дерева.
+
+`apps/word-addin/src/App.tsx`:
+- Placeholder для `mode === 'parsing'` (из PR 1) заменён на `<ParsingPanel docVersionId={docVersionId} goldenSampleId={sessionContext.goldenSampleId} />`.
+
+Не входит: ручное добавление секций (PR 3 — нужна интеграция с Office.js getSelection), diff с эталоном (PR 4).
+
 ### Feat: structureComment readback + manual sections в parsing-viewer
 
 **Bug fix — комментарий «На доработку» не сохранялся для просмотра:**
