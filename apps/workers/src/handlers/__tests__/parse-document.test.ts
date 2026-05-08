@@ -4,7 +4,7 @@ vi.mock("@clinscriptum/db", () => ({
   prisma: {
     documentVersion: { findUnique: vi.fn(), update: vi.fn() },
     contentBlock: { deleteMany: vi.fn(), createMany: vi.fn() },
-    section: { deleteMany: vi.fn(), create: vi.fn() },
+    section: { deleteMany: vi.fn(), create: vi.fn(), findMany: vi.fn(), update: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -91,16 +91,26 @@ describe("handleParseDocument", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Default: $transaction calls the callback with a tx proxy that mirrors prisma
-    mockTransaction.mockImplementation(async (cb: (tx: typeof prisma) => Promise<void>) => {
-      const txProxy = {
-        section: { create: prisma.section.create as ReturnType<typeof vi.fn> },
-        contentBlock: { createMany: prisma.contentBlock.createMany as ReturnType<typeof vi.fn> },
-      };
-      (txProxy.section.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sec-1" });
-      (txProxy.contentBlock.createMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 1 });
-      return cb(txProxy as unknown as typeof prisma);
-    });
+    // Default: section.findMany возвращает [] — reorderSectionsByAnchor
+    // отрабатывает no-op (не падает на mock'е).
+    (prisma.section.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    // $transaction теперь поддерживает ДВА паттерна:
+    //  1. callback-form: (cb) => cb(tx) — для save sections с tx-proxy
+    //  2. array-form: (queries) => Promise.all(queries) — для reorderSectionsByAnchor
+    mockTransaction.mockImplementation(
+      async (arg: ((tx: typeof prisma) => Promise<void>) | Array<unknown>) => {
+        if (Array.isArray(arg)) return Promise.all(arg as Array<Promise<unknown>>);
+        const cb = arg as (tx: typeof prisma) => Promise<void>;
+        const txProxy = {
+          section: { create: prisma.section.create as ReturnType<typeof vi.fn> },
+          contentBlock: { createMany: prisma.contentBlock.createMany as ReturnType<typeof vi.fn> },
+        };
+        (txProxy.section.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sec-1" });
+        (txProxy.contentBlock.createMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 1 });
+        return cb(txProxy as unknown as typeof prisma);
+      },
+    );
   });
 
   it("successfully parses document and returns metadata", async () => {
