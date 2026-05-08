@@ -5,6 +5,8 @@ import {
   MessageBar,
   MessageBarBody,
   Spinner,
+  Tab,
+  TabList,
   Text,
   makeStyles,
   tokens,
@@ -15,6 +17,8 @@ import { getSelectionContext, jumpToTextInWord } from "../office-helpers";
 import { SectionTree } from "./SectionTree";
 import { BulkActionsBar } from "./BulkActionsBar";
 import { AddManualSectionDialog, type AddManualSectionInput } from "./AddManualSectionDialog";
+import { DiffPanel } from "./DiffPanel";
+import { diffWithExpected, type DiffEntry } from "./diffWithExpected";
 import type { DocumentVersionResponse, Section } from "./types";
 
 const useStyles = makeStyles({
@@ -37,6 +41,10 @@ const useStyles = makeStyles({
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
+  tabBar: {
+    padding: "0 8px",
+    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+  },
   body: {
     flex: 1,
     minHeight: 0,
@@ -52,12 +60,31 @@ const useStyles = makeStyles({
   feedback: {
     padding: "4px 12px",
   },
+  tabBadge: {
+    marginLeft: "6px",
+  },
 });
 
 interface Props {
   docVersionId: string;
   goldenSampleId?: string;
 }
+
+/** Минимальный shape ответа `goldenDataset.getSample`, нужный для diff overlay.
+ *  Полный тип сидит в API, в word-addin мы строго типизируем только те поля,
+ *  которые реально читаем (см. также комментарий в ./types.ts). */
+interface GoldenSampleResponse {
+  id: string;
+  stageStatuses: Array<{
+    stage: string;
+    status: "draft" | "in_review" | "approved" | string;
+    expectedResults: unknown;
+  }>;
+}
+
+const PARSING_STAGE_KEY = "parsing";
+
+type TabKey = "tree" | "diff";
 
 /**
  * Главная панель режима 'parsing' в Word add-in.
@@ -67,14 +94,22 @@ interface Props {
  * и bulk-операции по выделенным секциям. Mutations:
  *  - markSectionFalseHeading — переключить ложный заголовок
  *  - bulkUpdateSectionStructureStatus — bulk validated / requires_rework + comment
+ *  - addManualSection / deleteManualSection — ручные секции (PR 3)
+ *  - goldenDataset.updateStageStatus — quick-fix правки эталона из Diff overlay (PR 4)
  *
  * Refetch после каждой mutation; UI оптимизмом не управляет — для add-in это
  * приемлемо (мало секций, операции редки). При необходимости позже добавим
  * оптимистичные апдейты как в rule-admin.
+ *
+ * Tab integration (PR 4):
+ *  - «Дерево» — существующий SectionTree + BulkActions + кнопка «+ Добавить»
+ *  - «Diff с эталоном» — виден только при `goldenSampleId`, рендерит DiffPanel.
+ *    BulkActions и кнопка «+ Добавить» скрыты на этом табе.
  */
 export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
   const styles = useStyles();
   const [data, setData] = useState<DocumentVersionResponse | null>(null);
+  const [goldenSample, setGoldenSample] = useState<GoldenSampleResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -84,6 +119,8 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
   const [feedback, setFeedback] = useState<{ kind: "success" | "warning" | "error"; text: string } | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addPending, setAddPending] = useState(false);
+  const [diffFixPending, setDiffFixPending] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabKey>("tree");
   const [selectionContext, setSelectionContext] = useState<{
     text: string;
     paragraphIndex: number;
@@ -93,16 +130,29 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await trpcCall<DocumentVersionResponse>("document.getVersion", {
-        versionId: docVersionId,
-      });
-      setData(res);
+      // Параллельная загрузка structure + golden sample (если есть). Если нет
+      // golden sample — второй вызов skip'аем, но в любом случае don't fail
+      // overall load если golden fetch упадёт (не блокирующая фича).
+      const [versionRes, goldenRes] = await Promise.all([
+        trpcCall<DocumentVersionResponse>("document.getVersion", { versionId: docVersionId }),
+        goldenSampleId
+          ? trpcCall<GoldenSampleResponse>("goldenDataset.getSample", { id: goldenSampleId }).catch(
+              (e) => {
+                // eslint-disable-next-line no-console
+                console.warn("[ParsingPanel] goldenDataset.getSample failed", e);
+                return null;
+              },
+            )
+          : Promise.resolve(null),
+      ]);
+      setData(versionRes);
+      setGoldenSample(goldenRes);
     } catch (e) {
       setError((e as Error).message ?? "Ошибка загрузки документа");
     } finally {
       setLoading(false);
     }
-  }, [docVersionId]);
+  }, [docVersionId, goldenSampleId]);
 
   useEffect(() => {
     void load();
@@ -116,6 +166,37 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
   }, [feedback]);
 
   const sections = useMemo<Section[]>(() => data?.sections ?? [], [data]);
+
+  // Stage status для parsing — ищем в stageStatuses[]; если эталон не настроен
+  // (status='not_set' / эталон без stageStatuses[parsing]) — будем считать draft.
+  const parsingStageStatus = useMemo(() => {
+    return goldenSample?.stageStatuses.find((s) => s.stage === PARSING_STAGE_KEY);
+  }, [goldenSample]);
+
+  const expectedResults = parsingStageStatus?.expectedResults;
+
+  const diffEntries = useMemo<DiffEntry[]>(
+    () => diffWithExpected(sections, expectedResults),
+    [sections, expectedResults],
+  );
+
+  // Map для подсветки строк в SectionTree, привязанных к diff. Только для extra
+  // и wrong_level — у missing нет реальной секции в БД.
+  const diffTypeBySectionId = useMemo<Map<string, "extra" | "wrong_level">>(() => {
+    const m = new Map<string, "extra" | "wrong_level">();
+    for (const e of diffEntries) {
+      if ((e.type === "extra" || e.type === "wrong_level") && e.actualSectionId) {
+        m.set(e.actualSectionId, e.type);
+      }
+    }
+    return m;
+  }, [diffEntries]);
+
+  // Tab «Diff» виден только при наличии goldenSampleId. Если эталон ушёл —
+  // активный таб переключаем обратно на дерево.
+  useEffect(() => {
+    if (!goldenSampleId && activeTab === "diff") setActiveTab("tree");
+  }, [goldenSampleId, activeTab]);
 
   // Существующий structureComment у одной из выделенных — pre-fill rework dialog.
   const existingReworkComment = useMemo(() => {
@@ -154,6 +235,14 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
       // Игнорируем — пользователь мог открыть add-in вне Word (preview-режим).
     }
   }, []);
+
+  const handleJumpToSectionById = useCallback(
+    (sectionId: string) => {
+      const section = sections.find((s) => s.id === sectionId);
+      if (section) void handleActivateSection(section);
+    },
+    [sections, handleActivateSection],
+  );
 
   const handleToggleFalseHeading = useCallback(
     async (section: Section) => {
@@ -308,6 +397,120 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
     [load],
   );
 
+  /* ────────── Diff quick-fix handlers ────────── */
+
+  // Помощник: применить функцию-патчер к expected.sections и отправить на сервер
+  // через goldenDataset.updateStageStatus. Сохраняет текущий status (или draft
+  // если ещё нет stage status). Поведение совпадает с rule-admin.
+  const updateExpectedSections = useCallback(
+    async (
+      patch: (current: Array<Record<string, unknown>>) => Array<Record<string, unknown>>,
+    ) => {
+      if (!goldenSampleId) return;
+      const currentExpected =
+        (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
+      const sectionsArr = Array.isArray(currentExpected.sections) ? currentExpected.sections : [];
+      const nextSections = patch(sectionsArr);
+      const currentStatusRaw = parsingStageStatus?.status ?? "draft";
+      const status: "draft" | "in_review" | "approved" =
+        currentStatusRaw === "in_review" || currentStatusRaw === "approved"
+          ? currentStatusRaw
+          : "draft";
+
+      setDiffFixPending(true);
+      try {
+        await trpcCall(
+          "goldenDataset.updateStageStatus",
+          {
+            goldenSampleId,
+            stage: PARSING_STAGE_KEY,
+            status,
+            expectedResults: { ...currentExpected, sections: nextSections },
+          },
+          "mutation",
+        );
+        await load();
+      } catch (e) {
+        setFeedback({ kind: "error", text: (e as Error).message ?? "Не удалось сохранить эталон" });
+      } finally {
+        setDiffFixPending(false);
+      }
+    },
+    [goldenSampleId, expectedResults, parsingStageStatus, load],
+  );
+
+  const findExpectedIdx = (
+    arr: Array<Record<string, unknown>>,
+    title: string,
+  ) => {
+    const lower = title.trim().toLowerCase();
+    return arr.findIndex(
+      (s) => String(s.title ?? "").trim().toLowerCase() === lower,
+    );
+  };
+
+  const handleDiffAcceptExtra = useCallback(
+    async (entry: DiffEntry) => {
+      if (!entry.actual) return;
+      const level = entry.actual.level;
+      await updateExpectedSections((current) => {
+        const idx = findExpectedIdx(current, entry.sectionTitle);
+        if (idx >= 0) {
+          return current.map((s, i) =>
+            i === idx ? { ...s, title: entry.sectionTitle, level } : s,
+          );
+        }
+        return [...current, { title: entry.sectionTitle, level }];
+      });
+      setFeedback({ kind: "success", text: "Запись добавлена в эталон" });
+    },
+    [updateExpectedSections],
+  );
+
+  const handleDiffMarkFalseHeading = useCallback(
+    async (sectionId: string) => {
+      setDiffFixPending(true);
+      try {
+        await trpcCall(
+          "document.markSectionFalseHeading",
+          { sectionId, isFalseHeading: true },
+          "mutation",
+        );
+        await load();
+        setFeedback({ kind: "success", text: "Секция помечена как ложный заголовок" });
+      } catch (e) {
+        setFeedback({ kind: "error", text: (e as Error).message ?? "Не удалось сохранить" });
+      } finally {
+        setDiffFixPending(false);
+      }
+    },
+    [load],
+  );
+
+  const handleDiffRemoveMissing = useCallback(
+    async (entry: DiffEntry) => {
+      await updateExpectedSections((current) => {
+        const idx = findExpectedIdx(current, entry.sectionTitle);
+        if (idx < 0) return current;
+        return current.filter((_, i) => i !== idx);
+      });
+      setFeedback({ kind: "success", text: "Запись удалена из эталона" });
+    },
+    [updateExpectedSections],
+  );
+
+  const handleDiffApplyLevel = useCallback(
+    async (entry: DiffEntry, newLevel: number) => {
+      await updateExpectedSections((current) => {
+        const idx = findExpectedIdx(current, entry.sectionTitle);
+        if (idx < 0) return current;
+        return current.map((s, i) => (i === idx ? { ...s, level: newLevel } : s));
+      });
+      setFeedback({ kind: "success", text: "Уровень обновлён в эталоне" });
+    },
+    [updateExpectedSections],
+  );
+
   if (error) {
     return (
       <div className={styles.empty}>
@@ -320,6 +523,9 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
       </div>
     );
   }
+
+  const showAddButton = activeTab === "tree";
+  const showBulkActions = activeTab === "tree";
 
   return (
     <div className={styles.root}>
@@ -338,17 +544,19 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
         <Badge size="small" appearance="outline" title="Всего секций">
           {sections.length}
         </Badge>
-        <Button
-          size="small"
-          appearance="subtle"
-          icon={<Add20Regular />}
-          onClick={() => void handleOpenAddDialog()}
-          disabled={loading || addPending}
-          title="Добавить раздел из выделения"
-          aria-label="Добавить раздел"
-        >
-          Добавить
-        </Button>
+        {showAddButton && (
+          <Button
+            size="small"
+            appearance="subtle"
+            icon={<Add20Regular />}
+            onClick={() => void handleOpenAddDialog()}
+            disabled={loading || addPending}
+            title="Добавить раздел из выделения"
+            aria-label="Добавить раздел"
+          >
+            Добавить
+          </Button>
+        )}
         <Button
           size="small"
           appearance="subtle"
@@ -361,10 +569,27 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
       </div>
 
       {goldenSampleId && (
-        <div className={styles.feedback}>
-          <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-            Эталон: {goldenSampleId.slice(0, 8)}…
-          </Text>
+        <div className={styles.tabBar}>
+          <TabList
+            selectedValue={activeTab}
+            onTabSelect={(_, d) => setActiveTab(d.value as TabKey)}
+            size="small"
+          >
+            <Tab value="tree">Дерево</Tab>
+            <Tab value="diff">
+              Diff с эталоном
+              {diffEntries.length > 0 && (
+                <Badge
+                  className={styles.tabBadge}
+                  size="small"
+                  appearance="filled"
+                  color="danger"
+                >
+                  {diffEntries.length}
+                </Badge>
+              )}
+            </Tab>
+          </TabList>
         </div>
       )}
 
@@ -389,6 +614,16 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
           <div className={styles.empty}>
             <Spinner label="Загрузка структуры..." />
           </div>
+        ) : activeTab === "diff" && goldenSampleId ? (
+          <DiffPanel
+            entries={diffEntries}
+            pending={diffFixPending}
+            onJumpToSection={handleJumpToSectionById}
+            onAcceptExtra={(e) => void handleDiffAcceptExtra(e)}
+            onMarkFalseHeading={(id) => void handleDiffMarkFalseHeading(id)}
+            onRemoveMissing={(e) => void handleDiffRemoveMissing(e)}
+            onApplyLevel={(e, lvl) => void handleDiffApplyLevel(e, lvl)}
+          />
         ) : (
           <SectionTree
             sections={sections}
@@ -401,18 +636,21 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
             togglingFalseHeadingId={togglingFalseHeadingId}
             onUpdateComment={handleUpdateComment}
             onDeleteManual={handleDeleteManual}
+            diffTypeBySectionId={goldenSampleId ? diffTypeBySectionId : undefined}
           />
         )}
       </div>
 
-      <BulkActionsBar
-        selectedCount={selectedIds.size}
-        pending={bulkPending}
-        existingReworkComment={existingReworkComment}
-        onValidate={() => void handleBulkValidate()}
-        onRework={(comment) => void handleBulkRework(comment)}
-        onClearSelection={() => setSelectedIds(new Set())}
-      />
+      {showBulkActions && (
+        <BulkActionsBar
+          selectedCount={selectedIds.size}
+          pending={bulkPending}
+          existingReworkComment={existingReworkComment}
+          onValidate={() => void handleBulkValidate()}
+          onRework={(comment) => void handleBulkRework(comment)}
+          onClearSelection={() => setSelectedIds(new Set())}
+        />
+      )}
 
       <AddManualSectionDialog
         open={addDialogOpen}

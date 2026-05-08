@@ -2,6 +2,28 @@
 
 ## 2026-05-08
 
+### Feat (PR 4/4 v2): diff с эталоном + quick-fix actions (Word add-in)
+
+`apps/word-addin/src/parsing/diffWithExpected.ts` (новый):
+- Чистая функция `diffWithExpected(sections, expectedResults)` — порт из rule-admin parsing-viewer/utils.ts. Возвращает `DiffEntry[]` с типами `missing` / `extra` / `wrong_level`. Секции с `isFalseHeading=true` исключаются. Локальные типы `ExpectedSection`, `ExpectedResults`, `DiffEntry` (без импортов rule-admin).
+
+`apps/word-addin/src/parsing/DiffPanel.tsx` (новый):
+- FluentUI v9 список diff entries, сгруппирован по типу (Пропущено / Лишних / Неверный уровень). Бейджи-счётчики сверху.
+- Quick-fix кнопки: extra → «Принять в эталон» + «Не заголовок»; missing → «Удалить из эталона»; wrong_level → Dropdown (0–5) + «Применить».
+- Click на строку (вне кнопок) → `onJumpToSection(actualSectionId)` для extra/wrong_level.
+
+`apps/word-addin/src/parsing/SectionTree.tsx`:
+- Новый prop `diffTypeBySectionId?: Map<string, "extra" | "wrong_level">` — подсветка строк левой границей: amber для extra, blue для wrong_level. Логика manual sections / комментариев / false-heading из PR 3 не тронута.
+
+`apps/word-addin/src/parsing/ParsingPanel.tsx`:
+- TabList «Дерево» / «Diff с эталоном» (FluentUI v9). Таб Diff виден только при `goldenSampleId`. Бейдж-счётчик количества diff entries рядом с лейблом.
+- Параллельная загрузка `document.getVersion` + `goldenDataset.getSample` через Promise.all (golden-fetch не блокирует основную загрузку).
+- Кнопка «+ Добавить раздел» и BulkActionsBar показываются только на табе «Дерево».
+- Quick-fix handlers: `handleDiffAcceptExtra`, `handleDiffMarkFalseHeading`, `handleDiffRemoveMissing`, `handleDiffApplyLevel` — диспатч `goldenDataset.updateStageStatus` (правка `expected_results.sections`) и `document.markSectionFalseHeading`. После каждого fix — refetch.
+- Подсветка diff передаётся в `SectionTree.diffTypeBySectionId` — на табе «Дерево» строки секций с расхождением визуально маркированы.
+
+## 2026-05-08
+
 ### Feat (PR 3/4): manual section через выделение + per-row comment edit (Word add-in)
 
 `apps/word-addin/src/office-helpers.ts`:
