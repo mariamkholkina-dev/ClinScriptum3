@@ -83,9 +83,37 @@ describe("detectHeading", () => {
       expect(result).toBeNull();
     });
 
-    it("does not detect bold text at base size as heading", () => {
+    it("DETECTS bold text at base size as heading via bold-only fallback (Sprint 7c)", () => {
+      // Раньше bold без увеличенного font-size'а игнорировался — это терялю
+      // структуру в плохо-оформленных DOCX где автор не применял Heading-стили,
+      // а просто делал жирный текст body-size'а. Теперь bold-only fallback
+      // отлавливает такие заголовки (с фильтрами по длине, пунктуации, регистру).
       const result = detectHeading("Bold normal", 0, undefined, undefined, true, 12, 12);
+      expect(result).not.toBeNull();
+      expect(result!.method).toBe("visual");
+    });
+
+    it("bold-only fallback REJECTS too-long bold text (>120 chars)", () => {
+      const longText = "A".repeat(150);
+      const result = detectHeading(longText, 0, undefined, undefined, true);
       expect(result).toBeNull();
+    });
+
+    it("bold-only fallback REJECTS bold text ending with comma/colon", () => {
+      expect(detectHeading("Important note,", 0, undefined, undefined, true)).toBeNull();
+      expect(detectHeading("Note:", 0, undefined, undefined, true)).toBeNull();
+      expect(detectHeading("Note;", 0, undefined, undefined, true)).toBeNull();
+    });
+
+    it("bold-only fallback REJECTS bold text starting with lowercase", () => {
+      const result = detectHeading("the start", 0, undefined, undefined, true);
+      expect(result).toBeNull();
+    });
+
+    it("bold-only fallback assigns level 1 for short ALL-CAPS heading", () => {
+      const result = detectHeading("ВВЕДЕНИЕ", 0, undefined, undefined, true);
+      expect(result).not.toBeNull();
+      expect(result!.level).toBe(1);
     });
   });
 

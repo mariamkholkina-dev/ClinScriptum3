@@ -8,6 +8,13 @@ import JSZip from "jszip";
 import { extractDrawingsFromDocumentXml, type Drawing } from "./drawing-parser.js";
 import { extractTableGeometry, type TableGeometry } from "./table-geometry.js";
 import { extractWordFootnotes } from "./word-footnote-parser.js";
+import {
+  extractParagraphProperties,
+  computeBaseFontSize,
+  buildPropsByText,
+  fingerprint,
+  type ParagraphProperties,
+} from "./paragraph-properties.js";
 import type {
   ParsedDocument,
   ParsedSection,
@@ -30,7 +37,37 @@ export async function parseDocx(
   const rawResult = await mammoth.extractRawText({ buffer });
   const rawText = rawResult.value;
 
-  const elements = splitHtmlElements(html);
+  // Open the DOCX zip once for OOXML extraction. word/document.xml gives us
+  // per-paragraph font-size and bold info that mammoth strips by default.
+  // Эти данные нужны heading-detection'у и должны быть готовы ДО `splitHtmlElements`.
+  let drawings: Drawing[] = [];
+  let tableGeometries: TableGeometry[] = [];
+  let wordFootnotes: Record<string, string> = {};
+  let paragraphProps: ParagraphProperties[] = [];
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    const docXmlEntry = zip.file("word/document.xml");
+    if (docXmlEntry) {
+      const xml = await docXmlEntry.async("text");
+      drawings = extractDrawingsFromDocumentXml(xml);
+      tableGeometries = extractTableGeometry(xml);
+      paragraphProps = extractParagraphProperties(xml);
+    }
+    const fnEntry = zip.file("word/footnotes.xml");
+    if (fnEntry) {
+      const fnXml = await fnEntry.async("text");
+      const fnMap = extractWordFootnotes(fnXml);
+      wordFootnotes = Object.fromEntries(fnMap);
+    }
+  } catch {
+    // OOXML extraction is best-effort; don't fail the whole parse if
+    // the buffer isn't a valid DOCX or word/document.xml is missing.
+  }
+
+  const baseFontSize = computeBaseFontSize(paragraphProps);
+  const propsByText = buildPropsByText(paragraphProps);
+
+  const elements = splitHtmlElements(html, propsByText);
   const headings: DetectedHeading[] = [];
   const contentBlocks: Array<{ block: ParsedContentBlock; heading: DetectedHeading | null }> = [];
   const tables: ParsedTable[] = [];
@@ -76,7 +113,7 @@ export async function parseDocx(
       undefined,
       el.isBold,
       el.fontSize,
-      12
+      baseFontSize
     );
 
     if (heading && heading.level <= opts.maxHeadingDepth) {
@@ -122,31 +159,6 @@ export async function parseDocx(
   }
 
   const title = extractTitle(rawText, headings);
-
-  // Open the DOCX zip once and extract drawings, table geometry and
-  // native Word footnote bodies in a single pass. word/footnotes.xml is
-  // optional — many DOCX have no native footnotes at all.
-  let drawings: Drawing[] = [];
-  let tableGeometries: TableGeometry[] = [];
-  let wordFootnotes: Record<string, string> = {};
-  try {
-    const zip = await JSZip.loadAsync(buffer);
-    const docXmlEntry = zip.file("word/document.xml");
-    if (docXmlEntry) {
-      const xml = await docXmlEntry.async("text");
-      drawings = extractDrawingsFromDocumentXml(xml);
-      tableGeometries = extractTableGeometry(xml);
-    }
-    const fnEntry = zip.file("word/footnotes.xml");
-    if (fnEntry) {
-      const fnXml = await fnEntry.async("text");
-      const fnMap = extractWordFootnotes(fnXml);
-      wordFootnotes = Object.fromEntries(fnMap);
-    }
-  } catch {
-    // OOXML extraction is best-effort; don't fail the whole parse if
-    // the buffer isn't a valid DOCX or word/document.xml is missing.
-  }
 
   return {
     title,
@@ -261,9 +273,18 @@ interface HtmlElement {
   fontSize?: number;
 }
 
-function splitHtmlElements(html: string): HtmlElement[] {
+function splitHtmlElements(
+  html: string,
+  propsByText: Map<string, ParagraphProperties[]>,
+): HtmlElement[] {
   const elements: HtmlElement[] = [];
   const pattern = /<(p|h[1-6]|table|li|ol|ul)[^>]*>(.*?)<\/\1>/gis;
+
+  // Каждый text fingerprint → массив props в OOXML-порядке. Пройденные
+  // используем consume-style: shift() при первом совпадении, чтобы при
+  // повторяющемся тексте каждое HTML-вхождение получало свой OOXML-набор.
+  // Передаём map by reference и модифицируем; вызывающий парсер уже не
+  // переиспользует map после splitHtmlElements.
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(html)) !== null) {
@@ -271,13 +292,29 @@ function splitHtmlElements(html: string): HtmlElement[] {
     const innerHtml = match[0];
 
     const styleMatch = tag.match(/^h(\d)$/);
-    const isBold = /<strong|<b[\s>]/i.test(innerHtml);
+    const htmlBold = /<strong|<b[\s>]/i.test(innerHtml);
+
+    // Lookup OOXML props by text fingerprint — даёт нам реальный fontSize
+    // (mammoth его теряет) и более точный isBold (по доле жирных символов
+    // в параграфе, а не просто наличие <strong>).
+    const text = stripHtml(innerHtml);
+    const fp = fingerprint(text);
+    let ooxmlProps: ParagraphProperties | undefined;
+    if (fp) {
+      const queue = propsByText.get(fp);
+      if (queue && queue.length > 0) ooxmlProps = queue.shift();
+    }
+
+    // OOXML bold предпочитаем (более надёжный), HTML — fallback
+    const isBold = ooxmlProps?.isBold ?? htmlBold;
+    const fontSize = ooxmlProps?.fontSize;
 
     elements.push({
       tag,
       html: innerHtml,
       style: styleMatch ? `heading ${styleMatch[1]}` : undefined,
       isBold,
+      fontSize,
     });
   }
 
