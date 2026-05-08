@@ -4,7 +4,7 @@ import { useAuthStore } from "./auth-store";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/trpc").replace(
   "/trpc",
-  ""
+  "",
 );
 
 interface WordSessionParams {
@@ -20,6 +20,14 @@ interface WordSessionParams {
   goldenSampleId?: string;
 }
 
+/**
+ * Создаёт WordSession через backend и открывает .docx в Word через
+ * `/api/word-open/:sessionId` (DOCX с впрыснутым session-tag, который add-in
+ * прочитает при загрузке task pane).
+ *
+ * Дублирует `apps/web/src/lib/open-in-word.ts` — у rule-admin отдельный фронт
+ * со своим auth-store, поэтому импорт оттуда невозможен.
+ */
 export async function openInWord(params: WordSessionParams): Promise<void> {
   const token = useAuthStore.getState().accessToken;
   if (!token) throw new Error("Not authenticated");

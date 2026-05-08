@@ -4,9 +4,17 @@ import { signAccessToken, createRefreshToken } from "./auth.js";
 
 export interface WordSessionContext {
   docVersionId?: string;
-  mode: "intra_audit" | "inter_audit" | "generation_review" | "generation_insert";
+  mode:
+    | "intra_audit"
+    | "inter_audit"
+    | "generation_review"
+    | "generation_insert"
+    | "parsing"; // Word-aided parsing/structure annotation (PR series feat/word-addon-parsing)
   protocolVersionId?: string;
   generatedDocId?: string;
+  /** Опционально — для parsing mode: какой goldenSampleStageStatus это редактирует
+      (если открывается из /golden-dataset/{id} → парсинг таб). */
+  goldenSampleId?: string;
 }
 
 const SESSION_TTL_MINUTES = 5;

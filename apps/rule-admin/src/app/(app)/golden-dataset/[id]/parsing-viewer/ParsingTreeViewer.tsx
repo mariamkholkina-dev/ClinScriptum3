@@ -8,6 +8,7 @@ import {
   useEffect,
 } from "react";
 import { trpc } from "@/lib/trpc";
+import { openInWord } from "@/lib/open-in-word";
 import {
   Loader2,
   AlertCircle,
@@ -478,6 +479,7 @@ function ParsingToolbar({
   bulkPending,
   existingReworkComment,
   onOpenAddManual,
+  onOpenInWord,
 }: {
   sortKey: SortKey;
   onSortChange: (k: SortKey) => void;
@@ -504,6 +506,8 @@ function ParsingToolbar({
   existingReworkComment?: string;
   /** Открыть модалку «добавить раздел вручную». Опционально — если не передано, кнопка скрыта. */
   onOpenAddManual?: () => void;
+  /** Открыть документ в Word add-in (mode='parsing'). Опционально — если не передано, кнопка скрыта. */
+  onOpenInWord?: () => void;
 }) {
   return (
     <div className="space-y-3">
@@ -564,6 +568,17 @@ function ParsingToolbar({
             title="Добавить раздел вручную (если парсер его пропустил)"
           >
             + Добавить раздел
+          </button>
+        )}
+
+        {/* Open in Word add-in */}
+        {onOpenInWord && (
+          <button
+            onClick={onOpenInWord}
+            className="rounded border border-purple-300 bg-purple-50 px-2 py-1 text-xs text-purple-700 hover:bg-purple-100"
+            title="Открыть документ в Word с подключённым add-in для разметки заголовков"
+          >
+            🪟 Открыть в Word
           </button>
         )}
 
@@ -1388,6 +1403,17 @@ export default function ParsingTreeViewer({
         bulkPending={bulkStructureMutation.isPending}
         existingReworkComment={existingReworkComment}
         onOpenAddManual={() => setShowAddManualDialog(true)}
+        onOpenInWord={async () => {
+          try {
+            await openInWord({
+              mode: "parsing",
+              docVersionId: versionId,
+              goldenSampleId,
+            });
+          } catch (e) {
+            alert(`Не удалось открыть в Word: ${(e as Error).message}`);
+          }
+        }}
       />
 
       {/* Diff results */}
