@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { prisma, getEffectiveLlmConfig } from "@clinscriptum/db";
 import { parseDocx } from "@clinscriptum/doc-parser";
 import type {
@@ -173,6 +174,11 @@ export async function handleParseDocument(data: { versionId: string }) {
     // (manual), reassign order.
     await reorderSectionsByAnchor(version.id);
 
+    // Re-link expected sections (golden dataset truth) с реальными после
+    // re-parse. paragraphIndex плывёт между парсами, поэтому матчим в 4 шага:
+    // paragraphIndex → digest → snippet → title+occurrence.
+    await relinkExpectedSections(version.id);
+
     logger.info("Parsed document", {
       versionId: version.id,
       sections: parsed.sections.length,
@@ -297,4 +303,149 @@ async function saveSectionsBatch(
       await saveSectionsBatch(tx, docVersionId, s.children, counter);
     }
   }
+}
+
+// ─── Expected-sections re-link ───────────────────────────────
+// После re-parse'а sections в БД пересоздаются — а expected_sections
+// (эталонная разметка золотых сэмплов) ссылаются на старые id'шники через
+// `realSectionId`. Этот хук переmatch'ит каждую expected row с актуальной
+// real Section по 4-уровневому fallback'у, чтобы baseline считался по
+// «той же» секции даже после структурных правок документа.
+//
+// Алгоритм матчинга (sequential per expected row):
+//   (1) anchor.paragraphIndex → точное совпадение с Section.sourceAnchor.paragraphIndex
+//   (2) anchor.contentBlockDigest → sha256 первых 200 chars контента секции
+//   (3) anchor.textSnippet → substring search в title (фильтр по level)
+//   (4) title + anchor.occurrenceIndex → N-я по счёту секция с таким title
+//   (5) ничего → realSectionId=null, matchMethod=null (orphaned, UI помечает)
+//
+// Worker-package не имеет dep на @clinscriptum/api, поэтому матчинг
+// реализован локально через прямой prisma access. Тот же алгоритм
+// продублирован в `apps/api/src/services/expectedSection.service.ts:relinkExpectedSections`.
+const DIGEST_PREFIX_LENGTH = 200;
+
+interface ExpectedAnchorShape {
+  paragraphIndex?: number;
+  textSnippet?: string;
+  occurrenceIndex?: number;
+  contentBlockDigest?: string;
+}
+
+function computeContentDigestForReal(section: {
+  contentBlocks: Array<{ content: string; order: number }>;
+}): string {
+  if (section.contentBlocks.length === 0) return "";
+  const sorted = [...section.contentBlocks].sort((a, b) => a.order - b.order);
+  const joined = sorted
+    .map((b) => b.content ?? "")
+    .join("\n")
+    .slice(0, DIGEST_PREFIX_LENGTH);
+  if (!joined.trim()) return "";
+  return createHash("sha256").update(joined, "utf8").digest("hex");
+}
+
+async function relinkExpectedSections(docVersionId: string): Promise<void> {
+  // Find expected_sections that *could* point at this docVersion's sections
+  // (path: ExpectedSection → StageStatus → GoldenSample → GoldenSampleDocument).
+  const stageStatuses = await prisma.goldenSampleStageStatus.findMany({
+    where: {
+      goldenSample: { documents: { some: { documentVersionId: docVersionId } } },
+    },
+    select: { id: true },
+  });
+  if (stageStatuses.length === 0) return;
+  const stageStatusIds = stageStatuses.map((s) => s.id);
+
+  const expectedRows = await prisma.expectedSection.findMany({
+    where: { goldenSampleStageStatusId: { in: stageStatusIds } },
+  });
+  if (expectedRows.length === 0) return;
+
+  const realSections = await prisma.section.findMany({
+    where: { docVersionId },
+    include: { contentBlocks: { orderBy: { order: "asc" } } },
+    orderBy: { order: "asc" },
+  });
+
+  const byParagraph = new Map<number, (typeof realSections)[number]>();
+  for (const s of realSections) {
+    const pi = (s.sourceAnchor as { paragraphIndex?: number } | null)?.paragraphIndex;
+    if (typeof pi === "number") byParagraph.set(pi, s);
+  }
+  const digestToSection = new Map<string, (typeof realSections)[number]>();
+  for (const s of realSections) {
+    const d = computeContentDigestForReal(s);
+    if (d) digestToSection.set(d, s);
+  }
+  const titleToSections = new Map<string, typeof realSections>();
+  for (const s of realSections) {
+    const key = s.title.trim().toLowerCase();
+    const arr = titleToSections.get(key) ?? [];
+    arr.push(s);
+    titleToSections.set(key, arr);
+  }
+
+  const byMethod = { paragraph: 0, digest: 0, snippet: 0, title_occurrence: 0 };
+  let matched = 0;
+  let orphaned = 0;
+
+  for (const exp of expectedRows) {
+    const anchor = (exp.anchor ?? {}) as ExpectedAnchorShape;
+    let match: { id: string; method: keyof typeof byMethod } | null = null;
+
+    if (typeof anchor.paragraphIndex === "number") {
+      const hit = byParagraph.get(anchor.paragraphIndex);
+      if (hit) match = { id: hit.id, method: "paragraph" };
+    }
+    if (!match && anchor.contentBlockDigest) {
+      const hit = digestToSection.get(anchor.contentBlockDigest);
+      if (hit) match = { id: hit.id, method: "digest" };
+    }
+    if (!match && anchor.textSnippet) {
+      const needle = anchor.textSnippet.trim().toLowerCase();
+      if (needle.length > 0) {
+        const hit = realSections.find(
+          (s) => s.level === exp.level && s.title.toLowerCase().includes(needle),
+        );
+        if (hit) match = { id: hit.id, method: "snippet" };
+      }
+    }
+    if (!match) {
+      const arr = titleToSections.get(exp.title.trim().toLowerCase());
+      if (arr && arr.length > 0) {
+        const idx = anchor.occurrenceIndex ?? 0;
+        const hit = arr[idx] ?? arr[0];
+        if (hit) match = { id: hit.id, method: "title_occurrence" };
+      }
+    }
+
+    if (match) {
+      matched += 1;
+      byMethod[match.method] += 1;
+      await prisma.expectedSection.update({
+        where: { id: exp.id },
+        data: {
+          realSectionId: match.id,
+          matchMethod: match.method,
+          matchedAt: new Date(),
+        },
+      });
+    } else {
+      orphaned += 1;
+      if (exp.realSectionId !== null) {
+        await prisma.expectedSection.update({
+          where: { id: exp.id },
+          data: { realSectionId: null, matchMethod: null, matchedAt: null },
+        });
+      }
+    }
+  }
+
+  logger.info("expected_sections_relinked", {
+    docVersionId,
+    total: expectedRows.length,
+    matched,
+    orphaned,
+    byMethod,
+  });
 }

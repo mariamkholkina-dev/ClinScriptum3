@@ -68,6 +68,8 @@ model User {
   approvalRequests          ApprovalRequest[]          @relation("ApprovalRequester")
   approvalReviews           ApprovalRequest[]          @relation("ApprovalReviewer")
   classificationFewShots    ClassificationFewShot[]    @relation("ClassificationFewShotCreator")
+  expectedSectionsCreated   ExpectedSection[]          @relation("ExpectedSectionCreator")
+  expectedSectionsUpdated   ExpectedSection[]          @relation("ExpectedSectionUpdater")
 
   @@index([tenantId])
   @@map("users")
@@ -214,6 +216,7 @@ model Section {
 
   docVersion    DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
   contentBlocks ContentBlock[]
+  expectedSectionLinks ExpectedSection[]
 
   @@index([docVersionId])
   @@map("sections")
@@ -1049,6 +1052,7 @@ model GoldenSampleStageStatus {
   goldenSample GoldenSample @relation(fields: [goldenSampleId], references: [id], onDelete: Cascade)
   reviewedBy   User?        @relation("StageReviewer", fields: [reviewedById], references: [id])
   approvedBy   User?        @relation("StageApprover", fields: [approvedById], references: [id])
+  expectedSections ExpectedSection[]
 
   @@unique([goldenSampleId, stage])
   @@map("golden_sample_stage_statuses")
@@ -1114,6 +1118,61 @@ model GoldenAnnotationDecision {
   decidedBy  User             @relation("AnnotationDecider", fields: [decidedById], references: [id])
 
   @@map("golden_annotation_decisions")
+}
+
+// ─── Expected Sections (relational expected_results) ─────────
+// Эталонные секции золотого сэмпла в нормализованной форме (вместо JSON в
+// `golden_sample_stage_statuses.expected_results`). Решает три проблемы JSON-формата:
+//  • дубли title (TOC vs body, шкалы) — теперь матчинг по hybrid-anchor
+//  • привязка теряется при re-parse (paragraphIndex плывёт) — есть auto-relink
+//    с 4-уровневым fallback'ом (paragraph → digest → snippet → title+occurrence)
+//  • нет audit-trail / queryable / FK-able — теперь есть createdBy/updatedBy/timestamps
+//
+// `anchor` — гибрид: основной paragraphIndex + textSnippet/occurrenceIndex/
+// contentBlockDigest как fallback'ы для авто-сопоставления с реальной Section
+// после re-parse (см. expectedSection.service.relinkAfterReparse).
+model ExpectedSection {
+  id                        String   @id @default(uuid()) @db.Uuid
+  goldenSampleStageStatusId String   @map("golden_sample_stage_status_id") @db.Uuid
+  parentId                  String?  @map("parent_id") @db.Uuid
+  order                     Int
+
+  title                     String
+  level                     Int
+
+  /// Гибрид-anchor: paragraphIndex (primary), textSnippet (fallback),
+  /// occurrenceIndex (tie-break), contentBlockDigest (sha256 первых 200 chars
+  /// контента под heading'ом — стабилен при сдвиге paragraphIndex).
+  /// Shape: { paragraphIndex?: number, textSnippet?: string,
+  /// occurrenceIndex?: number, contentBlockDigest?: string }
+  anchor                    Json     @db.JsonB
+
+  standardSection           String?  @map("standard_section")
+
+  /// Auto-relink result. Re-computed на каждый re-parse документа
+  /// (см. expectedSection.service.relinkAfterReparse).
+  realSectionId             String?  @map("real_section_id") @db.Uuid
+  /// Каким методом эталон сматчился с реальной секцией:
+  /// "paragraph" | "digest" | "snippet" | "title_occurrence" | null (orphaned).
+  matchMethod               String?  @map("match_method")
+  matchedAt                 DateTime? @map("matched_at")
+
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+  createdById               String?  @map("created_by_id") @db.Uuid
+  updatedById               String?  @map("updated_by_id") @db.Uuid
+
+  goldenSampleStageStatus GoldenSampleStageStatus @relation(fields: [goldenSampleStageStatusId], references: [id], onDelete: Cascade)
+  parent                  ExpectedSection?         @relation("ExpectedSectionTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children                ExpectedSection[]        @relation("ExpectedSectionTree")
+  realSection             Section?                 @relation(fields: [realSectionId], references: [id], onDelete: SetNull)
+  createdBy               User?                    @relation("ExpectedSectionCreator", fields: [createdById], references: [id])
+  updatedBy               User?                    @relation("ExpectedSectionUpdater", fields: [updatedById], references: [id])
+
+  @@index([goldenSampleStageStatusId])
+  @@index([parentId])
+  @@index([realSectionId])
+  @@map("expected_sections")
 }
 
 // ─── Evaluation ─────────────────────────────────────────────

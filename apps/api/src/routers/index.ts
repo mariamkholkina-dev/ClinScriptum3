@@ -18,6 +18,7 @@ import { qualityRouter } from "./quality.js";
 import { bundleRouter } from "./bundle.js";
 import { fewShotRouter } from "./few-shot.js";
 import { annotationRouter } from "./annotation.js";
+import { expectedSectionRouter } from "./expectedSection.js";
 
 export const appRouter = router({
   auth: authRouter,
@@ -39,6 +40,7 @@ export const appRouter = router({
   bundle: bundleRouter,
   fewShot: fewShotRouter,
   annotation: annotationRouter,
+  expectedSection: expectedSectionRouter,
 });
 
 export type AppRouter = typeof appRouter;

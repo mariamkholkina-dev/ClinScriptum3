@@ -5,6 +5,11 @@ vi.mock("@clinscriptum/db", () => ({
     documentVersion: { findUnique: vi.fn(), update: vi.fn() },
     contentBlock: { deleteMany: vi.fn(), createMany: vi.fn() },
     section: { deleteMany: vi.fn(), create: vi.fn(), findMany: vi.fn(), update: vi.fn() },
+    // Expected-sections relink hook (post-reparse) reads stage statuses
+    // and updates expected_sections rows. Default mocks return [] so the
+    // hook is a no-op for tests that don't care about it.
+    goldenSampleStageStatus: { findMany: vi.fn().mockResolvedValue([]) },
+    expectedSection: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
