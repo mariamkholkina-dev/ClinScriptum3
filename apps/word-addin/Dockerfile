@@ -22,8 +22,11 @@ RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 # Копируем исходники word-addin
 COPY apps/word-addin ./apps/word-addin
 
-# Опциональные Linux-only deps (Rollup native binary), как в CI build job
+# Native binary'ы Rollup для Linux. Ставим ОБА варианта — `-musl` для Alpine
+# (этот image на base node:20-alpine), `-gnu` для CI runner'ов где Debian.
+# Без правильного binary'я vite build падает с MODULE_NOT_FOUND.
 RUN npm install --no-save --no-audit --no-fund \
+    @rollup/rollup-linux-x64-musl \
     @rollup/rollup-linux-x64-gnu \
     @emnapi/core \
     @emnapi/runtime || true
