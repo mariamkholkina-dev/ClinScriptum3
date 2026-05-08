@@ -5,6 +5,7 @@ import type {
   SortKey,
   FilterState,
   ExpectedClassificationResults,
+  ExpectedSectionRow,
 } from "./types";
 
 export { buildNumbering, detectAnomalies, getVisibleSectionIds, getParentChain, hasChildren, ANOMALY_LABELS } from "../parsing-viewer/utils";
@@ -135,6 +136,89 @@ export function diffClassificationWithExpected(
         actual: { standardSection: s.standardSection },
         actualSectionId: s.id,
         duplicateIndex: duplicateIndexById.get(s.id),
+      });
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * PR F: relational diff. Same shape as `diffClassificationWithExpected` but
+ * driven by `ExpectedSection` rows fetched from the relational API. Match
+ * priority:
+ *  1. `realSectionId` — direct relink (preferred when relink-after-reparse ran).
+ *  2. case-insensitive `title` — fallback for orphaned rows or rows created
+ *     before the first relink.
+ *
+ * Each `wrong_section`/`missing` entry carries the expected row id, which
+ * lets quick-fix call `expectedSection.update`/`delete` by id directly,
+ * eliminating the JSON positional-matching juggling needed by the legacy diff.
+ */
+export function diffClassificationWithExpectedRelational(
+  sections: Section[],
+  expected: ExpectedSectionRow[],
+): DiffEntry[] {
+  // Cascade from parsing — false-headings are not part of the document
+  // structure for diff purposes.
+  const realSections = sections.filter((s) => !s.isFalseHeading);
+  const realById = new Map(realSections.map((s) => [s.id, s] as const));
+  const realByTitle = new Map<string, Section[]>();
+  for (const s of realSections) {
+    const k = s.title.trim().toLowerCase();
+    if (!realByTitle.has(k)) realByTitle.set(k, []);
+    realByTitle.get(k)!.push(s);
+  }
+
+  const matchedActual = new Set<string>();
+  const entries: DiffEntry[] = [];
+
+  for (const exp of expected) {
+    let actual: Section | undefined;
+    if (exp.realSectionId) {
+      actual = realById.get(exp.realSectionId);
+      if (actual && matchedActual.has(actual.id)) actual = undefined;
+    }
+    if (!actual) {
+      const key = exp.title.trim().toLowerCase();
+      const candidates = realByTitle.get(key) ?? [];
+      actual = candidates.find((s) => !matchedActual.has(s.id));
+    }
+
+    if (!actual) {
+      entries.push({
+        type: "missing",
+        sectionTitle: exp.title,
+        expected: { standardSection: exp.standardSection },
+        expectedSectionId: exp.id,
+      });
+      continue;
+    }
+
+    matchedActual.add(actual.id);
+
+    if (
+      exp.standardSection != null &&
+      actual.standardSection !== exp.standardSection
+    ) {
+      entries.push({
+        type: "wrong_section",
+        sectionTitle: exp.title,
+        expected: { standardSection: exp.standardSection },
+        actual: { standardSection: actual.standardSection },
+        actualSectionId: actual.id,
+        expectedSectionId: exp.id,
+      });
+    }
+  }
+
+  for (const s of realSections) {
+    if (!matchedActual.has(s.id)) {
+      entries.push({
+        type: "extra",
+        sectionTitle: s.title,
+        actual: { standardSection: s.standardSection },
+        actualSectionId: s.id,
       });
     }
   }
