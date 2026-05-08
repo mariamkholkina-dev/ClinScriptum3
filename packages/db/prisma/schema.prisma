@@ -208,6 +208,8 @@ model Section {
   structureComment      String?       @map("structure_comment")
   classificationComment String?       @map("classification_comment")
   isFalseHeading  Boolean       @default(false) @map("is_false_heading")
+  isManual        Boolean       @default(false) @map("is_manual")
+  manualCreatedById String?     @map("manual_created_by_id") @db.Uuid
   sourceAnchor    Json          @map("source_anchor") @db.JsonB
 
   docVersion    DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)

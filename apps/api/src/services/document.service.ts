@@ -225,8 +225,12 @@ export const documentService = {
           algoConfidence: true,
           llmSection: true,
           llmConfidence: true,
+          structureComment: true,
           classificationComment: true,
           isFalseHeading: true,
+          isManual: true,
+          manualCreatedById: true,
+          sourceAnchor: true,
           contentBlocks: {
             orderBy: { order: "asc" },
             select: { id: true, type: true, content: true, rawHtml: true, order: true },
@@ -257,6 +261,7 @@ export const documentService = {
       algoConfidence: number | null;
       llmSection: string | null;
       llmConfidence: number | null;
+      structureComment: string | null;
       classificationComment: string | null;
       isFalseHeading: boolean | null;
     };
@@ -279,6 +284,7 @@ export const documentService = {
              s.algo_confidence AS "algoConfidence",
              s.llm_section AS "llmSection",
              s.llm_confidence AS "llmConfidence",
+             s.structure_comment AS "structureComment",
              s.classification_comment AS "classificationComment",
              s.is_false_heading AS "isFalseHeading"
       FROM sections s WHERE s.doc_version_id = ${versionId}::uuid
@@ -318,6 +324,7 @@ export const documentService = {
       algoConfidence: Number(s.algoConfidence ?? 0),
       llmSection: s.llmSection,
       llmConfidence: Number(s.llmConfidence ?? 0),
+      structureComment: s.structureComment,
       classificationComment: s.classificationComment,
       isFalseHeading: Boolean(s.isFalseHeading ?? false),
       contentBlocks: (blocksBySection.get(s.id) ?? []).map((b) => ({
@@ -408,6 +415,121 @@ export const documentService = {
       where: { id: sectionId },
       data: { isFalseHeading },
     });
+  },
+
+  /**
+   * Manual section creation — annotator adds a section that auto-parser missed.
+   *
+   * Anchor — гибрид: paragraphIndex (точная позиция в текущем re-parse'е) +
+   * textSnippet (substring для fallback после re-parse если paragraphIndex
+   * сместился). См. handleParseDocument: при re-parse manual sections
+   * сохраняются (isManual=true), а конфликты (auto-found с тем же title) UI
+   * подсвечивает на admin-странице /manual-sections для ручного разрешения.
+   *
+   * `afterSectionId` — опционально: вставить после этой секции (order = thatOrder + 0.5
+   * → renumber всех order'ов после save). Если не задан — append в конец.
+   * `contentBlockId` — опционально: дополнительная anchor-привязка к конкретному
+   * content_block. Сохраняется в sourceAnchor.contentBlockId.
+   */
+  async addManualSection(
+    tenantId: string,
+    userId: string,
+    input: {
+      docVersionId: string;
+      title: string;
+      level: number;
+      paragraphIndex: number;
+      textSnippet: string;
+      afterSectionId?: string;
+      contentBlockId?: string;
+    },
+  ) {
+    if (input.level < 1 || input.level > 5) {
+      throw new DomainError("BAD_REQUEST", "level must be 1..5");
+    }
+    if (!input.title.trim()) {
+      throw new DomainError("BAD_REQUEST", "title cannot be empty");
+    }
+
+    const version = await prisma.documentVersion.findUnique({
+      where: { id: input.docVersionId },
+      include: { document: { include: { study: true } } },
+    });
+    requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
+
+    let insertOrder: number;
+    if (input.afterSectionId) {
+      const after = await prisma.section.findUnique({
+        where: { id: input.afterSectionId },
+        select: { order: true, docVersionId: true },
+      });
+      if (!after || after.docVersionId !== input.docVersionId) {
+        throw new DomainError("BAD_REQUEST", "afterSectionId must belong to the same docVersion");
+      }
+      insertOrder = after.order + 1;
+      // Сдвинуть всех с order >= insertOrder на +1, чтобы освободить место.
+      await prisma.section.updateMany({
+        where: { docVersionId: input.docVersionId, order: { gte: insertOrder } },
+        data: { order: { increment: 1 } },
+      });
+    } else {
+      const max = await prisma.section.aggregate({
+        where: { docVersionId: input.docVersionId },
+        _max: { order: true },
+      });
+      insertOrder = (max._max.order ?? -1) + 1;
+    }
+
+    const sourceAnchor = {
+      paragraphIndex: input.paragraphIndex,
+      textSnippet: input.textSnippet.slice(0, 200),
+      ...(input.contentBlockId ? { contentBlockId: input.contentBlockId } : {}),
+    };
+
+    return prisma.section.create({
+      data: {
+        docVersionId: input.docVersionId,
+        title: input.title.trim(),
+        level: input.level,
+        order: insertOrder,
+        sourceAnchor,
+        isManual: true,
+        manualCreatedById: userId,
+        // Status defaults: not_validated (как для auto sections).
+      },
+    });
+  },
+
+  /**
+   * Удаление manual section. Можно удалить ТОЛЬКО isManual=true — auto-found
+   * секции защищены (их можно только пометить isFalseHeading=true).
+   */
+  async deleteManualSection(tenantId: string, sectionId: string) {
+    const section = await prisma.section.findUnique({
+      where: { id: sectionId },
+      include: { docVersion: { include: { document: { include: { study: true } } } } },
+    });
+    requireTenantResource(section, tenantId, (s) => s.docVersion.document.study.tenantId);
+
+    if (!section!.isManual) {
+      throw new DomainError(
+        "BAD_REQUEST",
+        "Cannot delete auto-detected section. Use markSectionFalseHeading to hide it.",
+      );
+    }
+
+    const removedOrder = section!.order;
+
+    // Cascade: contentBlocks удалятся через relation.
+    await prisma.section.delete({ where: { id: sectionId } });
+
+    // Сжать order'ы сзади чтобы убрать дыру.
+    await prisma.section.updateMany({
+      where: { docVersionId: section!.docVersionId, order: { gt: removedOrder } },
+      data: { order: { decrement: 1 } },
+    });
+
+    return { deleted: true };
   },
 
   async getTaxonomy(tenantId: string) {

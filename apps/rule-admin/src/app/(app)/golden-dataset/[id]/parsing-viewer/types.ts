@@ -16,7 +16,12 @@ export interface Section {
   order: number;
   structureStatus: "validated" | "not_validated" | "requires_rework";
   classificationStatus: "validated" | "not_validated" | "requires_rework";
+  structureComment?: string | null;
+  classificationComment?: string | null;
   isFalseHeading: boolean;
+  isManual?: boolean;
+  manualCreatedById?: string | null;
+  sourceAnchor?: { paragraphIndex?: number; textSnippet?: string; contentBlockId?: string };
   contentBlocks: ContentBlock[];
 }
 

@@ -476,6 +476,8 @@ function ParsingToolbar({
   showSource,
   onToggleSource,
   bulkPending,
+  existingReworkComment,
+  onOpenAddManual,
 }: {
   sortKey: SortKey;
   onSortChange: (k: SortKey) => void;
@@ -497,6 +499,11 @@ function ParsingToolbar({
   showSource: boolean;
   onToggleSource: () => void;
   bulkPending: boolean;
+  /** Существующий structureComment одной из выделенных секций.
+      Pre-fill в textarea чтобы annotator мог его поправить. */
+  existingReworkComment?: string;
+  /** Открыть модалку «добавить раздел вручную». Опционально — если не передано, кнопка скрыта. */
+  onOpenAddManual?: () => void;
 }) {
   return (
     <div className="space-y-3">
@@ -548,6 +555,17 @@ function ParsingToolbar({
         <button onClick={onCollapseAll} className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">
           Свернуть все
         </button>
+
+        {/* Add manual section */}
+        {onOpenAddManual && (
+          <button
+            onClick={onOpenAddManual}
+            className="rounded border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
+            title="Добавить раздел вручную (если парсер его пропустил)"
+          >
+            + Добавить раздел
+          </button>
+        )}
 
         {/* Summary */}
         <span className="ml-auto text-xs text-gray-500">
@@ -625,6 +643,7 @@ function ParsingToolbar({
           onClearSelection={onClearSelection}
           onSelectAll={onSelectAll}
           bulkPending={bulkPending}
+          existingReworkComment={existingReworkComment}
         />
       )}
     </div>
@@ -638,6 +657,7 @@ function BulkActionsBar({
   onClearSelection,
   onSelectAll,
   bulkPending,
+  existingReworkComment,
 }: {
   selectedCount: number;
   onBulkValidate: () => void;
@@ -645,9 +665,19 @@ function BulkActionsBar({
   onClearSelection: () => void;
   onSelectAll: () => void;
   bulkPending: boolean;
+  existingReworkComment?: string;
 }) {
   const [showReworkDialog, setShowReworkDialog] = useState(false);
   const [reworkComment, setReworkComment] = useState("");
+
+  // Pre-fill комментарий когда annotator открывает диалог: если у выделенных
+  // секций уже есть structureComment (после прошлого «На доработку») —
+  // показываем его, чтобы можно было поправить, а не вводить заново.
+  useEffect(() => {
+    if (showReworkDialog && existingReworkComment !== undefined) {
+      setReworkComment(existingReworkComment ?? "");
+    }
+  }, [showReworkDialog, existingReworkComment]);
 
   return (
     <>
@@ -758,6 +788,7 @@ function SectionTreeRow({
   onToggleExpand,
   onToggleSelect,
   onToggleFalseHeading,
+  onDeleteManual,
   falseHeadingPending,
   rowRef,
 }: {
@@ -774,6 +805,8 @@ function SectionTreeRow({
   onToggleExpand: () => void;
   onToggleSelect: () => void;
   onToggleFalseHeading: () => void;
+  /** Опционально — для manual-секций показывает «удалить вручную добавленный раздел». */
+  onDeleteManual?: () => void;
   falseHeadingPending: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
 }) {
@@ -860,6 +893,26 @@ function SectionTreeRow({
           {section.contentBlocks.length} бл.
         </span>
 
+        {/* Manual badge */}
+        {section.isManual && (
+          <span
+            className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+            title="Раздел добавлен вручную"
+          >
+            ✱ manual
+          </span>
+        )}
+
+        {/* Structure comment indicator */}
+        {section.structureComment && (
+          <span
+            className="shrink-0 cursor-help text-[10px] text-amber-600"
+            title={`Комментарий к доработке: ${section.structureComment}`}
+          >
+            💬
+          </span>
+        )}
+
         {/* Toggle false-heading */}
         <button
           onClick={(e) => { e.stopPropagation(); onToggleFalseHeading(); }}
@@ -869,6 +922,17 @@ function SectionTreeRow({
         >
           {isFalse ? <Eye size={13} /> : <EyeOff size={13} />}
         </button>
+
+        {/* Delete manual section */}
+        {onDeleteManual && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDeleteManual(); }}
+            className="shrink-0 text-gray-400 hover:text-red-600"
+            title="Удалить вручную добавленный раздел"
+          >
+            <X size={13} />
+          </button>
+        )}
 
         {/* Expand indicator */}
         <ChevronDown
@@ -940,6 +1004,29 @@ export default function ParsingTreeViewer({
     () => filtered.filter((s) => visibleIds.has(s.id)),
     [filtered, visibleIds],
   );
+
+  // Pre-fill rework comment в bulk-диалоге: берём первый непустой
+  // structureComment у выделенных секций. Аннотатор увидит существующий
+  // комментарий и сможет его поправить, а не вводить заново.
+  const existingReworkComment = useMemo(() => {
+    for (const s of rawSections) {
+      if (selectedIds.has(s.id) && s.structureComment) return s.structureComment;
+    }
+    return undefined;
+  }, [rawSections, selectedIds]);
+
+  /* ── Manual sections ─────────────────────────────────────────────
+   *
+   * Аннотатор может добавить раздел вручную если парсер его пропустил.
+   * Manual sections помечаются `isManual=true`, сохраняются при re-parse,
+   * и могут быть удалены вручную. */
+  const [showAddManualDialog, setShowAddManualDialog] = useState(false);
+  const addManualMut = trpc.document.addManualSection.useMutation({
+    onSuccess: () => utils.document.getVersion.invalidate({ versionId }),
+  });
+  const deleteManualMut = trpc.document.deleteManualSection.useMutation({
+    onSuccess: () => utils.document.getVersion.invalidate({ versionId }),
+  });
 
   const diffEntries = useMemo(
     () => (showDiff ? diffWithExpected(rawSections, expectedResults) : []),
@@ -1299,6 +1386,8 @@ export default function ParsingTreeViewer({
         showSource={showSource}
         onToggleSource={() => setShowSource((p) => !p)}
         bulkPending={bulkStructureMutation.isPending}
+        existingReworkComment={existingReworkComment}
+        onOpenAddManual={() => setShowAddManualDialog(true)}
       />
 
       {/* Diff results */}
@@ -1359,6 +1448,14 @@ export default function ParsingTreeViewer({
                   onToggleFalseHeading={() =>
                     markFalseHeading.mutate({ sectionId: s.id, isFalseHeading: !s.isFalseHeading })
                   }
+                  onDeleteManual={
+                    s.isManual
+                      ? () => {
+                          if (confirm(`Удалить вручную добавленный раздел "${s.title}"?`))
+                            deleteManualMut.mutate({ sectionId: s.id });
+                        }
+                      : undefined
+                  }
                   falseHeadingPending={markFalseHeading.isPending}
                   rowRef={i === focusedIdx ? focusedRowRef : undefined}
                 />
@@ -1374,6 +1471,206 @@ export default function ParsingTreeViewer({
             focusedSectionId={activeSectionId}
           />
         )}
+      </div>
+
+      {/* Add manual section modal */}
+      {showAddManualDialog && (
+        <AddManualSectionDialog
+          versionId={versionId}
+          sections={rawSections}
+          onClose={() => setShowAddManualDialog(false)}
+          onSubmit={async (input) => {
+            await addManualMut.mutateAsync({ ...input, docVersionId: versionId });
+            setShowAddManualDialog(false);
+          }}
+          isPending={addManualMut.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════ AddManualSectionDialog ═══════════════ */
+
+function AddManualSectionDialog({
+  sections,
+  onClose,
+  onSubmit,
+  isPending,
+}: {
+  versionId: string;
+  sections: Section[];
+  onClose: () => void;
+  onSubmit: (input: {
+    title: string;
+    level: number;
+    paragraphIndex: number;
+    textSnippet: string;
+    afterSectionId?: string;
+    contentBlockId?: string;
+  }) => Promise<void>;
+  isPending: boolean;
+}) {
+  const [title, setTitle] = useState("");
+  const [level, setLevel] = useState(2);
+  const [anchorMode, setAnchorMode] = useState<"after-section" | "content-block">("after-section");
+  const [afterSectionId, setAfterSectionId] = useState<string>("");
+  const [contentBlockId, setContentBlockId] = useState<string>("");
+
+  // Список content blocks с превью текста (для anchor-mode "content-block")
+  const allBlocks = useMemo(() => {
+    const out: Array<{ id: string; sectionTitle: string; content: string; index: number }> = [];
+    let idx = 0;
+    for (const s of sections) {
+      for (const b of s.contentBlocks) {
+        out.push({
+          id: b.id,
+          sectionTitle: s.title,
+          content: b.content.slice(0, 120),
+          index: idx++,
+        });
+      }
+    }
+    return out;
+  }, [sections]);
+
+  const canSubmit = title.trim().length > 0 && (anchorMode === "after-section" || contentBlockId);
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+
+    let paragraphIndex = 0;
+    let textSnippet = title.trim();
+    let resolvedAfterSectionId: string | undefined;
+
+    if (anchorMode === "after-section" && afterSectionId) {
+      // Поставить раздел сразу после выбранного. paragraphIndex берём от
+      // конца блоков выбранного раздела (если есть) либо +1 от него.
+      const after = sections.find((s) => s.id === afterSectionId);
+      const lastBlockText = after?.contentBlocks.at(-1)?.content ?? after?.title ?? "";
+      paragraphIndex = (after?.sourceAnchor?.paragraphIndex ?? 0) + 1;
+      textSnippet = lastBlockText.slice(0, 200);
+      resolvedAfterSectionId = afterSectionId;
+    } else if (anchorMode === "content-block" && contentBlockId) {
+      const blk = allBlocks.find((b) => b.id === contentBlockId);
+      paragraphIndex = blk?.index ?? 0;
+      textSnippet = blk?.content ?? title.trim();
+    }
+
+    await onSubmit({
+      title: title.trim(),
+      level,
+      paragraphIndex,
+      textSnippet,
+      afterSectionId: resolvedAfterSectionId,
+      contentBlockId: anchorMode === "content-block" ? contentBlockId : undefined,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <h3 className="text-lg font-semibold text-gray-900">Добавить раздел вручную</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-4 p-6">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Название раздела</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Например, «Введение» или «Цели исследования»"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Уровень</label>
+            <select
+              value={level}
+              onChange={(e) => setLevel(Number(e.target.value))}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            >
+              {[1, 2, 3, 4, 5].map((l) => (
+                <option key={l} value={l}>
+                  Уровень {l}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Привязка к месту в документе</label>
+            <div className="space-y-2 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  checked={anchorMode === "after-section"}
+                  onChange={() => setAnchorMode("after-section")}
+                />
+                <span>После раздела:</span>
+                <select
+                  value={afterSectionId}
+                  onChange={(e) => setAfterSectionId(e.target.value)}
+                  disabled={anchorMode !== "after-section"}
+                  className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs"
+                >
+                  <option value="">— выбрать —</option>
+                  {sections.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {`L${s.level} `}{s.title.slice(0, 60)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="radio"
+                  checked={anchorMode === "content-block"}
+                  onChange={() => setAnchorMode("content-block")}
+                  className="mt-0.5"
+                />
+                <div className="flex-1">
+                  <span>На блоке контента:</span>
+                  <select
+                    value={contentBlockId}
+                    onChange={(e) => setContentBlockId(e.target.value)}
+                    disabled={anchorMode !== "content-block"}
+                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                  >
+                    <option value="">— выбрать блок —</option>
+                    {allBlocks.slice(0, 200).map((b) => (
+                      <option key={b.id} value={b.id}>
+                        [{b.index}] {b.content.slice(0, 80)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              onClick={onClose}
+              disabled={isPending}
+              className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              Отмена
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={!canSubmit || isPending}
+              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isPending ? <Loader2 size={14} className="animate-spin" /> : "Добавить"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -114,5 +114,27 @@ export const documentRouter = router({
       ),
     ),
 
+  addManualSection: p
+    .input(
+      z.object({
+        docVersionId: z.string().uuid(),
+        title: z.string().min(1).max(500),
+        level: z.number().int().min(1).max(5),
+        paragraphIndex: z.number().int().min(0),
+        textSnippet: z.string().min(1),
+        afterSectionId: z.string().uuid().optional(),
+        contentBlockId: z.string().uuid().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      documentService.addManualSection(ctx.user.tenantId, ctx.user.userId, input),
+    ),
+
+  deleteManualSection: p
+    .input(z.object({ sectionId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      documentService.deleteManualSection(ctx.user.tenantId, input.sectionId),
+    ),
+
   getTaxonomy: p.query(({ ctx }) => documentService.getTaxonomy(ctx.user.tenantId)),
 });
