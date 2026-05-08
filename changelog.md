@@ -2,6 +2,49 @@
 
 ## 2026-05-08
 
+### Feat: classification-viewer + annotate page переключены на relational `expected_sections` (PR F)
+
+UI rule-admin теперь читает и редактирует эталонную разметку через relational
+`expected_sections` (см. PR #92). Старый JSON-путь сохранён как fallback для
+samples, у которых ещё нет relational rows — после массовой миграции данных
+будет удалён cleanup PR'ом.
+
+**Изменения:**
+
+`apps/api/src/services/annotation.service.ts`:
+- `upsertSectionInExpected` переписан на `prisma.expectedSection`. Поиск ведётся
+  по нормализованному title (lowercased+trimmed) внутри stageStatus. При
+  создании — pull anchor (paragraphIndex / textSnippet / digest / occurrenceIndex)
+  и level из real `Section` первого documentVersion'а sample'а, plus сразу
+  pin `realSectionId` + `matchMethod=paragraph`. Если real Section нет —
+  минимальный textSnippet anchor, level=1.
+- `submitAnnotation` / `resolveQuestion` передают `annotatorId` / `decidedById`
+  в helper для аудита (createdBy/updatedBy на ExpectedSection).
+- JSON-поле `expected_results` больше не пишется (запросы на чтение его
+  всё ещё могут видеть старые данные).
+- Тесты `annotation.service.test.ts` обновлены: добавлены mocks для
+  `expectedSection`, `goldenSampleDocument`, `section`; новые кейсы для
+  update-existing-row и create-with-anchor-from-real-section.
+
+`apps/rule-admin/.../classification-viewer/`:
+- `types.ts`: добавлен `ExpectedSectionNode` и поле `expectedSectionId` в
+  `DiffEntry` (заполняется relational diff'ом для прямой мутации).
+- `utils.ts`: новая функция `diffClassificationWithRelationalExpected` —
+  использует `realSectionId` для точного матча pinned ExpectedSection с
+  реальной секцией; fallback positional по title для orphaned записей.
+  Возвращает `expectedSectionId` в каждой diff entry, чтобы quick-fix не
+  искал записи через positional matching.
+- `ClassificationTreeViewer.tsx`: добавлен `trpc.expectedSection.list` query;
+  diff source — relational при наличии rows, иначе legacy JSON. `handleQuickFix`
+  переписан на `expectedSection.create / update / delete` мутации (нет больше
+  `goldenDataset.updateStageStatus` для эталона).
+
+**Что НЕ удалено:** `expected_results` JSON column, legacy `diffClassificationWithExpected`
+(всё ещё используется как fallback). Удаление — отдельным cleanup PR'ом
+после миграции исторических данных.
+
+**Зависимость:** PR #92 (`feat(expected): relational expected_sections + relink after reparse`).
+
 ### Feat: relational `expected_sections` + auto-relink после re-parse
 
 Релокальная схема для эталонной разметки секций золотого сэмпла. Заменяет

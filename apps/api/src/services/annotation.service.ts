@@ -2,61 +2,173 @@ import { prisma } from "@clinscriptum/db";
 import type { AnnotationStatus, GoldenStageStatus, Prisma } from "@prisma/client";
 import { DomainError } from "./errors.js";
 import { logger } from "../lib/logger.js";
+import {
+  computeContentDigest,
+  computeOccurrenceIndex,
+  type ExpectedAnchor,
+} from "./expectedSection.service.js";
 
 /**
  * Golden-dataset annotation service (Sprint 7b — H+I auto-save mode).
  *
  * Workflow:
  *  1. Annotator opens a sample → submitAnnotation(sectionKey, proposedZone OR question)
- *  2. If !isQuestion → annotation 'open' AND expected_results.sections instantly
- *     updated with the new zone (auto-save).
+ *  2. If !isQuestion → annotation 'open' AND `expected_sections` row instantly
+ *     upserted with the new zone (auto-save).
  *  3. If isQuestion → annotation 'open', visible in expert queue. The previous
- *     entry for this section in expected_results.sections (if any) is removed —
+ *     `expected_sections` row for this section (if any) is removed —
  *     pending question shouldn't influence eval until expert resolves.
  *  4. Expert resolveQuestion → decision created, annotation 'answered',
- *     expected_results.sections updated with finalZone.
+ *     `expected_sections` row upserted with finalZone.
  *  5. Stage status changes (draft → in_review → approved) are managed by the
  *     existing UI on /golden-dataset/[id] — no separate "finalize" step.
+ *
+ * NB: ранее auto-save писал в JSON `golden_sample_stage_statuses.expected_results.sections`.
+ * После ввода relational `expected_sections` (PR #92) — пишем напрямую туда. JSON-поле
+ * остаётся для read-side backward-compat в legacy UI и будет удалено отдельным cleanup PR.
  */
 
-// Helper: одна запись секции в expected_results.sections.
-type ExpectedSectionEntry = { title: string; standardSection: string };
-
-/** Мутирующий helper. Принимает tx, модифицирует expected_results.sections atomic. */
+/**
+ * Upsert или delete одной записи в `expected_sections` для (sample, stage).
+ * Найти существующую можно по нормализованному (lowercased+trimmed) title в рамках
+ * stage. Если real `Section` с таким же title есть в первом docVersion sample'а —
+ * подтягиваем его anchor (paragraphIndex / textSnippet / occurrenceIndex / digest)
+ * и level + сразу пинимаем `realSectionId`. Иначе анкор минимальный (только title
+ * → textSnippet) и level=1 — relink-after-reparse подхватит при первом совпадении.
+ */
 async function upsertSectionInExpected(
   tx: Prisma.TransactionClient,
   goldenSampleId: string,
   stage: string,
   sectionKey: string,
   standardSection: string | null, // null => удалить запись
+  annotatorId?: string,
 ) {
-  const current = await tx.goldenSampleStageStatus.findUnique({
-    where: { goldenSampleId_stage: { goldenSampleId, stage } },
-  });
-  const expected = (current?.expectedResults ?? {}) as { sections?: ExpectedSectionEntry[] };
-  const sections: ExpectedSectionEntry[] = Array.isArray(expected.sections)
-    ? [...expected.sections]
-    : [];
-
-  const idx = sections.findIndex((s) => s.title === sectionKey);
-  if (standardSection === null) {
-    if (idx >= 0) sections.splice(idx, 1);
-  } else {
-    if (idx >= 0) sections[idx] = { title: sectionKey, standardSection };
-    else sections.push({ title: sectionKey, standardSection });
-  }
-  expected.sections = sections;
-
-  await tx.goldenSampleStageStatus.upsert({
+  // Гарантируем наличие stageStatus — упростит дальнейшую работу UI (без неё
+  // expectedSection.list возвращает пустой массив но сам stage отсутствует).
+  const stageStatus = await tx.goldenSampleStageStatus.upsert({
     where: { goldenSampleId_stage: { goldenSampleId, stage } },
     create: {
       goldenSampleId,
       stage,
       status: "draft" as GoldenStageStatus,
-      expectedResults: expected as object,
+      expectedResults: {} as object,
     },
-    update: {
-      expectedResults: expected as object,
+    update: {},
+  });
+
+  // Поиск существующего ExpectedSection по нормализованному title.
+  // sectionKey уже lowercased+trimmed (см. sectionKeyFor в UI), но здесь
+  // подстрахуем дополнительной нормализацией title — старые ExpectedSection'ы
+  // могут хранить title в исходном кейсе.
+  const allForStage = await tx.expectedSection.findMany({
+    where: { goldenSampleStageStatusId: stageStatus.id },
+    select: { id: true, title: true, order: true },
+  });
+  const existing = allForStage.find(
+    (e) => e.title.trim().toLowerCase() === sectionKey,
+  );
+
+  if (standardSection === null) {
+    if (existing) {
+      await tx.expectedSection.delete({ where: { id: existing.id } });
+    }
+    return;
+  }
+
+  if (existing) {
+    await tx.expectedSection.update({
+      where: { id: existing.id },
+      data: {
+        standardSection,
+        ...(annotatorId ? { updatedById: annotatorId } : {}),
+      },
+    });
+    return;
+  }
+
+  // Новая запись — попытка attach к real `Section` для качественного anchor.
+  // Sample может иметь несколько документов, берём первый (обычная семантика
+  // single-document sample'а в текущем UI; для multi-document нужно расширение).
+  const sampleDoc = await tx.goldenSampleDocument.findFirst({
+    where: { goldenSampleId },
+    select: { documentVersionId: true },
+    orderBy: { order: "asc" },
+  });
+
+  let anchor: ExpectedAnchor = { textSnippet: sectionKey };
+  let level = 1;
+  let realSectionId: string | null = null;
+  let matchMethod: string | null = null;
+  let matchedAt: Date | null = null;
+
+  if (sampleDoc?.documentVersionId) {
+    const realSections = await tx.section.findMany({
+      where: { docVersionId: sampleDoc.documentVersionId },
+      select: {
+        id: true,
+        title: true,
+        level: true,
+        order: true,
+        sourceAnchor: true,
+        contentBlocks: { select: { content: true, order: true } },
+      },
+      orderBy: { order: "asc" },
+    });
+    const real = realSections.find(
+      (s) => s.title.trim().toLowerCase() === sectionKey,
+    );
+    if (real) {
+      const sourceAnchor = (real.sourceAnchor ?? {}) as {
+        paragraphIndex?: number;
+        textSnippet?: string;
+      };
+      const occurrenceIndex = computeOccurrenceIndex(
+        real.title,
+        realSections,
+        real.id,
+      );
+      const digest = computeContentDigest(real);
+      anchor = {
+        paragraphIndex:
+          typeof sourceAnchor.paragraphIndex === "number"
+            ? sourceAnchor.paragraphIndex
+            : undefined,
+        textSnippet: sourceAnchor.textSnippet || real.title,
+        occurrenceIndex,
+        contentBlockDigest: digest || undefined,
+      };
+      level = real.level;
+      realSectionId = real.id;
+      matchMethod = "paragraph";
+      matchedAt = new Date();
+    }
+  }
+
+  // Order = после всех существующих — простая «add-to-end» семантика.
+  // Для tree-структуры (parent/children) пока без иерархии — новые
+  // ExpectedSection'ы создаются плоско, эксперт может перестроить дерево
+  // отдельной reorder-мутацией.
+  const maxOrder = allForStage.reduce(
+    (acc, e) => (e.order > acc ? e.order : acc),
+    -1,
+  );
+
+  await tx.expectedSection.create({
+    data: {
+      goldenSampleStageStatusId: stageStatus.id,
+      parentId: null,
+      title: sectionKey,
+      level,
+      anchor: anchor as unknown as Prisma.InputJsonValue,
+      standardSection,
+      order: maxOrder + 1,
+      realSectionId,
+      matchMethod,
+      matchedAt,
+      ...(annotatorId
+        ? { createdById: annotatorId, updatedById: annotatorId }
+        : {}),
     },
   });
 }
@@ -135,7 +247,7 @@ export const annotationService = {
         },
       });
 
-      // Auto-save into expected_results.sections — H+I mode.
+      // Auto-save into expected_sections — H+I mode.
       // Question (no zone yet) → удалить запись; zone → upsert.
       const targetZone = input.isQuestion ? null : (input.proposedZone ?? null);
       await upsertSectionInExpected(
@@ -144,6 +256,7 @@ export const annotationService = {
         input.stage,
         input.sectionKey,
         targetZone,
+        input.annotatorId,
       );
       return a;
     });
@@ -261,6 +374,7 @@ export const annotationService = {
         annotation.stage,
         annotation.sectionKey,
         input.finalZone,
+        input.decidedById,
       );
       return d;
     });

@@ -35,12 +35,32 @@ export interface DiffEntry {
   /** ID реальной секции для extra/wrong_section. Используется для resolve
       дубликатов title — когда несколько секций имеют одинаковое название,
       без id невозможно однозначно сопоставить запись overlay с конкретной
-      секцией дерева и обновить нужную позицию в expected.sections. */
+      секцией дерева. */
   actualSectionId?: string;
   /** Позиционный индекс среди секций с тем же title в реальном документе.
-      Нужен handleQuickFix для обновления соответствующей по позиции записи
-      в expected.sections (которая упорядочена тем же positional matching'ом). */
+      Сохраняется в legacy diff (по JSON expectedResults) и в relational diff
+      для дидактически совместимого UX — использует `n-я real-секция → n-я ожидаемая
+      секция с тем же title». */
   duplicateIndex?: number;
+  /** ID ExpectedSection — заполнен для diff на основе relational expected_sections.
+      Используется handleQuickFix для прямого update/delete без поиска по title. */
+  expectedSectionId?: string;
+}
+
+/** Узел relational ExpectedSection (как возвращает trpc.expectedSection.list). */
+export interface ExpectedSectionNode {
+  id: string;
+  goldenSampleStageStatusId: string;
+  parentId: string | null;
+  title: string;
+  level: number;
+  standardSection: string | null;
+  order: number;
+  realSectionId: string | null;
+  matchMethod: string | null;
+  /** Hybrid anchor — JSON, не используется напрямую в UI. */
+  anchor: unknown;
+  children?: ExpectedSectionNode[];
 }
 
 export type SortKey =

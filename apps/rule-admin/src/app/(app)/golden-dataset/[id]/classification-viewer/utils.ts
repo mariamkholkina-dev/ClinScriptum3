@@ -5,6 +5,7 @@ import type {
   SortKey,
   FilterState,
   ExpectedClassificationResults,
+  ExpectedSectionNode,
 } from "./types";
 
 export { buildNumbering, detectAnomalies, getVisibleSectionIds, getParentChain, hasChildren, ANOMALY_LABELS } from "../parsing-viewer/utils";
@@ -123,6 +124,134 @@ export function diffClassificationWithExpected(
         actual: { standardSection: actual.standardSection },
         actualSectionId: actual.id,
         duplicateIndex: duplicateIndexById.get(actual.id),
+      });
+    }
+  }
+
+  for (const s of realSections) {
+    if (!matchedActual.has(s.id)) {
+      entries.push({
+        type: "extra",
+        sectionTitle: s.title,
+        actual: { standardSection: s.standardSection },
+        actualSectionId: s.id,
+        duplicateIndex: duplicateIndexById.get(s.id),
+      });
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * Вариант diff'а на основе relational `ExpectedSection[]` (PR #92).
+ *
+ * Алгоритм:
+ *  1. Если ExpectedSection.realSectionId привязан → diff по этой связке
+ *     (а не по title) — так корректно работает с дублями title и survives
+ *     re-parse. Если зоны совпадают — нет diff entry; иначе wrong_section.
+ *  2. Если realSectionId == null (orphaned после re-parse или новая запись) →
+ *     fallback positional matching по title (то же что в legacy JSON-diff).
+ *  3. Real-секции без матча → extra.
+ *  4. Expected без матча → missing.
+ */
+export function diffClassificationWithRelationalExpected(
+  sections: Section[],
+  expectedNodes: ExpectedSectionNode[],
+): DiffEntry[] {
+  const realSections = sections.filter((s) => !s.isFalseHeading);
+
+  // Уплощаем дерево expected в плоский список (этап Classification сейчас
+  // не использует иерархию, но relational модель её допускает).
+  const flatExpected: ExpectedSectionNode[] = [];
+  const walk = (nodes: ExpectedSectionNode[]) => {
+    for (const n of nodes) {
+      flatExpected.push(n);
+      if (n.children?.length) walk(n.children);
+    }
+  };
+  walk(expectedNodes);
+
+  const realById = new Map<string, Section>();
+  for (const s of realSections) realById.set(s.id, s);
+
+  const realByTitle = new Map<string, Section[]>();
+  for (const s of realSections) {
+    const key = s.title.trim().toLowerCase();
+    if (!realByTitle.has(key)) realByTitle.set(key, []);
+    realByTitle.get(key)!.push(s);
+  }
+  const duplicateIndexById = new Map<string, number>();
+  for (const list of realByTitle.values()) {
+    list.forEach((s, idx) => duplicateIndexById.set(s.id, idx));
+  }
+
+  const matchedActual = new Set<string>();
+  const entries: DiffEntry[] = [];
+
+  // Сначала проходим по pinned expected (с realSectionId) — точный матч.
+  // Затем по orphaned — positional fallback.
+  const pinned = flatExpected.filter((e) => e.realSectionId);
+  const orphaned = flatExpected.filter((e) => !e.realSectionId);
+
+  for (const exp of pinned) {
+    const real = realById.get(exp.realSectionId!);
+    if (!real || matchedActual.has(real.id)) {
+      // realSectionId протух (re-parse удалил секцию или дублирующая запись).
+      // Считаем missing — relink-after-reparse должен был занулить, но если
+      // не успел, то всё равно показываем чтобы эксперт пере-pинул.
+      entries.push({
+        type: "missing",
+        sectionTitle: exp.title,
+        expected: { standardSection: exp.standardSection },
+        expectedSectionId: exp.id,
+      });
+      continue;
+    }
+    matchedActual.add(real.id);
+    if (
+      exp.standardSection != null &&
+      real.standardSection !== exp.standardSection
+    ) {
+      entries.push({
+        type: "wrong_section",
+        sectionTitle: exp.title,
+        expected: { standardSection: exp.standardSection },
+        actual: { standardSection: real.standardSection },
+        actualSectionId: real.id,
+        duplicateIndex: duplicateIndexById.get(real.id),
+        expectedSectionId: exp.id,
+      });
+    }
+  }
+
+  // Orphaned expected — positional matching по title (ровно как было в legacy).
+  for (const exp of orphaned) {
+    const key = exp.title.trim().toLowerCase();
+    const candidates = realByTitle.get(key) ?? [];
+    const actual = candidates.find((s) => !matchedActual.has(s.id));
+    if (!actual) {
+      entries.push({
+        type: "missing",
+        sectionTitle: exp.title,
+        expected: { standardSection: exp.standardSection },
+        expectedSectionId: exp.id,
+      });
+      continue;
+    }
+    matchedActual.add(actual.id);
+    if (
+      exp.standardSection != null &&
+      actual.standardSection !== exp.standardSection
+    ) {
+      entries.push({
+        type: "wrong_section",
+        sectionTitle: exp.title,
+        expected: { standardSection: exp.standardSection },
+        actual: { standardSection: actual.standardSection },
+        actualSectionId: actual.id,
+        duplicateIndex: duplicateIndexById.get(actual.id),
+        expectedSectionId: exp.id,
       });
     }
   }

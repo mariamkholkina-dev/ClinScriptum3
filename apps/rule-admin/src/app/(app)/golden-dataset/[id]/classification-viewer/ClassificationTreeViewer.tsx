@@ -38,6 +38,7 @@ import type {
   SortKey,
   FilterState,
   TaxonomyEntry,
+  ExpectedSectionNode,
 } from "./types";
 import { EMPTY_FILTERS } from "./types";
 import {
@@ -46,6 +47,7 @@ import {
   sortSections,
   filterSections,
   diffClassificationWithExpected,
+  diffClassificationWithRelationalExpected,
   getVisibleSectionIds,
   getParentChain,
   hasChildren,
@@ -229,9 +231,9 @@ interface DiffOverlayProps {
   taxonomyOptions: Array<{ value: string; label: string; type: string }>;
   /**
    * Quick-fix мутация. Логика по типу:
-   *   - wrong_section: обновить Section.standardSection + upsert в expected_results
-   *   - extra: добавить запись в expected_results (опционально изменить standardSection)
-   *   - missing: удалить запись из expected_results (sectionId=null, newZone=null)
+   *   - wrong_section: обновить Section.standardSection + update ExpectedSection.standardSection
+   *   - extra: добавить ExpectedSection (опционально изменить standardSection реальной секции)
+   *   - missing: удалить ExpectedSection
    */
   onQuickFix: (params: {
     diffType: DiffEntry["type"];
@@ -239,12 +241,13 @@ interface DiffOverlayProps {
     sectionTitle: string;
     newZone: string | null;
     /** Для wrong_section: исходное expected.standardSection из diff entry —
-        используется для уникального матчинга записи в expected.sections при
-        дубликатах title. Без этого findIndex по title находил случайную копию. */
+        используется для уникального матчинга записи при дубликатах title в legacy JSON-режиме. */
     originalExpectedZone?: string | null;
     /** Позиционный индекс секции среди дубликатов title в реальном документе —
-        используется для positional matching записи в expected.sections. */
+        используется для positional matching в legacy JSON-режиме. */
     duplicateIndex?: number;
+    /** ID ExpectedSection для прямой relational-мутации (PR #92). */
+    expectedSectionId?: string;
   }) => void;
   /** Прыжок к строке в основной структуре: фокус + scroll. */
   onJumpToSection: (sectionId: string) => void;
@@ -428,6 +431,7 @@ function ClassificationDiffOverlay({
                       newZone: e.type === "missing" ? null : (currentValue === "" ? null : currentValue),
                       originalExpectedZone: e.expected?.standardSection ?? null,
                       duplicateIndex: e.duplicateIndex,
+                      expectedSectionId: e.expectedSectionId,
                     })
                   }
                   className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium text-white ${
@@ -1208,9 +1212,12 @@ export default function ClassificationTreeViewer({
   stageStatus = "draft",
 }: {
   versionId: string;
+  /** @deprecated Используется только для backward-compat: если relational expectedSection.list
+      возвращает пустой массив, viewer всё ещё может показать diff из старого JSON. После
+      удаления legacy expected_results поле этот аргумент тоже уйдёт. */
   expectedResults?: unknown;
   /** Опционально (раньше viewer использовался без golden-sample context) — нужен для quick-fix
-      обновления expected_results JSON. Если не передан — quick-fix меняет только Section. */
+      и для запроса relational expected_sections. Без него diff и quick-fix скрыты. */
   goldenSampleId?: string;
   stageKey?: string;
   stageStatus?: string;
@@ -1224,6 +1231,17 @@ export default function ClassificationTreeViewer({
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   });
+
+  // Relational expected_sections (PR #92). Возвращает дерево; для diff'а
+  // плоский обход делает diffClassificationWithRelationalExpected.
+  const expectedSectionsQuery = trpc.expectedSection.list.useQuery(
+    { goldenSampleId: goldenSampleId ?? "", stage: stageKey },
+    {
+      enabled: Boolean(goldenSampleId),
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  );
 
   const [sortKey, setSortKey] = useState<SortKey>("order");
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
@@ -1259,21 +1277,42 @@ export default function ClassificationTreeViewer({
     [filtered, visibleIds],
   );
 
-  const diffEntries = useMemo(
-    () => (showDiff ? diffClassificationWithExpected(rawSections, expectedResults) : []),
-    [showDiff, rawSections, expectedResults],
-  );
+  // Relational expected_sections — primary источник diff'а после PR #92.
+  // Если они пустые / sample без них, fallback на legacy JSON expectedResults
+  // (для постепенной миграции — старые samples ещё могут не иметь rel rows).
+  const relationalExpected = (expectedSectionsQuery.data ?? []) as ExpectedSectionNode[];
+  const useRelational = relationalExpected.length > 0;
+
+  const diffEntries = useMemo(() => {
+    if (!showDiff) return [] as DiffEntry[];
+    if (useRelational) {
+      return diffClassificationWithRelationalExpected(rawSections, relationalExpected);
+    }
+    return diffClassificationWithExpected(rawSections, expectedResults);
+  }, [showDiff, rawSections, expectedResults, useRelational, relationalExpected]);
+
   const diffMap = useMemo(() => {
     const m = new Map<string, DiffEntry["type"]>();
     for (const e of diffEntries) {
-      const sec = rawSections.find((s) => s.title.trim().toLowerCase() === e.sectionTitle.trim().toLowerCase());
+      // actualSectionId надёжнее title-lookup: при дублях title оба попадали в одну
+      // запись (мап перезаписывался). Сохраняем fallback на title для legacy entries.
+      if (e.actualSectionId) {
+        m.set(e.actualSectionId, e.type);
+        continue;
+      }
+      const sec = rawSections.find(
+        (s) => s.title.trim().toLowerCase() === e.sectionTitle.trim().toLowerCase(),
+      );
       if (sec) m.set(sec.id, e.type);
     }
     return m;
   }, [diffEntries, rawSections]);
 
-  const hasDiffData = !!expectedResults && typeof expectedResults === "object" &&
+  const hasLegacyDiffData =
+    !!expectedResults &&
+    typeof expectedResults === "object" &&
     Array.isArray((expectedResults as Record<string, unknown>).sections);
+  const hasDiffData = useRelational || hasLegacyDiffData;
 
   const anomalyCount = anomalies.size;
 
@@ -1353,48 +1392,49 @@ export default function ClassificationTreeViewer({
     [updateClassification],
   );
 
-  // Мутация обновления expected_results JSON (для extra/missing в diff overlay).
-  // Используется когда нужно добавить/изменить/удалить запись секции в эталоне,
-  // а не только её standardSection в БД.
-  // Optimistic update для эталона: патч goldenDataset.getSample в кеше,
-  // родительский page.tsx через useQuery подхватит свежий expectedResults.
-  // Invalidate только на onError (см. parsing-viewer для подробностей race-fix'а).
-  const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onMutate: async (input) => {
-      if (!goldenSampleId) return undefined;
-      await utils.goldenDataset.getSample.cancel({ id: goldenSampleId });
-      const prev = utils.goldenDataset.getSample.getData({ id: goldenSampleId });
-      utils.goldenDataset.getSample.setData({ id: goldenSampleId }, (old) => {
-        if (!old) return old;
-        return {
-          ...old,
-          stageStatuses: old.stageStatuses.map((ss) =>
-            ss.stage === input.stage
-              ? {
-                  ...ss,
-                  expectedResults: (input.expectedResults ?? {}) as typeof ss.expectedResults,
-                  status: input.status as typeof ss.status,
-                }
-              : ss,
-          ),
-        };
-      });
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev && goldenSampleId) {
-        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
-        utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
-      }
-    },
+  // Relational expected_sections мутации (PR #92): create / update / delete
+  // вместо мутации JSON expected_results. Quick-fix теперь работает напрямую
+  // с конкретной row, не пытаясь поддержать positional-matching через JSON.
+  const expectedListInput = goldenSampleId
+    ? { goldenSampleId, stage: stageKey }
+    : null;
+  const invalidateExpected = useCallback(() => {
+    if (expectedListInput) {
+      utils.expectedSection.list.invalidate(expectedListInput);
+    }
+  }, [utils, expectedListInput]);
+
+  const createExpected = trpc.expectedSection.create.useMutation({
+    onSuccess: invalidateExpected,
+  });
+  const updateExpectedSection = trpc.expectedSection.update.useMutation({
+    onSuccess: invalidateExpected,
+  });
+  const deleteExpected = trpc.expectedSection.delete.useMutation({
+    onSuccess: invalidateExpected,
   });
 
-  // Quick-fix для строки diff overlay. Принимает sectionId (если есть в БД),
-  // sectionTitle и newZone. Логика по типу entry:
-  //  - extra: section в БД, нет в expected → upsert в expected.sections[*]
-  //  - wrong_section: есть в обоих, разные zone → updateClassification (Section)
-  //                   + upsert в expected (чтобы не появился extra)
-  //  - missing: нет в БД, есть в expected → удалить из expected
+  // Stage status helper — нужен для create (привязка к stageStatusId).
+  // Берём из cached goldenDataset.getSample (уже подгружен родителем).
+  const sampleQuery = trpc.goldenDataset.getSample.useQuery(
+    { id: goldenSampleId ?? "" },
+    {
+      enabled: Boolean(goldenSampleId),
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  );
+  const stageStatusId = useMemo(() => {
+    const ss = sampleQuery.data?.stageStatuses?.find((s) => s.stage === stageKey);
+    return ss?.id;
+  }, [sampleQuery.data, stageKey]);
+
+  // Quick-fix для строки diff overlay (relational версия).
+  //  - missing: ExpectedSection есть, реальной секции нет → expectedSection.delete
+  //  - wrong_section: есть оба, разные zone → updateClassification(Section) +
+  //                   expectedSection.update(standardSection)
+  //  - extra: реальная секция есть, ExpectedSection нет → updateClassification(Section)
+  //           + expectedSection.create (с anchor от real Section)
   const handleQuickFix = useCallback(
     (params: {
       diffType: DiffEntry["type"];
@@ -1403,8 +1443,9 @@ export default function ClassificationTreeViewer({
       newZone: string | null;
       originalExpectedZone?: string | null;
       duplicateIndex?: number;
+      expectedSectionId?: string;
     }) => {
-      const { diffType, sectionId, sectionTitle, newZone, originalExpectedZone, duplicateIndex } = params;
+      const { diffType, sectionId, sectionTitle, newZone, expectedSectionId } = params;
 
       // 1) Update Section.standardSection (если есть section и тип — wrong_section/extra)
       if (sectionId && diffType !== "missing" && newZone !== null) {
@@ -1415,78 +1456,68 @@ export default function ClassificationTreeViewer({
         });
       }
 
-      // 2) Update expected_results JSON (если есть golden-sample context)
       if (!goldenSampleId) return;
 
-      const current = (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
-      const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
-      const titleLower = sectionTitle.trim().toLowerCase();
-
-      let nextSections: Array<Record<string, unknown>>;
-
+      // 2) Relational expected_sections мутации.
       if (diffType === "missing") {
-        // Удаляем первую запись с этим title (missing — в реальности секции нет,
-        // и matched строго по порядку в diff, поэтому удаляем тоже первую).
-        const idx = sectionsArr.findIndex(
-          (s) => String(s.title ?? "").trim().toLowerCase() === titleLower,
-        );
-        if (idx < 0) return;
-        nextSections = sectionsArr.filter((_, i) => i !== idx);
-      } else if (diffType === "wrong_section") {
-        // Positional match: ищем (duplicateIndex+1)-ю запись с таким title в expected.
-        // diff matches positionally — n-я real-секция с title T сопоставляется
-        // с n-й expected записью с этим же title. Обновляем именно её.
-        // Fallback: если duplicateIndex не передан или записей меньше —
-        // ищем по title + старый standardSection.
-        let idx = -1;
-        if (typeof duplicateIndex === "number") {
-          let seen = 0;
-          for (let i = 0; i < sectionsArr.length; i++) {
-            if (String(sectionsArr[i].title ?? "").trim().toLowerCase() === titleLower) {
-              if (seen === duplicateIndex) { idx = i; break; }
-              seen++;
-            }
-          }
+        if (expectedSectionId) {
+          deleteExpected.mutate({ id: expectedSectionId });
         }
-        if (idx < 0) {
-          idx = sectionsArr.findIndex(
-            (s) =>
-              String(s.title ?? "").trim().toLowerCase() === titleLower &&
-              (s.standardSection ?? null) === (originalExpectedZone ?? null),
-          );
-        }
-        if (idx >= 0) {
-          nextSections = sectionsArr.map((s, i) =>
-            i === idx ? { ...s, title: sectionTitle, standardSection: newZone } : s,
-          );
-        } else {
-          nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
-        }
-      } else {
-        // diffType === "extra" — секция реально есть в документе, но не была в эталоне.
-        // Всегда push новой записи. Так как diff делает positional matching, новая
-        // запись займёт позицию (n+1) среди дубликатов и будет matched с этой extra
-        // секцией на следующем рендере → строка пропадёт из overlay.
-        nextSections = [...sectionsArr, { title: sectionTitle, standardSection: newZone }];
+        return;
       }
 
-      updateExpected.mutate({
-        goldenSampleId,
-        stage: stageKey,
-        status: (stageStatus === "not_set" ? "draft" : stageStatus) as
-          | "draft"
-          | "in_review"
-          | "approved",
-        expectedResults: { ...current, sections: nextSections },
+      if (diffType === "wrong_section") {
+        if (expectedSectionId) {
+          updateExpectedSection.mutate({
+            id: expectedSectionId,
+            patch: { standardSection: newZone },
+          });
+        }
+        return;
+      }
+
+      // diffType === "extra": создать ExpectedSection. Anchor берём от реальной
+      // секции — так relink-after-reparse подхватит её корректно. Без stageStatusId
+      // expectedSection.create не пройдёт — обычно он заполнен (sample query —
+      // пререквизит стейджа).
+      if (!stageStatusId || !sectionId) return;
+      const real = rawSections.find((s) => s.id === sectionId);
+      if (!real) return;
+
+      // Order = после существующих корней (плоская структура — пока без иерархии).
+      const maxOrder = relationalExpected
+        .filter((e) => !e.parentId)
+        .reduce((acc, e) => (e.order > acc ? e.order : acc), -1);
+
+      // Anchor: достаём paragraphIndex / textSnippet из Section.sourceAnchor если он
+      // exposed на frontend; если нет — минимально title как textSnippet (server-side
+      // это nfr — relink-after-reparse всё равно сматчится по title_occurrence).
+      const realAny = real as Section & {
+        sourceAnchor?: { paragraphIndex?: number; textSnippet?: string };
+      };
+      const anchor = {
+        paragraphIndex: realAny.sourceAnchor?.paragraphIndex,
+        textSnippet: realAny.sourceAnchor?.textSnippet || sectionTitle,
+      };
+
+      createExpected.mutate({
+        stageStatusId,
+        title: sectionTitle,
+        level: real.level,
+        anchor,
+        standardSection: newZone,
+        order: maxOrder + 1,
       });
     },
     [
       updateClassification,
-      updateExpected,
-      expectedResults,
       goldenSampleId,
-      stageKey,
-      stageStatus,
+      stageStatusId,
+      rawSections,
+      relationalExpected,
+      createExpected,
+      updateExpectedSection,
+      deleteExpected,
     ],
   );
 
@@ -1701,7 +1732,12 @@ export default function ClassificationTreeViewer({
             // 4. Фокусируемся на tree-контейнер для keyboard nav.
             requestAnimationFrame(() => containerRef.current?.focus());
           }}
-          fixPending={updateClassification.isPending || updateExpected.isPending}
+          fixPending={
+            updateClassification.isPending ||
+            createExpected.isPending ||
+            updateExpectedSection.isPending ||
+            deleteExpected.isPending
+          }
         />
       )}
 
