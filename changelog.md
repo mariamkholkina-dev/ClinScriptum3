@@ -2,6 +2,32 @@
 
 ## 2026-05-09
 
+### Chore: word-addin docker service для dev-deploy
+
+Word add-in теперь собирается и раздаётся через Docker compose.
+
+`apps/word-addin/Dockerfile` (новый): multi-stage — `node:20-alpine` build (vite → dist) → `nginx:alpine` serve (port 80).
+
+`apps/word-addin/nginx.conf` (новый):
+- SPA fallback `/ → index.html`
+- `/manifest.xml` отдаётся с `Content-Type: application/xml` (Office проверяет)
+- `/assets/` long-cache (vite добавляет content-hash)
+- `/healthz` для healthcheck
+
+`docker-compose.prod.yml`:
+- Service `word-addin` (build из новой Dockerfile, port `127.0.0.1:3001:80`, memory 256m)
+- Build-arg `WORD_ADDIN_PUBLIC_URL` (дефолт `https://word-addin.dev.clinscriptum.ru`) — при build подставляется в `manifest.xml` через `sed`, чтобы Office загружал add-in с publish'ed URL.
+
+**Deploy на dev:**
+```bash
+docker compose -f docker-compose.prod.yml build word-addin
+docker compose -f docker-compose.prod.yml up -d --no-deps word-addin
+# manifest.xml доступен на http://127.0.0.1:3001/manifest.xml
+# (через reverse-proxy с TLS — https://word-addin.dev.clinscriptum.ru/manifest.xml)
+```
+
+Office.js ожидает HTTPS — TLS termination делается reverse-proxy выше (Traefik / nginx-proxy), порт 3001 наружу из Docker наружу не раздаётся.
+
 ### Feat: parsing-viewer читает эталон через relational endpoint (PR E v2)
 
 В `apps/rule-admin/.../parsing-viewer/ParsingTreeViewer.tsx` заменён

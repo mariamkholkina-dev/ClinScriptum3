@@ -151,6 +151,26 @@ services:
         limits:
           memory: 1g
 
+  # Word add-in static dist (vite build → nginx serve). Office.js загружает
+  # add-in по URL из manifest.xml. В prod нужен HTTPS — TLS termination
+  # делается reverse-proxy выше (Traefik / nginx-proxy / cloudflare).
+  word-addin:
+    build:
+      context: .
+      dockerfile: apps/word-addin/Dockerfile
+      args:
+        # Публичный URL по которому Office грузит add-in. Меняй для prod
+        # (например https://word-addin.dev.clinscriptum.ru) — при build
+        # подставится в manifest.xml через sed.
+        WORD_ADDIN_PUBLIC_URL: https://word-addin.dev.clinscriptum.ru
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:80"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
 volumes:
   pgdata:
   redisdata:
