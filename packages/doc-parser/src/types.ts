@@ -106,17 +106,28 @@ export interface ParserOptions {
   ignoreHeadersFooters: boolean;
   /**
    * Опциональный callback. Вызывается когда rule-based heading detection
-   * нашёл слишком мало заголовков (< llmFallbackThreshold). Получает все
-   * paragraph'ы документа, должен вернуть paragraphIndex+level для каждого
-   * детектированного heading'а. Используется для плохо-оформленных DOCX
-   * где автор не применял Heading-стили и не сделал жирный текст.
+   * нашёл слишком мало "качественных" заголовков. Получает все paragraph'ы
+   * документа, должен вернуть paragraphIndex+level для каждого
+   * детектированного heading'а. Используется для плохо-оформленных DOCX.
    *
    * Параметры (provider, model, prompt, валидация) живут в caller'е —
    * парсер не зависит от llm-gateway.
    */
   llmFallback?: LlmHeadingFallback;
-  /** Порог запуска llmFallback. Если headings.length < threshold → fallback. Default 20. */
+  /** Общий порог: если headings.length < threshold → fallback. Default 20. */
   llmFallbackThreshold?: number;
+  /**
+   * Quality-порог: считаем только headings с method ∈ {style,outline,numbered}.
+   * Если qualityCount < qualityThreshold → fallback. Default 10.
+   *
+   * Зачем нужен: bold-only fallback ловит много "псевдо-заголовков" в плохих
+   * DOCX (строки шкал типа `1 - Здоров`, `2 - Пограничное`). Они проходят как
+   * headings, headings.length становится >= threshold, LLM не вызывается. Но
+   * это мусор. Quality-threshold ловит этот сценарий: если у документа мало
+   * структурных headings (style/outline/numbered) и в основном bold-only —
+   * нужен LLM-fallback.
+   */
+  llmFallbackQualityThreshold?: number;
 }
 
 export const DEFAULT_PARSER_OPTIONS: ParserOptions = {

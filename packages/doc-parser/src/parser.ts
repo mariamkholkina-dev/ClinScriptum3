@@ -153,21 +153,41 @@ export async function parseDocx(
 
   /* ───── LLM-fallback heading detection ─────
    *
-   * Если rule-based detection нашёл подозрительно мало headings
-   * (< llmFallbackThreshold) и caller передал callback `llmFallback` —
-   * вызываем его с paragraph'ами документа, REPLACE'им headings на
-   * результат, и переассоциируем contentBlocks с новыми headings'ами.
+   * Триггерится ДВУМЯ независимыми условиями:
+   *   1. headings.length < llmFallbackThreshold (default 20) — общий low count
+   *   2. qualityCount < llmFallbackQualityThreshold (default 10) — где
+   *      quality = style/outline/numbered (структурные методы).
    *
-   * Замена (а не merge) — потому что для проблемных DOCX rule-based
-   * обычно даёт мусорные headings (строки шкал, footnote-row'ы), их
-   * лучше выбросить и довериться LLM. Если caller хочет merge — пусть
-   * сам это сделает в callback'е (вернуть union).
+   * Второй порог нужен потому что bold-only fallback в heading-detector
+   * легко ловит 20+ "псевдо-headings" в плохих DOCX (строки шкал, footnote
+   * rows, list items). Они проходят первый порог, но это мусор.
+   * Quality-порог обеспечивает что LLM позовётся даже когда headings.length
+   * большой, но СТРУКТУРНЫХ headings мало.
+   *
+   * REPLACE логика:
+   *   - LLM result REPLACE'ит rule-based если llmHeadings.length > qualityCount.
+   *     То есть LLM выигрывает у quality-headings. Если quality=0 а LLM=3 —
+   *     3 > 0 → REPLACE (даже если rule-based bold-only нашёл 30 мусора).
+   *   - Сравниваем с qualityCount а не headings.length — bold-only fallback
+   *     не должен блокировать REPLACE на хороший LLM result.
    */
   const fallbackThreshold = opts.llmFallbackThreshold ?? 20;
-  if (opts.llmFallback && headings.length < fallbackThreshold && fallbackParagraphs.length > 0) {
+  const qualityThreshold = opts.llmFallbackQualityThreshold ?? 10;
+  const qualityCount = headings.filter(
+    (h) => h.method === "style" || h.method === "outline" || h.method === "numbered",
+  ).length;
+
+  const shouldFallback =
+    opts.llmFallback &&
+    fallbackParagraphs.length > 0 &&
+    (headings.length < fallbackThreshold || qualityCount < qualityThreshold);
+
+  if (shouldFallback) {
     try {
-      const llmHeadings = await opts.llmFallback(fallbackParagraphs);
-      if (llmHeadings.length > headings.length) {
+      const llmHeadings = await opts.llmFallback!(fallbackParagraphs);
+      // REPLACE если LLM result лучше чем quality-count rule-based'а.
+      // Если qualityCount=0 (всё bold-only мусор) — даже LLM=3 > 0 → REPLACE.
+      if (llmHeadings.length > qualityCount) {
         // Map paragraphIndex → ParagraphInfo for text lookup
         const byIdx = new Map(fallbackParagraphs.map((p) => [p.paragraphIndex, p]));
         const newHeadings: DetectedHeading[] = [];
@@ -185,12 +205,11 @@ export async function parseDocx(
         // Sort by paragraphIndex чтобы headings шли в document order
         newHeadings.sort((a, b) => a.paragraphIndex - b.paragraphIndex);
 
-        if (newHeadings.length > headings.length) {
+        if (newHeadings.length > qualityCount) {
           headings.length = 0;
           headings.push(...newHeadings);
 
           // Re-associate contentBlocks с новыми headings.
-          // Block принадлежит heading'у с максимальным paragraphIndex ≤ block.paragraphIndex.
           for (const cb of contentBlocks) {
             const blockIdx = cb.block.sourceAnchor.paragraphIndex;
             let lastHeading: DetectedHeading | null = null;
@@ -201,9 +220,7 @@ export async function parseDocx(
             cb.heading = lastHeading;
           }
 
-          // Также — paragraph'ы которые ТЕПЕРЬ headings (по LLM) но раньше
-          // были contentBlocks: убрать их из contentBlocks (они стали headings,
-          // не должны дублироваться как content). Detect by paragraphIndex match.
+          // Удалить paragraph'ы-ставшие-headings из contentBlocks.
           const newHeadingIdxSet = new Set(newHeadings.map((h) => h.paragraphIndex));
           const filteredCBs = contentBlocks.filter(
             (cb) => !newHeadingIdxSet.has(cb.block.sourceAnchor.paragraphIndex),

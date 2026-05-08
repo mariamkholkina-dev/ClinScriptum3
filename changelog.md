@@ -2,6 +2,25 @@
 
 ## 2026-05-08
 
+### Feat: parser — quality-threshold для LLM-fallback (PR #87, дофиксинг гибрида)
+
+После реальной обработки 156 doc'ов на dev стало видно: 19 doc'ов остались с <50 секций даже после PR #85+#86. Анализ логов показал что `LLM heading fallback detected` сработал только 1 раз — для остальных 18 rule-based+bold-only ловил ≥20 «псевдо-headings» (строки шкал, footnote rows), threshold обманывался, LLM не звался.
+
+`packages/doc-parser/src/types.ts`:
+- Добавлен `ParserOptions.llmFallbackQualityThreshold` (default 10).
+
+`packages/doc-parser/src/parser.ts`:
+- Считается `qualityCount` = headings с `method ∈ {style, outline, numbered}` (структурные методы; bold-only fallback и llm — НЕ quality).
+- Fallback теперь триггерится **либо** общим threshold (`headings.length < threshold`), **либо** quality threshold (`qualityCount < qualityThreshold`).
+- REPLACE сравнивает с `qualityCount`, а не `headings.length` — bold-only мусор больше не блокирует REPLACE на хороший LLM result. Для документа с 30 bold-only «headings» (qualityCount=0) LLM=3 → REPLACE (3 > 0).
+
+Тесты:
+- Старый «does NOT call llmFallback when rule-based finds enough» обновлён: numbered headings (quality), а не bold-only.
+- Новый «REPLACES bold-only rule-based with LLM when qualityCount=0» — ключевой fix.
+- Новый «triggers fallback by qualityThreshold even when total >= threshold» — quality-trigger.
+
+**Эффект:** документы где автор активно использовал жирный шрифт для не-headings (шкалы, перечни, акценты) теперь корректно получают LLM-rescue вместо «успокоения» rule-based'а псевдо-headings'ами.
+
 ### Feat: parser — LLM-fallback heading detection (Вариант 4 из гибрида, шаг 2)
 
 `packages/doc-parser/src/types.ts`:
