@@ -65,6 +65,12 @@ const useStyles = makeStyles({
     color: tokens.colorPaletteBlueForeground2,
     fontSize: tokens.fontSizeBase100,
   },
+  rowDiffExtra: {
+    borderLeft: `3px solid ${tokens.colorPaletteDarkOrangeForeground1}`,
+  },
+  rowDiffWrongLevel: {
+    borderLeft: `3px solid ${tokens.colorPaletteBlueForeground2}`,
+  },
 });
 
 const STATUS_COLOR: Record<SectionStatus, "success" | "subtle" | "danger"> = {
@@ -88,6 +94,11 @@ interface Props {
   onActivateSection: (section: Section) => void;
   onToggleFalseHeading: (section: Section) => void;
   togglingFalseHeadingId: string | null;
+  onUpdateComment: (section: Section, newComment: string) => Promise<void>;
+  onDeleteManual: (section: Section) => Promise<void>;
+  /** Подсветка строк по типу diff (см. DiffPanel). Если не передан — без подсветки.
+   *  Только `extra` и `wrong_level` имеют реальную секцию для матчинга. */
+  diffTypeBySectionId?: Map<string, "extra" | "wrong_level">;
 }
 
 /**
@@ -109,6 +120,9 @@ export function SectionTree({
   onActivateSection,
   onToggleFalseHeading,
   togglingFalseHeadingId,
+  onUpdateComment,
+  onDeleteManual,
+  diffTypeBySectionId,
 }: Props) {
   const styles = useStyles();
 
@@ -134,6 +148,7 @@ export function SectionTree({
         const isFalse = section.isFalseHeading;
         const isSelected = selectedIds.has(section.id);
         const isActive = section.id === activeSectionId;
+        const diffType = diffTypeBySectionId?.get(section.id);
         return (
           <div
             key={section.id}
@@ -141,6 +156,8 @@ export function SectionTree({
               styles.row,
               isFalse && styles.rowFalse,
               (isSelected || isActive) && styles.rowSelected,
+              diffType === "extra" && styles.rowDiffExtra,
+              diffType === "wrong_level" && styles.rowDiffWrongLevel,
             )}
             style={{ paddingLeft: `${4 + section.level * 14}px` }}
             onClick={() => onActivateSection(section)}
@@ -188,6 +205,10 @@ export function SectionTree({
               section={section}
               pending={togglingFalseHeadingId === section.id}
               onToggleFalseHeading={() => onToggleFalseHeading(section)}
+              onUpdateComment={(newComment) => onUpdateComment(section, newComment)}
+              onDeleteManual={
+                section.isManual ? () => onDeleteManual(section) : undefined
+              }
             />
           </div>
         );

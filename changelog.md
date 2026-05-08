@@ -47,6 +47,50 @@ JSON `goldenSampleStageStatus.expectedResults` на relational
 
 ## 2026-05-08
 
+### Feat (PR 4/4 v2): diff с эталоном + quick-fix actions (Word add-in)
+
+`apps/word-addin/src/parsing/diffWithExpected.ts` (новый):
+- Чистая функция `diffWithExpected(sections, expectedResults)` — порт из rule-admin parsing-viewer/utils.ts. Возвращает `DiffEntry[]` с типами `missing` / `extra` / `wrong_level`. Секции с `isFalseHeading=true` исключаются. Локальные типы `ExpectedSection`, `ExpectedResults`, `DiffEntry` (без импортов rule-admin).
+
+`apps/word-addin/src/parsing/DiffPanel.tsx` (новый):
+- FluentUI v9 список diff entries, сгруппирован по типу (Пропущено / Лишних / Неверный уровень). Бейджи-счётчики сверху.
+- Quick-fix кнопки: extra → «Принять в эталон» + «Не заголовок»; missing → «Удалить из эталона»; wrong_level → Dropdown (0–5) + «Применить».
+- Click на строку (вне кнопок) → `onJumpToSection(actualSectionId)` для extra/wrong_level.
+
+`apps/word-addin/src/parsing/SectionTree.tsx`:
+- Новый prop `diffTypeBySectionId?: Map<string, "extra" | "wrong_level">` — подсветка строк левой границей: amber для extra, blue для wrong_level. Логика manual sections / комментариев / false-heading из PR 3 не тронута.
+
+`apps/word-addin/src/parsing/ParsingPanel.tsx`:
+- TabList «Дерево» / «Diff с эталоном» (FluentUI v9). Таб Diff виден только при `goldenSampleId`. Бейдж-счётчик количества diff entries рядом с лейблом.
+- Параллельная загрузка `document.getVersion` + `goldenDataset.getSample` через Promise.all (golden-fetch не блокирует основную загрузку).
+- Кнопка «+ Добавить раздел» и BulkActionsBar показываются только на табе «Дерево».
+- Quick-fix handlers: `handleDiffAcceptExtra`, `handleDiffMarkFalseHeading`, `handleDiffRemoveMissing`, `handleDiffApplyLevel` — диспатч `goldenDataset.updateStageStatus` (правка `expected_results.sections`) и `document.markSectionFalseHeading`. После каждого fix — refetch.
+- Подсветка diff передаётся в `SectionTree.diffTypeBySectionId` — на табе «Дерево» строки секций с расхождением визуально маркированы.
+
+## 2026-05-08
+
+### Feat (PR 3/4): manual section через выделение + per-row comment edit (Word add-in)
+
+`apps/word-addin/src/office-helpers.ts`:
+- Добавлена `getSelectionContext()` — возвращает `{ text, paragraphIndex }` для текущего выделения в Word; paragraphIndex рассчитывается через поиск первой строки выделения в `body.paragraphs`. `null` если ничего не выделено.
+
+`apps/word-addin/src/parsing/AddManualSectionDialog.tsx` (новый):
+- FluentUI v9 `Dialog` с полями: title (pre-fill из выделения, ≤200 chars), level (Dropdown 1-5), anchor mode (RadioGroup: «текущее выделение» | «после раздела»). Превью выделения + paragraphIndex; для anchor=after-section — Dropdown со списком existing sections.
+- Submit вызывает `document.addManualSection`. Контракт: `{docVersionId, title, level, paragraphIndex, textSnippet, afterSectionId?}`.
+
+`apps/word-addin/src/parsing/SectionRowActions.tsx`:
+- Расширены props: `onUpdateComment`, `onDeleteManual?`. Помимо существующего popover'а для просмотра structureComment добавлены: кнопка ✏ (CommentEdit) → диалог с Textarea для редактирования комментария без bulk-rework; кнопка 🗑 (Delete) → confirm-диалог для удаления вручную добавленных секций (`isManual=true`).
+- Все mutations с loading state (Spinner вместо текста).
+
+`apps/word-addin/src/parsing/SectionTree.tsx`:
+- Прокидывает `onUpdateComment(section, newComment)` и `onDeleteManual(section)` в SectionRowActions. `onDeleteManual` передаётся только для `section.isManual`.
+
+`apps/word-addin/src/parsing/ParsingPanel.tsx`:
+- Кнопка «+ Добавить» в header. При клике вызывает `getSelectionContext()`; если выделение есть — открывает `AddManualSectionDialog` с pre-filled title; если нет — показывает warning + всё равно открывает диалог в режиме «после раздела».
+- Handlers: `handleAddManualSubmit` → `document.addManualSection`, `handleDeleteManual` → `document.deleteManualSection`, `handleUpdateComment` → `processing.bulkUpdateSectionStructureStatus` (sectionIds=[s.id], тот же status, новый comment).
+
+Не входит: diff overlay с эталоном (PR 4).
+
 ### Feat: relational `expected_sections` + auto-relink после re-parse
 
 Релокальная схема для эталонной разметки секций золотого сэмпла. Заменяет
