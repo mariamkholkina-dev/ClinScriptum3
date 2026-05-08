@@ -1042,10 +1042,13 @@ function StageDataViewer({
 
   switch (stageKey) {
     case "parsing":
+      // Parsing-viewer мигрирован на relational endpoint (PR E):
+      // expected данные читаются через `trpc.expectedSection.list` напрямую,
+      // `expectedResults` JSON больше не нужен. Остальные viewers (classification,
+      // extraction, soa) пока используют JSON — миграция в PR F.
       return (
         <ParsingTreeViewer
           versionId={vid}
-          expectedResults={expectedResults}
           goldenSampleId={goldenSampleId}
           stageKey={stageKey}
           stageStatus={currentStatus}

@@ -5,6 +5,7 @@ import type {
   SortKey,
   FilterState,
   ExpectedResults,
+  ExpectedSectionNode,
 } from "./types";
 
 export function buildNumbering(sections: Section[]): Map<string, string> {
@@ -118,6 +119,99 @@ function flattenExpected(
   return result;
 }
 
+/** Flatten relational ExpectedSection tree (roots → DFS) into a list. */
+function flattenExpectedNodes(nodes: ExpectedSectionNode[]): ExpectedSectionNode[] {
+  const out: ExpectedSectionNode[] = [];
+  const walk = (arr: ExpectedSectionNode[]) => {
+    for (const n of arr) {
+      out.push(n);
+      if (n.children?.length) walk(n.children);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+/**
+ * Diff between real sections and the relational ExpectedSection tree.
+ *
+ * Match policy (per ExpectedSection):
+ *  - `realSectionId !== null` AND real section found in the document
+ *      → match. If `real.level !== expected.level` → emit `wrong_level`.
+ *  - `realSectionId !== null` BUT real section absent from input list
+ *      → treat as `orphaned` (relink stale; e.g. document re-uploaded since).
+ *  - `realSectionId === null` → `orphaned` (relink couldn't find it).
+ *
+ * Real sections that didn't match any ExpectedSection.realSectionId →
+ * `extra` (new in document, not yet accepted into the expected tree).
+ *
+ * `isFalseHeading` секции исключаются и из match-pool, и из `extra` — они
+ * не должны фигурировать в diff (cascade в classification тоже).
+ *
+ * NB: legacy `missing` (title-based mismatch) больше не используется при
+ * relational diff — `relinkAfterReparse` всегда либо матчит, либо помечает
+ * orphaned. Тип `missing` оставлен в `DiffEntry` для обратной совместимости
+ * с другими viewer'ами, но эта функция его не эмитит.
+ */
+export function diffWithExpectedSections(
+  sections: Section[],
+  expectedSections: ExpectedSectionNode[],
+): DiffEntry[] {
+  const realSections = sections.filter((s) => !s.isFalseHeading);
+  const realById = new Map<string, Section>();
+  for (const s of realSections) realById.set(s.id, s);
+
+  const flatExpected = flattenExpectedNodes(expectedSections);
+  const matchedRealIds = new Set<string>();
+  const entries: DiffEntry[] = [];
+
+  for (const exp of flatExpected) {
+    const real = exp.realSectionId ? realById.get(exp.realSectionId) : undefined;
+    if (real) {
+      matchedRealIds.add(real.id);
+      if (real.level !== exp.level) {
+        entries.push({
+          type: "wrong_level",
+          sectionTitle: exp.title,
+          expected: { level: exp.level, order: exp.order },
+          actual: { level: real.level, order: real.order },
+          actualSectionId: real.id,
+          expectedSectionId: exp.id,
+        });
+      }
+    } else {
+      // realSectionId either null (relink failed) or stale (FK target gone).
+      entries.push({
+        type: "orphaned",
+        sectionTitle: exp.title,
+        expected: { level: exp.level, order: exp.order },
+        expectedSectionId: exp.id,
+        expectedAnchor: exp.anchor ?? undefined,
+      });
+    }
+  }
+
+  for (const s of realSections) {
+    if (!matchedRealIds.has(s.id)) {
+      entries.push({
+        type: "extra",
+        sectionTitle: s.title,
+        actual: { level: s.level, order: s.order },
+        actualSectionId: s.id,
+      });
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * @deprecated — use {@link diffWithExpectedSections} with the relational
+ * `ExpectedSection` tree from `trpc.expectedSection.list`. Left in place
+ * only so other viewers that still read the JSON `expected_results.sections`
+ * continue to compile (см. classification-viewer / annotate). PR F removes
+ * remaining call sites.
+ */
 export function diffWithExpected(
   sections: Section[],
   expectedResults: unknown,
@@ -126,9 +220,6 @@ export function diffWithExpected(
   const expected = expectedResults as ExpectedResults;
   if (!Array.isArray(expected.sections)) return [];
 
-  // Секции, помеченные экспертом как «не заголовок», исключаем из diff —
-  // тогда они не дают ни extra, ни wrong_level. Это каскадно применяется
-  // и в diff Классификации (filter там же).
   const realSections = sections.filter((s) => !s.isFalseHeading);
 
   const entries: DiffEntry[] = [];

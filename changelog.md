@@ -72,6 +72,72 @@ relink-hook отрабатывал no-op'ом.
   миграции UI.
 - Data migration script — нет данных к миграции.
 
+### Feat: parsing-viewer (rule-admin) — relational expected_sections (PR E)
+
+Перевод rule-admin parsing-viewer'а с deprecated JSON-эталона
+(`goldenSampleStageStatus.expectedResults.sections`) на relational endpoint
+`trpc.expectedSection.*` из PR #92.
+
+**Зачем:**
+- Diff теперь корректно работает при дубликатах title (anchor вместо
+  title-match'а).
+- При re-parse документа hybrid-anchor relink сохраняет привязку, и UI
+  показывает только реально потерянные секции — новый тип diff `orphaned`.
+- Quick-fix действия идут через нормализованный API (CRUD + pin/unpin),
+  audit trail из коробки (createdById/updatedById на ExpectedSection).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/types.ts`:
+- Новый `DiffEntry.type = "orphaned"` — ExpectedSection.realSectionId === null
+  после relink (парсер потерял анкор). Содержит `expectedSectionId` и
+  `expectedAnchor` для UI.
+- Добавлены поля `expectedSectionId` (для targeted мутаций) и `expectedAnchor`
+  на DiffEntry.
+- Новый тип `ExpectedSectionNode` — relational shape возврата
+  `expectedSection.list` (id, anchor, realSectionId, matchMethod, children).
+- Старый `ExpectedSection` переименован в `ExpectedSectionLegacy` (используется
+  только legacy `diffWithExpected` для backward compat других viewer'ов).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/utils.ts`:
+- Новая функция `diffWithExpectedSections(sections, expectedSections)` —
+  matching по `ExpectedSection.realSectionId` вместо title.
+  - `realSectionId !== null` + level mismatch → wrong_level
+  - `realSectionId === null` (или stale FK) → orphaned
+  - real sections без матча → extra
+- `diffWithExpected` (legacy JSON-вариант) помечена `@deprecated`, оставлена
+  для классификации/annotate (PR F).
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx`:
+- Чтение эталона: `trpc.expectedSection.list.useQuery({goldenSampleId, stage: 'parsing'})`
+  вместо props `expectedResults`.
+- Дополнительно `trpc.goldenDataset.getSample.useQuery` для получения
+  `stageStatusId` (нужен для `expectedSection.create`).
+- Quick-fix мутации:
+  - `accept_extra` → `expectedSection.create` + `expectedSection.pin` (создаём
+    запись и сразу привязываем к реальной секции — сервер досчитает digest +
+    occurrenceIndex).
+  - `delete_expected` (для missing/orphaned) → `expectedSection.delete`.
+  - `apply_level` (wrong_level) → `expectedSection.update({patch: {level}})`.
+  - `pin_to_real` (orphaned) → `expectedSection.pin` после picker'а.
+  - `mark_false_heading` без изменений (Section update).
+- Все мутации invalidate'ят `expectedSection.list` для данной (sample, stage).
+- Новый `PinPickerDialog` — модалка для выбора реальной секции из списка
+  (с фильтром по подстроке title и нумерацией для disambiguation дубликатов).
+- ParsingDiffOverlay получил bucket «Потеряны» (purple) с двумя действиями
+  на orphaned: «Восстановить anchor» (открывает picker) и «Удалить из эталона».
+- diffMap теперь использует actualSectionId вместо title-fallback'а — корректно
+  работает с дубликатами.
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx`:
+- Из `<ParsingTreeViewer>` убран prop `expectedResults` (не используется).
+
+**Что НЕ сделано** (follow-up):
+- classification-viewer и annotate page — PR F (всё ещё читают JSON).
+- Удаление deprecated `expected_results` JSON колонки — после PR F.
+- Optimistic-update для мутаций эталона — пока invalidate-only (мутации
+  редкие, консистентность важнее).
+- Smart-insert при `accept_extra` (вставка по paragraphIndex) — пока просто
+  append в конец списка корней.
+
 ### Feat: structureComment readback + manual sections в parsing-viewer
 
 **Bug fix — комментарий «На доработку» не сохранялся для просмотра:**

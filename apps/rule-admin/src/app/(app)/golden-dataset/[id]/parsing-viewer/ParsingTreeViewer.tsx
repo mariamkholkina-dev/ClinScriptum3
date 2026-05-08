@@ -33,6 +33,7 @@ import type {
   DiffEntry,
   SortKey,
   FilterState,
+  ExpectedSectionNode,
 } from "./types";
 import { EMPTY_FILTERS } from "./types";
 import {
@@ -40,7 +41,7 @@ import {
   detectAnomalies,
   sortSections,
   filterSections,
-  diffWithExpected,
+  diffWithExpectedSections,
   getVisibleSectionIds,
   getParentChain,
   hasChildren,
@@ -152,15 +153,18 @@ function ContentBlockPanel({ blocks }: { blocks: Section["contentBlocks"] }) {
 /* ═══════════════ ParsingDiffOverlay ═══════════════ */
 
 type ParsingQuickFix =
-  // extra → принять заголовок в эталон (добавить запись в expected.sections)
+  // extra → принять заголовок в эталон. На relational схеме это создание новой
+  // ExpectedSection с anchor от реальной секции.
   | { kind: "accept_extra"; sectionId: string; sectionTitle: string; level: number }
   // extra → пометить как ложный заголовок (Section.isFalseHeading=true). Каскадно скрывает
   // секцию из diff Парсинга и Классификации.
   | { kind: "mark_false_heading"; sectionId: string; sectionTitle: string }
-  // missing → эксперт согласен, что в эталоне этой записи быть не должно
-  | { kind: "remove_missing"; sectionTitle: string }
-  // wrong_level → синхронизировать уровень в эталоне с фактическим (правим эталон, не секцию)
-  | { kind: "apply_level"; sectionTitle: string; newLevel: number };
+  // orphaned/missing → удалить запись эталона (эксперт согласен убрать).
+  | { kind: "delete_expected"; expectedSectionId: string; sectionTitle: string }
+  // wrong_level → обновить level у существующей ExpectedSection.
+  | { kind: "apply_level"; expectedSectionId: string; sectionTitle: string; newLevel: number }
+  // orphaned → перепривязать ExpectedSection к выбранной реальной секции.
+  | { kind: "pin_to_real"; expectedSectionId: string; realSectionId: string };
 
 interface ParsingDiffOverlayProps {
   entries: DiffEntry[];
@@ -171,6 +175,9 @@ interface ParsingDiffOverlayProps {
   numbering: Map<string, string>;
   onQuickFix: (fix: ParsingQuickFix) => void;
   onJumpToSection: (sectionId: string) => void;
+  /** Открыть picker для повторной привязки orphaned ExpectedSection к
+      реальной секции. Picker — отдельный модал в parent компоненте. */
+  onOpenPinPicker: (expectedSectionId: string, sectionTitle: string) => void;
   fixPending: boolean;
 }
 
@@ -180,6 +187,7 @@ function ParsingDiffOverlay({
   numbering,
   onQuickFix,
   onJumpToSection,
+  onOpenPinPicker,
   fixPending,
 }: ParsingDiffOverlayProps) {
   // Resolve секции из entry: сначала по actualSectionId (точное совпадение,
@@ -216,15 +224,21 @@ function ParsingDiffOverlay({
   const missing = entries.filter((e) => e.type === "missing");
   const extra = entries.filter((e) => e.type === "extra");
   const wrongLevel = entries.filter((e) => e.type === "wrong_level");
+  const orphaned = entries.filter((e) => e.type === "orphaned");
 
   const getRowKey = (e: DiffEntry, idx: number) => `${e.type}:${e.sectionTitle}:${idx}`;
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-3 text-xs font-medium">
-        <span className="rounded bg-red-100 px-2 py-1 text-red-700">Пропущено: {missing.length}</span>
+      <div className="flex flex-wrap gap-3 text-xs font-medium">
+        {missing.length > 0 && (
+          <span className="rounded bg-red-100 px-2 py-1 text-red-700">Пропущено: {missing.length}</span>
+        )}
         <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">Лишних: {extra.length}</span>
         <span className="rounded bg-blue-100 px-2 py-1 text-blue-700">Неверный уровень: {wrongLevel.length}</span>
+        <span className="rounded bg-purple-100 px-2 py-1 text-purple-700" title="Эталон существует, но парсер больше не нашёл соответствующую секцию">
+          Потеряны: {orphaned.length}
+        </span>
       </div>
 
       <div className="max-h-80 overflow-y-auto space-y-1.5">
@@ -238,15 +252,25 @@ function ParsingDiffOverlay({
               ? "border-red-200 bg-red-50"
               : e.type === "extra"
                 ? "border-amber-200 bg-amber-50"
-                : "border-blue-200 bg-blue-50";
+                : e.type === "orphaned"
+                  ? "border-purple-200 bg-purple-50"
+                  : "border-blue-200 bg-blue-50";
           const labelColor =
             e.type === "missing"
               ? "text-red-700"
               : e.type === "extra"
                 ? "text-amber-700"
-                : "text-blue-700";
+                : e.type === "orphaned"
+                  ? "text-purple-700"
+                  : "text-blue-700";
           const labelText =
-            e.type === "missing" ? "Пропущено" : e.type === "extra" ? "Лишняя" : "Неверный уровень";
+            e.type === "missing"
+              ? "Пропущено"
+              : e.type === "extra"
+                ? "Лишняя"
+                : e.type === "orphaned"
+                  ? "Потеряна"
+                  : "Неверный уровень";
 
           // Цепочка родителей для контекста (extra и wrong_level — берём из реальной
           // секции; missing — секции в документе нет, breadcrumb недоступен).
@@ -286,6 +310,16 @@ function ParsingDiffOverlay({
                   {e.type === "missing" && e.expected && (
                     <div className="mt-0.5 text-gray-500">
                       ожидался L{e.expected.level}, нет в документе
+                    </div>
+                  )}
+                  {e.type === "orphaned" && (
+                    <div className="mt-0.5 text-gray-500">
+                      ожидался L{e.expected?.level ?? "?"}; парсер не нашёл секцию после relink
+                      {e.expectedAnchor?.paragraphIndex != null && (
+                        <span className="ml-1 font-mono text-[10px] text-gray-400">
+                          (anchor ¶{e.expectedAnchor.paragraphIndex})
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -337,18 +371,53 @@ function ParsingDiffOverlay({
                   </>
                 )}
 
-                {e.type === "missing" && (
+                {e.type === "missing" && e.expectedSectionId && (
                   <button
                     type="button"
-                    onClick={() => onQuickFix({ kind: "remove_missing", sectionTitle: e.sectionTitle })}
+                    onClick={() =>
+                      onQuickFix({
+                        kind: "delete_expected",
+                        expectedSectionId: e.expectedSectionId!,
+                        sectionTitle: e.sectionTitle,
+                      })
+                    }
                     className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700"
-                    title="Удалить запись из expected_results"
+                    title="Удалить запись из эталона"
                   >
                     Удалить из эталона
                   </button>
                 )}
 
-                {e.type === "wrong_level" && e.actual && e.expected && (
+                {e.type === "orphaned" && e.expectedSectionId && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onOpenPinPicker(e.expectedSectionId!, e.sectionTitle)}
+                      disabled={fixPending}
+                      className="rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                      title="Выбрать секцию в дереве, к которой привязать эталон"
+                    >
+                      Восстановить anchor
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onQuickFix({
+                          kind: "delete_expected",
+                          expectedSectionId: e.expectedSectionId!,
+                          sectionTitle: e.sectionTitle,
+                        })
+                      }
+                      disabled={fixPending}
+                      className="rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                      title="Удалить эталонную запись (если эксперт согласен, что её быть не должно)"
+                    >
+                      Удалить из эталона
+                    </button>
+                  </>
+                )}
+
+                {e.type === "wrong_level" && e.actual && e.expected && e.expectedSectionId && (
                   <>
                     <select
                       value={pendingLevels.get(rowKey) ?? e.actual.level}
@@ -373,12 +442,13 @@ function ParsingDiffOverlay({
                       onClick={() =>
                         onQuickFix({
                           kind: "apply_level",
+                          expectedSectionId: e.expectedSectionId!,
                           sectionTitle: e.sectionTitle,
                           newLevel: pendingLevels.get(rowKey) ?? e.actual!.level,
                         })
                       }
                       className="rounded bg-brand-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-                      title="Обновить уровень в expected_results"
+                      title="Обновить уровень в эталоне"
                     >
                       Применить уровень в эталон
                     </button>
@@ -951,15 +1021,16 @@ function SectionTreeRow({
 
 export default function ParsingTreeViewer({
   versionId,
-  expectedResults,
   goldenSampleId,
   stageKey = "parsing",
-  stageStatus = "draft",
+  // `stageStatus` сохранён в API ради обратной совместимости с page.tsx — на
+  // relational endpoint он больше не нужен (мутации эталона не меняют статус
+  // GoldenSampleStageStatus). Префикс _ — чтобы ESLint не жаловался на unused.
+  stageStatus: _stageStatus = "draft",
 }: {
   versionId: string;
-  expectedResults?: unknown;
-  /** Опционально — нужен для quick-fix действий с expected_results JSON.
-      Если не передан, доступна только пометка isFalseHeading на секции. */
+  /** Опционально — нужен для quick-fix действий над эталоном. Если не передан,
+      diff показывается только в режиме просмотра, без mutate-кнопок. */
   goldenSampleId?: string;
   stageKey?: string;
   stageStatus?: string;
@@ -968,6 +1039,37 @@ export default function ParsingTreeViewer({
     { versionId },
     { staleTime: 60_000, refetchOnWindowFocus: false },
   );
+
+  // Relational expected sections: tree-shaped result from `expectedSection.list`.
+  // Запрос enabled только когда есть goldenSampleId — без него diff недоступен.
+  const expectedQuery = trpc.expectedSection.list.useQuery(
+    { goldenSampleId: goldenSampleId ?? "", stage: stageKey },
+    {
+      enabled: !!goldenSampleId,
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  );
+  const expectedSections = (expectedQuery.data ?? []) as ExpectedSectionNode[];
+
+  // Получаем stageStatusId через getSample — нужен для `expectedSection.create`
+  // (создание новой записи в эталоне). page.tsx уже его запрашивает, react-query
+  // вернёт из кеша.
+  const sampleQuery = trpc.goldenDataset.getSample.useQuery(
+    { id: goldenSampleId ?? "" },
+    {
+      enabled: !!goldenSampleId,
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  );
+  const stageStatusId = useMemo(() => {
+    if (!sampleQuery.data) return null;
+    return (
+      sampleQuery.data.stageStatuses.find((ss) => ss.stage === stageKey)?.id ??
+      null
+    );
+  }, [sampleQuery.data, stageKey]);
 
   const [sortKey, setSortKey] = useState<SortKey>("order");
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
@@ -978,6 +1080,11 @@ export default function ParsingTreeViewer({
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
   const [showSource, setShowSource] = useState(false);
+  // State для pin-picker: модалка для перепривязки orphaned ExpectedSection
+  // к выбранной реальной секции в дереве. null — модалка закрыта.
+  const [pinPickerState, setPinPickerState] = useState<
+    { expectedSectionId: string; sectionTitle: string } | null
+  >(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const focusedRowRef = useRef<HTMLDivElement>(null);
@@ -1029,21 +1136,23 @@ export default function ParsingTreeViewer({
   });
 
   const diffEntries = useMemo(
-    () => (showDiff ? diffWithExpected(rawSections, expectedResults) : []),
-    [showDiff, rawSections, expectedResults],
+    () => (showDiff ? diffWithExpectedSections(rawSections, expectedSections) : []),
+    [showDiff, rawSections, expectedSections],
   );
 
+  // diffMap — sectionId → DiffEntry.type. Для extra/wrong_level используем
+  // actualSectionId (точный id), а не title-fallback (он плох для дубликатов).
+  // orphaned не имеет real section, поэтому не попадает в map (и так корректно
+  // не подсвечивает ничего в дереве).
   const diffMap = useMemo(() => {
     const m = new Map<string, DiffEntry["type"]>();
     for (const e of diffEntries) {
-      const sec = rawSections.find((s) => s.title.trim().toLowerCase() === e.sectionTitle.trim().toLowerCase());
-      if (sec) m.set(sec.id, e.type);
+      if (e.actualSectionId) m.set(e.actualSectionId, e.type);
     }
     return m;
-  }, [diffEntries, rawSections]);
+  }, [diffEntries]);
 
-  const hasDiffData = !!expectedResults && typeof expectedResults === "object" &&
-    Array.isArray((expectedResults as Record<string, unknown>).sections);
+  const hasDiffData = expectedSections.length > 0;
 
   const anomalyCount = anomalies.size;
 
@@ -1101,47 +1210,40 @@ export default function ParsingTreeViewer({
     },
   });
 
-  // Optimistic update для эталона: патчим `goldenDataset.getSample` в кеше,
-  // родительский page.tsx через useQuery подхватит и пробросит свежий expectedResults
-  // обратно сюда через props — overlay перерисуется мгновенно.
-  // Invalidate только на onError (та же причина, что выше — race с параллельными мутациями).
-  const updateExpected = trpc.goldenDataset.updateStageStatus.useMutation({
-    onMutate: async (input) => {
-      if (!goldenSampleId) return undefined;
-      await utils.goldenDataset.getSample.cancel({ id: goldenSampleId });
-      const prev = utils.goldenDataset.getSample.getData({ id: goldenSampleId });
-      utils.goldenDataset.getSample.setData({ id: goldenSampleId }, (old) => {
-        if (!old) return old;
-        // Cast: input.expectedResults — Record<string, unknown>|undefined из zod-схемы,
-        // в кеше тип JsonValue. Структурно совместимо, проблема только в null vs undefined.
-        return {
-          ...old,
-          stageStatuses: old.stageStatuses.map((ss) =>
-            ss.stage === input.stage
-              ? {
-                  ...ss,
-                  expectedResults: (input.expectedResults ?? {}) as typeof ss.expectedResults,
-                  status: input.status as typeof ss.status,
-                }
-              : ss,
-          ),
-        };
-      });
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev && goldenSampleId) {
-        utils.goldenDataset.getSample.setData({ id: goldenSampleId }, ctx.prev);
-        utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
-      }
-    },
+  // Relational expected mutations. После каждой — invalidate `expectedSection.list`
+  // для goldenSampleId/stageKey, чтобы overlay пересобрался с актуальным деревом.
+  // Optimistic-update сейчас не делаем — мутации редкие (1-2 клика подряд) и
+  // serverside-validate'нные (parentId, level и пр.); консистентность важнее
+  // чем мгновенная отрисовка. При необходимости можно будет добавить позднее.
+  const invalidateExpectedQuery = useCallback(() => {
+    if (!goldenSampleId) return;
+    utils.expectedSection.list.invalidate({ goldenSampleId, stage: stageKey });
+  }, [utils, goldenSampleId, stageKey]);
+
+  const createExpected = trpc.expectedSection.create.useMutation({
+    onSuccess: invalidateExpectedQuery,
+  });
+  const updateExpectedMut = trpc.expectedSection.update.useMutation({
+    onSuccess: invalidateExpectedQuery,
+  });
+  const deleteExpectedMut = trpc.expectedSection.delete.useMutation({
+    onSuccess: invalidateExpectedQuery,
+  });
+  const pinExpectedMut = trpc.expectedSection.pin.useMutation({
+    onSuccess: invalidateExpectedQuery,
   });
 
-  // Quick-fix для строки diff overlay. Логика по типу:
-  //  - accept_extra: добавить запись в expected.sections (берём level из секции)
-  //  - mark_false_heading: только Section.isFalseHeading=true (без правок эталона)
-  //  - remove_missing: убрать запись из expected.sections
-  //  - apply_level: обновить level у существующей записи в expected.sections
+  /**
+   * Quick-fix для строки diff overlay. Маппинг на relational endpoint:
+   *  - mark_false_heading: только Section.isFalseHeading=true (без правок эталона).
+   *  - accept_extra:       create ExpectedSection с anchor от реальной секции
+   *                        (paragraphIndex/textSnippet берутся из sourceAnchor;
+   *                        сервер дополняет occurrenceIndex и digest при `pin`,
+   *                        здесь же создаём + сразу pin'им к real section).
+   *  - delete_expected:    delete (для missing/orphaned).
+   *  - apply_level:        update level (для wrong_level).
+   *  - pin_to_real:        pin к выбранной секции (для orphaned, через picker).
+   */
   const handleQuickFix = useCallback(
     (fix: ParsingQuickFix) => {
       if (fix.kind === "mark_false_heading") {
@@ -1149,53 +1251,87 @@ export default function ParsingTreeViewer({
         return;
       }
 
-      // Остальные действия требуют контекст golden-sample (правка эталона).
       if (!goldenSampleId) return;
 
-      const current = (expectedResults as { sections?: Array<Record<string, unknown>> } | undefined) ?? {};
-      const sectionsArr = Array.isArray(current.sections) ? [...current.sections] : [];
-
-      const findIdx = (title: string) => {
-        const lower = title.trim().toLowerCase();
-        return sectionsArr.findIndex(
-          (s) => String(s.title ?? "").trim().toLowerCase() === lower,
-        );
-      };
-
-      let nextSections: Array<Record<string, unknown>> = sectionsArr;
       if (fix.kind === "accept_extra") {
-        const idx = findIdx(fix.sectionTitle);
-        if (idx >= 0) {
-          nextSections = sectionsArr.map((s, i) =>
-            i === idx ? { ...s, title: fix.sectionTitle, level: fix.level } : s,
-          );
-        } else {
-          nextSections = [...sectionsArr, { title: fix.sectionTitle, level: fix.level }];
-        }
-      } else if (fix.kind === "remove_missing") {
-        const idx = findIdx(fix.sectionTitle);
-        if (idx < 0) return;
-        nextSections = sectionsArr.filter((_, i) => i !== idx);
-      } else if (fix.kind === "apply_level") {
-        const idx = findIdx(fix.sectionTitle);
-        if (idx < 0) return;
-        nextSections = sectionsArr.map((s, i) =>
-          i === idx ? { ...s, level: fix.newLevel } : s,
+        if (!stageStatusId) return; // sample/stage ещё не загрузились
+        const realSection = rawSections.find((s) => s.id === fix.sectionId);
+        const anchor = {
+          paragraphIndex: realSection?.sourceAnchor?.paragraphIndex,
+          textSnippet:
+            realSection?.sourceAnchor?.textSnippet || fix.sectionTitle,
+        };
+        // Берём максимальный order среди корней + 1, чтобы новая запись
+        // оказалась в конце. Лучшее место — после current relink, но это
+        // выходит за рамки PR E (TODO: smart-insert по paragraphIndex).
+        const maxRootOrder = expectedSections.reduce(
+          (m, s) => Math.max(m, s.order),
+          -1,
         );
+        createExpected.mutate(
+          {
+            stageStatusId,
+            parentId: null,
+            title: fix.sectionTitle,
+            level: fix.level,
+            anchor,
+            order: maxRootOrder + 1,
+          },
+          {
+            onSuccess: (created) => {
+              // Сразу pin'им новую запись к реальной секции — сервер досчитает
+              // occurrenceIndex и contentBlockDigest, чтобы re-parse её нашёл.
+              pinExpectedMut.mutate({
+                expectedId: created.id,
+                realSectionId: fix.sectionId,
+              });
+            },
+          },
+        );
+        return;
       }
 
-      updateExpected.mutate({
-        goldenSampleId,
-        stage: stageKey,
-        status: (stageStatus === "not_set" ? "draft" : stageStatus) as
-          | "draft"
-          | "in_review"
-          | "approved",
-        expectedResults: { ...current, sections: nextSections },
-      });
+      if (fix.kind === "delete_expected") {
+        deleteExpectedMut.mutate({ id: fix.expectedSectionId });
+        return;
+      }
+
+      if (fix.kind === "apply_level") {
+        updateExpectedMut.mutate({
+          id: fix.expectedSectionId,
+          patch: { level: fix.newLevel },
+        });
+        return;
+      }
+
+      if (fix.kind === "pin_to_real") {
+        pinExpectedMut.mutate({
+          expectedId: fix.expectedSectionId,
+          realSectionId: fix.realSectionId,
+        });
+        return;
+      }
     },
-    [markFalseHeading, updateExpected, expectedResults, goldenSampleId, stageKey, stageStatus],
+    [
+      markFalseHeading,
+      goldenSampleId,
+      stageStatusId,
+      rawSections,
+      expectedSections,
+      createExpected,
+      pinExpectedMut,
+      deleteExpectedMut,
+      updateExpectedMut,
+    ],
   );
+
+  // `fixPending` — флаг для дизейбла кнопок overlay пока идёт любая мутация.
+  const anyFixPending =
+    markFalseHeading.isPending ||
+    createExpected.isPending ||
+    updateExpectedMut.isPending ||
+    deleteExpectedMut.isPending ||
+    pinExpectedMut.isPending;
 
   // Toggle helpers
   const toggleExpand = useCallback((id: string) => {
@@ -1406,7 +1542,30 @@ export default function ParsingTreeViewer({
             setActiveSectionId(sectionId);
             requestAnimationFrame(() => containerRef.current?.focus());
           }}
-          fixPending={markFalseHeading.isPending || updateExpected.isPending}
+          onOpenPinPicker={(expectedSectionId, sectionTitle) =>
+            setPinPickerState({ expectedSectionId, sectionTitle })
+          }
+          fixPending={anyFixPending}
+        />
+      )}
+
+      {/* Pin picker — для orphaned: эксперт выбирает реальную секцию,
+          к которой надо привязать ExpectedSection. */}
+      {pinPickerState && (
+        <PinPickerDialog
+          sections={rawSections}
+          numbering={numbering}
+          expectedTitle={pinPickerState.sectionTitle}
+          onClose={() => setPinPickerState(null)}
+          onPick={(realSectionId) => {
+            handleQuickFix({
+              kind: "pin_to_real",
+              expectedSectionId: pinPickerState.expectedSectionId,
+              realSectionId,
+            });
+            setPinPickerState(null);
+          }}
+          isPending={pinExpectedMut.isPending}
         />
       )}
 
@@ -1670,6 +1829,130 @@ function AddManualSectionDialog({
               {isPending ? <Loader2 size={14} className="animate-spin" /> : "Добавить"}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ PinPickerDialog ═══════════════ */
+
+/**
+ * Picker для перепривязки orphaned ExpectedSection. Эксперт видит список
+ * реальных секций документа, выбирает нужную и нажимает «Привязать» —
+ * вызывается `expectedSection.pin`, который снимает свежий anchor с этой
+ * секции (occurrenceIndex + contentBlockDigest), чтобы re-parse её снова
+ * нашёл.
+ *
+ * UX: фильтр по подстроке title (с учётом дубликатов — показываем номер из
+ * `numbering`, чтобы эксперт мог отличить «3.2 Цели» от «5.1 Цели»).
+ */
+function PinPickerDialog({
+  sections,
+  numbering,
+  expectedTitle,
+  onClose,
+  onPick,
+  isPending,
+}: {
+  sections: Section[];
+  numbering: Map<string, string>;
+  expectedTitle: string;
+  onClose: () => void;
+  onPick: (realSectionId: string) => void;
+  isPending: boolean;
+}) {
+  const [filter, setFilter] = useState(expectedTitle);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return sections.filter((s) => !s.isFalseHeading);
+    return sections.filter(
+      (s) =>
+        !s.isFalseHeading &&
+        s.title.toLowerCase().includes(needle),
+    );
+  }, [sections, filter]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="flex w-full max-w-lg max-h-[80vh] flex-col rounded-lg bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Восстановить anchor</h3>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Выберите секцию, к которой привязать эталон «{expectedTitle}»
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-3 p-4">
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Фильтр по заголовку..."
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <div className="max-h-80 overflow-y-auto rounded border border-gray-200">
+            {filtered.length === 0 ? (
+              <p className="py-4 text-center text-xs italic text-gray-400">
+                Нет секций, соответствующих фильтру.
+              </p>
+            ) : (
+              filtered.map((s) => {
+                const num = numbering.get(s.id);
+                const isSel = selected === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setSelected(s.id)}
+                    className={`flex w-full items-center gap-2 border-b border-gray-100 px-3 py-2 text-left text-xs last:border-b-0 ${
+                      isSel ? "bg-brand-50" : "hover:bg-gray-50"
+                    }`}
+                  >
+                    {num && (
+                      <span className="shrink-0 font-mono text-[10px] text-gray-400">
+                        {num}
+                      </span>
+                    )}
+                    <span className="shrink-0 rounded bg-gray-100 px-1 text-[10px] text-gray-600">
+                      L{s.level}
+                    </span>
+                    <span className="flex-1 truncate text-gray-900">
+                      {s.title || "(без названия)"}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">
+          <button
+            onClick={onClose}
+            disabled={isPending}
+            className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={() => selected && onPick(selected)}
+            disabled={!selected || isPending}
+            className="rounded bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {isPending ? (
+              <span className="flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" /> Привязка...
+              </span>
+            ) : (
+              "Привязать"
+            )}
+          </button>
         </div>
       </div>
     </div>
