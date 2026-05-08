@@ -2,6 +2,76 @@
 
 ## 2026-05-08
 
+### Feat: relational `expected_sections` + auto-relink после re-parse
+
+Релокальная схема для эталонной разметки секций золотого сэмпла. Заменяет
+JSON `golden_sample_stage_statuses.expected_results.sections` нормализованной
+таблицей с гибрид-anchor'ом и 4-уровневым auto-relink'ом после re-parse.
+
+**Зачем:**
+- Дубли title (TOC vs body, шкалы) — теперь матчинг по occurrenceIndex
+- При re-parse paragraphIndex плывёт → теряется привязка → теперь fallback на digest/snippet/title
+- Нет audit / queryable / FK-able — теперь есть createdBy/updatedBy/timestamps + FK
+
+**Без миграции старых данных:** разметки ещё нет, deprecated JSON-поле
+`expected_results` оставлено для backward-compat (clients постепенно
+мигрируют, cleanup PR удалит позже).
+
+`packages/db/prisma/schema.prisma`:
+- Новая модель `ExpectedSection` с tree (parentId), `anchor` JSONB
+  (paragraphIndex + textSnippet + occurrenceIndex + contentBlockDigest),
+  `realSectionId` (auto-relink), `matchMethod` (paragraph|digest|snippet|
+  title_occurrence|null), createdBy/updatedBy + timestamps.
+- Relations: `GoldenSampleStageStatus.expectedSections`, `Section.expectedSectionLinks`,
+  `User.expectedSectionsCreated/Updated`.
+- Migration `20260508130000_add_expected_sections` с FK на stageStatus
+  (CASCADE), parent (CASCADE), realSection (SET NULL), createdBy/updatedBy
+  (SET NULL).
+
+`apps/api/src/services/expectedSection.service.ts` (новый):
+- CRUD: `list` (tree), `create`, `update`, `delete`, `reorder`.
+- `pin(expectedId, realSectionId)` — снимает snapshot anchor'а с реальной
+  секции (paragraphIndex из sourceAnchor, textSnippet из title, occurrenceIndex
+  по count'у same-title секций, sha256 первых 200 chars контента).
+- `unpin(id)` — стирает realSectionId/matchMethod/matchedAt.
+- `relinkAfterReparse(docVersionId)` — re-match после re-parse, 4-уровневый
+  fallback (paragraphIndex → digest → snippet → title+occurrence). Возвращает
+  `{ matched, orphaned, byMethod }`.
+- Хелперы `computeContentDigest`, `computeOccurrenceIndex` — экспортированы.
+- Tenant guard через `loadExpectedOrThrow` + `assertStageBelongsToTenant`.
+
+`apps/api/src/routers/expectedSection.ts` (новый):
+- `qualityProcedure` (rule_admin / rule_approver / tenant_admin).
+- `list` / `create` / `update` / `delete` / `pin` / `unpin` / `reorder`.
+- Подключён в `routers/index.ts` как `expectedSection`.
+
+`apps/workers/src/handlers/parse-document.ts`:
+- После `reorderSectionsByAnchor` — `relinkExpectedSections(version.id)`.
+- Локальная реализация (workers не имеют dep на api): тот же 4-уровневый
+  алгоритм через прямой prisma access (находит candidate stage statuses
+  через `goldenSample.documents`, обновляет expected rows, логирует metrics).
+
+Тесты `apps/api/src/services/__tests__/expectedSection.service.test.ts` (22 теста):
+- `computeContentDigest` — sha256 hex, пустые блоки → "", order-stable.
+- `computeOccurrenceIndex` — 0 для unique, N-th для дублей, case-insensitive.
+- `create` — root + child, валидация title/level, tenant guard.
+- `list` — tree-build, пустой список, tenant guard.
+- `delete` — cascade через FK, tenant guard.
+- `pin` — snapshot anchor (paragraphIndex + digest + occurrenceIndex),
+  cross-tenant отказ.
+- `relinkAfterReparse` — match by paragraphIndex / digest / title+occurrence /
+  orphaned (реализован за всех 4 уровня), zero-counts при отсутствии sample'ов.
+
+Workers test (`parse-document.test.ts`) — добавлены mocks для
+`goldenSampleStageStatus.findMany` и `expectedSection.findMany/update` чтобы
+relink-hook отрабатывал no-op'ом.
+
+**Что НЕ сделано** (follow-up):
+- UI parsing-viewer/classification-viewer/annotate page — отдельные PR'ы.
+- Удаление deprecated `expected_results` JSON-поля — cleanup PR после
+  миграции UI.
+- Data migration script — нет данных к миграции.
+
 ### Feat: structureComment readback + manual sections в parsing-viewer
 
 **Bug fix — комментарий «На доработку» не сохранялся для просмотра:**
