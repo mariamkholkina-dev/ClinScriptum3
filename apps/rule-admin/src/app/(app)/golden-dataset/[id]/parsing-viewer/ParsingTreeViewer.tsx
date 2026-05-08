@@ -1114,7 +1114,80 @@ export default function ParsingTreeViewer({
       // На ошибке синхронизируемся с реальным состоянием сервера.
       utils.document.getVersion.invalidate({ versionId });
     },
+    onSuccess: (data) => {
+      // Если сервер вернул cleanupSummary с удалёнными аннотациями или
+      // expected_results entries — кеш goldenDataset.getSample (где живёт
+      // expected) и evaluation/annotation listings могут быть устаревшими.
+      // Инвалидируем точечно, без полного refetch getVersion (для него
+      // optimistic-патч уже корректен).
+      const summary = data?.cleanupSummary as
+        | {
+            deletedAnnotations?: number;
+            clearedExpectedEntries?: number;
+          }
+        | undefined;
+      if (
+        summary &&
+        ((summary.deletedAnnotations ?? 0) > 0 ||
+          (summary.clearedExpectedEntries ?? 0) > 0) &&
+        goldenSampleId
+      ) {
+        utils.goldenDataset.getSample.invalidate({ id: goldenSampleId });
+      }
+    },
   });
+
+  // ── Confirm dialog state for destructive false-heading mark ──────────
+  //
+  // При transition false → true с непустым cascade cleanup (annotations
+  // от пользователей или записи в эталоне) показываем модалку. Если
+  // данных для удаления нет — мутация выполняется без диалога.
+  type FalseHeadingConfirmState = {
+    sectionId: string;
+    sectionTitle: string;
+    annotations: Array<{
+      id: string;
+      proposedZone: string | null;
+      isQuestion: boolean;
+      annotator: { id: string; name: string | null; email: string };
+    }>;
+    expectedEntries: number;
+  };
+  const [confirmFalseHeading, setConfirmFalseHeading] =
+    useState<FalseHeadingConfirmState | null>(null);
+
+  const requestMarkFalseHeading = useCallback(
+    async (section: { id: string; title: string; isFalseHeading: boolean }) => {
+      // Un-mark (true → false): не удаляем ничего, диалог не нужен.
+      if (section.isFalseHeading) {
+        markFalseHeading.mutate({ sectionId: section.id, isFalseHeading: false });
+        return;
+      }
+
+      // Transition false → true: проверяем preview, чтобы решить нужен ли confirm.
+      try {
+        const preview = await utils.document.previewFalseHeadingCleanup.fetch({
+          sectionId: section.id,
+        });
+        if (preview.annotations.length > 0 || preview.expectedEntries > 0) {
+          setConfirmFalseHeading({
+            sectionId: section.id,
+            sectionTitle: section.title,
+            annotations: preview.annotations,
+            expectedEntries: preview.expectedEntries,
+          });
+          return;
+        }
+      } catch (err) {
+        // Preview fetch failed — fail-safe: продолжаем без диалога. Сервер
+        // в любом случае выполнит cleanup в транзакции.
+        console.error("[markFalseHeading] preview failed, proceeding silently", err);
+      }
+
+      markFalseHeading.mutate({ sectionId: section.id, isFalseHeading: true });
+    },
+    [markFalseHeading, utils.document.previewFalseHeadingCleanup],
+  );
 
   // Optimistic update для эталона: патчим `goldenDataset.getSample` в кеше,
   // родительский page.tsx через useQuery подхватит и пробросит свежий expectedResults
@@ -1160,7 +1233,15 @@ export default function ParsingTreeViewer({
   const handleQuickFix = useCallback(
     (fix: ParsingQuickFix) => {
       if (fix.kind === "mark_false_heading") {
-        markFalseHeading.mutate({ sectionId: fix.sectionId, isFalseHeading: true });
+        // Тот же flow что и в дереве: preview → confirm если есть destructive
+        // данные, иначе тихо.
+        const sec = rawSections.find((s) => s.id === fix.sectionId);
+        if (!sec) return;
+        void requestMarkFalseHeading({
+          id: fix.sectionId,
+          title: sec.title,
+          isFalseHeading: false, // overlay показывается только для не-false секций
+        });
         return;
       }
 
@@ -1209,7 +1290,7 @@ export default function ParsingTreeViewer({
         expectedResults: { ...current, sections: nextSections },
       });
     },
-    [markFalseHeading, updateExpected, expectedResults, goldenSampleId, stageKey, stageStatus],
+    [requestMarkFalseHeading, rawSections, updateExpected, expectedResults, goldenSampleId, stageKey, stageStatus],
   );
 
   // Toggle helpers
@@ -1472,7 +1553,11 @@ export default function ParsingTreeViewer({
                   onToggleExpand={() => toggleExpand(s.id)}
                   onToggleSelect={() => toggleSelect(s.id)}
                   onToggleFalseHeading={() =>
-                    markFalseHeading.mutate({ sectionId: s.id, isFalseHeading: !s.isFalseHeading })
+                    void requestMarkFalseHeading({
+                      id: s.id,
+                      title: s.title,
+                      isFalseHeading: s.isFalseHeading,
+                    })
                   }
                   onDeleteManual={
                     s.isManual
@@ -1512,6 +1597,121 @@ export default function ParsingTreeViewer({
           isPending={addManualMut.isPending}
         />
       )}
+
+      {/* Confirm dialog для destructive false-heading mark */}
+      {confirmFalseHeading && (
+        <ConfirmFalseHeadingDialog
+          state={confirmFalseHeading}
+          onCancel={() => setConfirmFalseHeading(null)}
+          onConfirm={() => {
+            markFalseHeading.mutate({
+              sectionId: confirmFalseHeading.sectionId,
+              isFalseHeading: true,
+            });
+            setConfirmFalseHeading(null);
+          }}
+          isPending={markFalseHeading.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════ ConfirmFalseHeadingDialog ═══════════════ */
+
+function ConfirmFalseHeadingDialog({
+  state,
+  onCancel,
+  onConfirm,
+  isPending,
+}: {
+  state: {
+    sectionTitle: string;
+    annotations: Array<{
+      id: string;
+      annotator: { id: string; name: string | null; email: string };
+    }>;
+    expectedEntries: number;
+  };
+  onCancel: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  // Уникальные annotator'ы — для текста «удаление аннотаций от: ...»
+  // Несколько аннотаций от одного annotator'а (по разным stage'ам) считаем один раз.
+  const annotatorNames = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const a of state.annotations) {
+      if (!seen.has(a.annotator.id)) {
+        seen.set(a.annotator.id, a.annotator.name || a.annotator.email);
+      }
+    }
+    return Array.from(seen.values());
+  }, [state.annotations]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+            <AlertTriangle size={18} className="text-amber-500" />
+            Пометить как ложный заголовок?
+          </h3>
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-3 p-6 text-sm text-gray-700">
+          <p>
+            Секция <span className="font-medium">«{state.sectionTitle}»</span> будет
+            помечена как ложный заголовок. Это действие приведёт к необратимому
+            удалению связанных данных:
+          </p>
+          <ul className="list-disc space-y-1 pl-5 text-xs">
+            {state.annotations.length > 0 && (
+              <li>
+                <span className="font-medium">{state.annotations.length}</span>{" "}
+                {state.annotations.length === 1 ? "аннотация" : "аннотаций"} от
+                пользователей: {annotatorNames.join(", ")}
+              </li>
+            )}
+            {state.expectedEntries > 0 && (
+              <li>
+                <span className="font-medium">{state.expectedEntries}</span>{" "}
+                {state.expectedEntries === 1 ? "запись" : "записей"} в эталонных
+                наборах (expected_results)
+              </li>
+            )}
+            <li>Привязка секции к зоне (классификация будет очищена)</li>
+          </ul>
+          <p className="text-xs text-gray-500">
+            Восстановить будет нельзя. Если позже снять пометку «ложный заголовок»,
+            классификация и аннотации не вернутся автоматически.
+          </p>
+        </div>
+        <div className="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">
+          <button
+            onClick={onCancel}
+            disabled={isPending}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isPending}
+            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {isPending ? (
+              <span className="flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" /> Удаление...
+              </span>
+            ) : (
+              "Подтвердить и удалить"
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -114,6 +114,17 @@ export const documentRouter = router({
       ),
     ),
 
+  /**
+   * Превью cascade cleanup — UI зовёт перед toggle false-heading чтобы
+   * решить нужен ли confirm-диалог. Если есть annotations от других user'ов
+   * или есть записи в expected — показываем диалог, иначе тихо.
+   */
+  previewFalseHeadingCleanup: p
+    .input(z.object({ sectionId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      documentService.previewFalseHeadingCleanup(ctx.user.tenantId, input.sectionId),
+    ),
+
   addManualSection: p
     .input(
       z.object({
