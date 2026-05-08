@@ -5,7 +5,11 @@
 # Этот image раздаёт static dist на 80 порту, проброс на 3001 в compose.
 
 # ──────── Stage 1: build ────────
-FROM node:20-alpine AS builder
+# Используем Debian-based slim вместо alpine — npm ci с optional native deps
+# (rollup-linux-x64-musl) на Alpine не работает из-за npm bug (#4828):
+# musl-варианты не подтягиваются автоматом. На Debian gnu-варианты ставятся
+# из package-lock без проблем.
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
@@ -14,7 +18,6 @@ COPY package.json package-lock.json* ./
 COPY apps/word-addin/package.json ./apps/word-addin/
 
 # turbo требует full workspace для resolution path'ов даже при build одного app'а.
-# Скопируем root tsconfig + минимально необходимые packages.
 COPY tsconfig.base.json ./
 
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
@@ -22,11 +25,9 @@ RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 # Копируем исходники word-addin
 COPY apps/word-addin ./apps/word-addin
 
-# Native binary'ы Rollup для Linux. Ставим ОБА варианта — `-musl` для Alpine
-# (этот image на base node:20-alpine), `-gnu` для CI runner'ов где Debian.
-# Без правильного binary'я vite build падает с MODULE_NOT_FOUND.
+# Native binary Rollup для Linux glibc (Debian). Без него vite падает на
+# MODULE_NOT_FOUND даже если ставится через npm ci — известный npm bug.
 RUN npm install --no-save --no-audit --no-fund \
-    @rollup/rollup-linux-x64-musl \
     @rollup/rollup-linux-x64-gnu \
     @emnapi/core \
     @emnapi/runtime || true
