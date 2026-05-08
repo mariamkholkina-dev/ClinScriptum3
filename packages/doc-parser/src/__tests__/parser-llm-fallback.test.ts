@@ -45,16 +45,21 @@ async function buildDocx(paragraphs: Array<{ text: string; bold?: boolean }>): P
 }
 
 describe("parseDocx — LLM heading fallback", () => {
-  it("does NOT call llmFallback when rule-based finds enough headings", async () => {
-    // 25 параграфов, все жирные с bold-only fallback подхватятся (>= 20 порог)
+  it("does NOT call llmFallback when rule-based finds enough QUALITY headings", async () => {
+    // 25 numbered headings — все ловятся как method='numbered' (quality).
+    // qualityCount=25 >= 10 (default threshold) → LLM не нужен.
     const paragraphs = Array.from({ length: 25 }, (_, i) => ({
-      text: `Section Title ${i + 1}`,
+      text: `${i + 1} Section Title`,
       bold: true,
     }));
     const buffer = await buildDocx(paragraphs);
 
     const llmFallback = vi.fn().mockResolvedValue([]);
-    const result = await parseDocx(buffer, { llmFallback, llmFallbackThreshold: 20 });
+    const result = await parseDocx(buffer, {
+      llmFallback,
+      llmFallbackThreshold: 20,
+      llmFallbackQualityThreshold: 10,
+    });
 
     expect(llmFallback).not.toHaveBeenCalled();
     expect(result.sections.length).toBeGreaterThan(0);
@@ -113,21 +118,53 @@ describe("parseDocx — LLM heading fallback", () => {
     expect(result.sections.every((s) => s.level === 1)).toBe(true);
   });
 
-  it("KEEPS rule-based headings when LLM returns equal or fewer", async () => {
-    // 5 жирных параграфов — bold-only fallback найдёт ~5 headings
+  it("REPLACES bold-only rule-based with LLM when qualityCount=0 (PR #87)", async () => {
+    // 5 жирных параграфов → rule-based найдёт 5 visual headings.
+    // qualityCount = 0 (нет style/outline/numbered). LLM возвращает 1 — но
+    // 1 > 0 (qualityCount) → REPLACE на LLM result. Это ключевой fix:
+    // bold-only мусор не должен блокировать LLM rescue.
     const paragraphs = Array.from({ length: 5 }, (_, i) => ({
       text: `Heading ${i + 1}`,
       bold: true,
     }));
     const buffer = await buildDocx(paragraphs);
 
-    // LLM возвращает только 1 heading — не лучше rule-based
     const llmFallback = vi.fn().mockResolvedValue([{ paragraphIndex: 0, level: 1 }]);
-    const result = await parseDocx(buffer, { llmFallback, llmFallbackThreshold: 20 });
+    const result = await parseDocx(buffer, {
+      llmFallback,
+      llmFallbackThreshold: 20,
+      llmFallbackQualityThreshold: 10,
+    });
 
     expect(llmFallback).toHaveBeenCalled();
-    // Rule-based должно быть сохранено (5 headings, не 1)
-    expect(result.sections.length).toBeGreaterThan(1);
+    // REPLACE: только 1 секция (LLM result), а не 5 (bold-only)
+    expect(result.sections.length).toBe(1);
+    expect(result.sections[0].level).toBe(1);
+  });
+
+  it("triggers fallback by qualityThreshold even when total >= threshold (PR #87)", async () => {
+    // 25 bold (псевдо-headings) — общий count >= 20, но quality = 0.
+    // qualityThreshold=10 → fallback должен вызваться.
+    const paragraphs = Array.from({ length: 25 }, (_, i) => ({
+      text: `Псевдо-Heading ${i + 1}`,
+      bold: true,
+    }));
+    const buffer = await buildDocx(paragraphs);
+
+    const llmFallback = vi.fn().mockResolvedValue([
+      { paragraphIndex: 0, level: 1 },
+      { paragraphIndex: 5, level: 1 },
+      { paragraphIndex: 12, level: 1 },
+    ]);
+    await parseDocx(buffer, {
+      llmFallback,
+      llmFallbackThreshold: 20,
+      llmFallbackQualityThreshold: 10,
+    });
+
+    // Несмотря на 25 bold-only headings (>= 20 threshold), LLM ВЫЗВАН
+    // потому что qualityCount=0 < 10.
+    expect(llmFallback).toHaveBeenCalled();
   });
 
   it("FILTERS LLM hallucinated paragraphIndex (out of range)", async () => {
