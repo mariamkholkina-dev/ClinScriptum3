@@ -24,8 +24,6 @@ JSON `goldenSampleStageStatus.expectedResults` на relational
 - Manual sections (PR #88) и structure-comment readback / prefill
   (PR #88) сохранены без изменений.
 
-**API изменения (NONE):** consumers — только UI rule-admin.
-
 `apps/rule-admin/.../parsing-viewer/types.ts`:
 - `DiffEntry.type` расширен типом `'orphaned'`; добавлено поле
   `expectedSectionId`.
@@ -44,6 +42,53 @@ JSON `goldenSampleStageStatus.expectedResults` на relational
 - Передаёт `stageStatusId` в `ParsingTreeViewer` (нужен для
   `expectedSection.create` — указывает в какой stageStatus добавить).
 - Тип `stageStatus` в `StagePanel` расширен полем `id`.
+
+### Feat: classification-viewer + annotation auto-save используют relational expected (PR F)
+
+Переключение clients PR #92 на relational `ExpectedSection` API. JSON
+`expected_results.sections` больше не пишется — все мутации проходят через
+`expectedSection.create/update/delete`. Deprecated JSON-колонка остаётся
+(backward-compat, cleanup PR позже).
+
+**Бэкенд (`apps/api/src/services/annotation.service.ts`):**
+- `upsertSectionInExpected` переписан с JSON-mutation на relational:
+  - find existing row by stage_status_id + title (case-insensitive)
+  - `standardSection === null` → `expectedSection.delete`
+  - existing → `expectedSection.update`
+  - new → `expectedSection.create` с anchor из real `Section` (lookup
+    через `goldenSampleDocument` → `section.findFirst` по title);
+    если real нет — `realSectionId=null`, `textSnippet`-only anchor.
+- `finalizeAnnotations` больше не читает/пишет `expectedResults` (данные
+  уже в relational rows через submit/resolve), только меняет stage status.
+
+**Тесты (`annotation.service.test.ts`):**
+- Обновлены mocks: добавлены `expectedSection.findFirst/create/update/delete`,
+  `goldenSampleDocument.findMany`, `section.findFirst`.
+- Новые проверки: `expectedSection.create` вызывается с правильным
+  `standardSection` + `title`; existing row → `update`; question после zone →
+  `delete`; anchor берётся из реальной `Section` (paragraphIndex + level).
+- Все 16 тестов проходят.
+
+**Фронт (`apps/rule-admin/.../classification-viewer/`):**
+- `ClassificationTreeViewer.tsx`:
+  - Источник expected — `trpc.expectedSection.list({goldenSampleId, stage})`
+    (плоский список после flatten древа), вместо JSON `expectedResults.sections`.
+  - Diff — новая `diffClassificationWithExpectedRelational` (utils.ts),
+    матч по `realSectionId` → fallback по title.
+  - Quick-fix:
+    - `extra` → `expectedSection.create({stageStatusId, title, level, anchor, standardSection})`
+    - `wrong_section` → `expectedSection.update({id, patch:{standardSection}})`
+    - `missing` → `expectedSection.delete({id})`
+  - `expectedSectionId` пробрасывается в `DiffEntry` для адресных мутаций.
+  - `stageStatusId` берётся из `goldenDataset.getSample.stageStatuses`.
+  - Старые props `expectedResults` / `stageStatus` приняты для backward-compat,
+    но игнорируются (deprecated).
+- `types.ts`: добавлен `ExpectedSectionRow`; `DiffEntry` получил `expectedSectionId`.
+- `utils.ts`: добавлена `diffClassificationWithExpectedRelational`; legacy
+  `diffClassificationWithExpected` оставлена как dead code (не используется).
+
+**Annotate page** не меняли — auto-save идёт через `annotation.submit` /
+`annotation.resolveQuestion`, которые теперь пишут в relational rows.
 
 ## 2026-05-08
 

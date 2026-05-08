@@ -19,10 +19,24 @@ import { logger } from "../lib/logger.js";
  *     existing UI on /golden-dataset/[id] — no separate "finalize" step.
  */
 
-// Helper: одна запись секции в expected_results.sections.
-type ExpectedSectionEntry = { title: string; standardSection: string };
-
-/** Мутирующий helper. Принимает tx, модифицирует expected_results.sections atomic. */
+/**
+ * Relational upsert of an expected section row (PR F).
+ *
+ * Replaces the previous JSON `expected_results.sections` mutation with explicit
+ * `expectedSection` rows. Match is by case-insensitive trimmed `title` within
+ * the stage status. `standardSection === null` deletes the row (used when
+ * annotator switches to "question" mode and the previous zone proposal needs
+ * to disappear from the truth set until the expert resolves).
+ *
+ * When creating a new row, we attempt to anchor it to a real `Section` from
+ * any of the sample's documents — that way, after a re-parse, the relink
+ * routine has paragraphIndex/title to re-bind. Anchor is best-effort: if no
+ * matching real section exists (annotator added the row pre-parse), we still
+ * create the expected row with a textSnippet-only anchor and `realSectionId=null`.
+ *
+ * The deprecated JSON column `expected_results` is intentionally left alone —
+ * UI clients migrate gradually; cleanup PR drops the column later.
+ */
 async function upsertSectionInExpected(
   tx: Prisma.TransactionClient,
   goldenSampleId: string,
@@ -30,33 +44,84 @@ async function upsertSectionInExpected(
   sectionKey: string,
   standardSection: string | null, // null => удалить запись
 ) {
-  const current = await tx.goldenSampleStageStatus.findUnique({
-    where: { goldenSampleId_stage: { goldenSampleId, stage } },
-  });
-  const expected = (current?.expectedResults ?? {}) as { sections?: ExpectedSectionEntry[] };
-  const sections: ExpectedSectionEntry[] = Array.isArray(expected.sections)
-    ? [...expected.sections]
-    : [];
-
-  const idx = sections.findIndex((s) => s.title === sectionKey);
-  if (standardSection === null) {
-    if (idx >= 0) sections.splice(idx, 1);
-  } else {
-    if (idx >= 0) sections[idx] = { title: sectionKey, standardSection };
-    else sections.push({ title: sectionKey, standardSection });
-  }
-  expected.sections = sections;
-
-  await tx.goldenSampleStageStatus.upsert({
+  // Ensure the stage status row exists (create as draft if missing) so the
+  // FK on ExpectedSection has a target. Mirrors previous behaviour where the
+  // upsert in the JSON helper would lazily create the stage status on first
+  // annotation submission.
+  const stageStatus = await tx.goldenSampleStageStatus.upsert({
     where: { goldenSampleId_stage: { goldenSampleId, stage } },
     create: {
       goldenSampleId,
       stage,
       status: "draft" as GoldenStageStatus,
-      expectedResults: expected as object,
+      expectedResults: {},
     },
-    update: {
-      expectedResults: expected as object,
+    update: {},
+    select: { id: true },
+  });
+
+  // Look up an existing expected row (by title) within this stage status.
+  const existing = await tx.expectedSection.findFirst({
+    where: {
+      goldenSampleStageStatusId: stageStatus.id,
+      title: { equals: sectionKey, mode: "insensitive" },
+    },
+  });
+
+  if (standardSection === null) {
+    if (existing) {
+      await tx.expectedSection.delete({ where: { id: existing.id } });
+    }
+    return;
+  }
+
+  if (existing) {
+    await tx.expectedSection.update({
+      where: { id: existing.id },
+      data: { standardSection },
+    });
+    return;
+  }
+
+  // Creating a new expected row — try to anchor it to a real Section from
+  // any of the sample's bound documents. If no doc / no matching section,
+  // we still create the row with a textSnippet-only anchor.
+  const docLinks = await tx.goldenSampleDocument.findMany({
+    where: { goldenSampleId },
+    select: { documentVersionId: true },
+  });
+  const docVersionIds = docLinks.map((d) => d.documentVersionId);
+  const realSection = docVersionIds.length
+    ? await tx.section.findFirst({
+        where: {
+          docVersionId: { in: docVersionIds },
+          title: { equals: sectionKey, mode: "insensitive" },
+        },
+      })
+    : null;
+
+  const realAnchor = (realSection?.sourceAnchor ?? null) as
+    | { paragraphIndex?: number; textSnippet?: string }
+    | null;
+  const anchor: Record<string, unknown> = {
+    textSnippet: (realSection?.title ?? sectionKey).slice(0, 200),
+    occurrenceIndex: 0,
+  };
+  if (realAnchor && typeof realAnchor.paragraphIndex === "number") {
+    anchor.paragraphIndex = realAnchor.paragraphIndex;
+  }
+
+  await tx.expectedSection.create({
+    data: {
+      goldenSampleStageStatusId: stageStatus.id,
+      title: sectionKey,
+      level: realSection?.level ?? 1,
+      standardSection,
+      anchor: anchor as Prisma.InputJsonValue,
+      order: 0,
+      realSectionId: realSection?.id ?? null,
+      matchMethod: realSection ? "paragraph" : null,
+      matchedAt: realSection ? new Date() : null,
     },
   });
 }
@@ -298,13 +363,8 @@ export const annotationService = {
       (a) => a.isQuestion && a.decision === null,
     );
 
-    const currentStatus = await prisma.goldenSampleStageStatus.findUnique({
-      where: { goldenSampleId_stage: { goldenSampleId, stage } },
-    });
-    // Сохраняем текущий expected_results как есть — он уже актуальный благодаря
-    // auto-save в submitAnnotation / resolveQuestion.
-    const newExpected = (currentStatus?.expectedResults ?? {}) as object;
-
+    // Auto-save mode: данные уже в expectedSection rows (через submit/resolve).
+    // Этот метод теперь только меняет status stage → in_review для workflow.
     const result = await prisma.$transaction(async (tx) => {
       await tx.goldenSampleStageStatus.upsert({
         where: { goldenSampleId_stage: { goldenSampleId, stage } },
@@ -312,7 +372,7 @@ export const annotationService = {
           goldenSampleId,
           stage,
           status: "in_review" as GoldenStageStatus,
-          expectedResults: newExpected as object,
+          expectedResults: {},
           reviewedById: actorId,
           reviewedAt: new Date(),
         },

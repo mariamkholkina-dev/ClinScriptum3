@@ -35,11 +35,14 @@ export interface DiffEntry {
   /** ID реальной секции для extra/wrong_section. Используется для resolve
       дубликатов title — когда несколько секций имеют одинаковое название,
       без id невозможно однозначно сопоставить запись overlay с конкретной
-      секцией дерева и обновить нужную позицию в expected.sections. */
+      секцией дерева и обновить нужную позицию в expected. */
   actualSectionId?: string;
+  /** ID expected-секции (relational) для wrong_section/missing — позволяет
+      quick-fix точно адресовать конкретный ExpectedSection row при
+      обновлении/удалении (без повторного поиска по title). */
+  expectedSectionId?: string;
   /** Позиционный индекс среди секций с тем же title в реальном документе.
-      Нужен handleQuickFix для обновления соответствующей по позиции записи
-      в expected.sections (которая упорядочена тем же positional matching'ом). */
+      Сохранён для обратной совместимости (не использовался в relational diff). */
   duplicateIndex?: number;
 }
 
@@ -78,6 +81,20 @@ export interface ExpectedClassificationSection {
 
 export interface ExpectedClassificationResults {
   sections?: ExpectedClassificationSection[];
+}
+
+/**
+ * Relational expected section row (subset relevant to classification diff).
+ * Mirrors `ExpectedSection` from Prisma but typed loosely so the UI
+ * doesn't need to depend on @prisma/client.
+ */
+export interface ExpectedSectionRow {
+  id: string;
+  title: string;
+  standardSection: string | null;
+  level: number;
+  realSectionId: string | null;
+  matchMethod: string | null;
 }
 
 export interface TaxonomyEntry {
