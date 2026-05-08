@@ -6,6 +6,8 @@ export interface SessionContext {
   mode: string;
   protocolVersionId?: string;
   generatedDocId?: string;
+  /** Только для mode='parsing': ссылка на голден-сэмпл если открыт из /golden-dataset. */
+  goldenSampleId?: string;
 }
 
 interface AuthContextValue {

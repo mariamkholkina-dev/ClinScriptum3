@@ -149,6 +149,25 @@ function AppContent() {
         </>
       )}
 
+      {mode === "parsing" && docVersionId && (
+        <div className={styles.content} style={{ padding: 16 }}>
+          <Text weight="semibold" size={400}>Парсинг и разметка структуры</Text>
+          <Text block size={200} style={{ marginTop: 8, color: tokens.colorNeutralForeground3 }}>
+            Документ открыт в режиме парсинга. UI для просмотра и редактирования
+            структуры разделов будет добавлен в следующих PR.
+          </Text>
+          <Text block size={100} style={{ marginTop: 8, color: tokens.colorNeutralForeground3 }}>
+            docVersionId: {docVersionId}
+            {sessionContext.goldenSampleId && (
+              <>
+                <br />
+                goldenSampleId: {sessionContext.goldenSampleId}
+              </>
+            )}
+          </Text>
+        </div>
+      )}
+
       {(mode === "generation_review" || mode === "generation_insert") && sessionContext.generatedDocId && (
         <>
           <TabList
