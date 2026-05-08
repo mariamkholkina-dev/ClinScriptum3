@@ -2,6 +2,39 @@
 
 ## 2026-05-08
 
+### Feat: parser — LLM-fallback heading detection (Вариант 4 из гибрида, шаг 2)
+
+`packages/doc-parser/src/types.ts`:
+- Добавлены типы `LlmFallbackParagraph`, `LlmDetectedHeading`, `LlmHeadingFallback`.
+- В `ParserOptions` добавлены опциональные `llmFallback` (callback) и `llmFallbackThreshold` (default 20).
+
+`packages/doc-parser/src/parser.ts`:
+- После основного цикла, если `headings.length < threshold` И передан `llmFallback` — собирает все non-empty paragraph'ы (с text/isBold/fontSize) и зовёт callback.
+- Если LLM вернул `> headings.length` — REPLACE'ит headings, переассоциирует contentBlocks с новыми headings (по `paragraphIndex` ordering), удаляет paragraph'ы которые стали headings из contentBlocks (чтобы не дублировались).
+- Best-effort: если callback падает — оставляет rule-based result, парсинг не fails.
+
+`packages/doc-parser/src/heading-detector.ts`:
+- Добавлен method `"llm"` в `DetectedHeading.method` enum.
+
+`apps/workers/src/handlers/parse-document.ts`:
+- `buildLlmHeadingFallback(tenantId)` — фабрика callback'а, использующая `LLMGateway` с конфигом из БД (task `parse_heading_fallback`, fallback на `section_classify`).
+- Промпт — структурный prompt с примерами (Введение, Цели, Дизайн...) + правила исключения (footnote-rows, шкалы, ссылки).
+- Каждый paragraph отправляется в LLM в формате `[N] [BOLD,12pt] text...` (truncate до 200 chars).
+- Validation: `paragraphIndex` в диапазоне, `level` в [1,9].
+- Ошибки LLM логируются, callback возвращает `[]` → парсер использует rule-based.
+
+`packages/doc-parser/src/__tests__/parser-llm-fallback.test.ts` (новый, 7 тестов):
+- Минимальный DOCX через JSZip без heading-стилей.
+- llmFallback не вызывается если rule-based нашёл достаточно (≥20).
+- llmFallback вызывается если <20, REPLACE на больший результат.
+- Hallucinated `paragraphIndex` фильтруется.
+- Throw из callback не ломает парсинг.
+- Paragraph'ы которые стали headings удаляются из contentBlocks.
+
+**Эффект:** документы где даже улучшенный rule-based detection (Вариант 1) находит <20 заголовков, теперь имеют шанс получить структуру через LLM. Стоимость: ~$0.10-0.30 за doc, только для проблемных. На корпусе из 156 — оценочно ≤30 проблемных = ≤$10 разово.
+
+После merge'а на dev: re-parse 13 проблемных через `reprocess-bulk-error-versions.ts` подхватит новый flow автоматически (`buildLlmHeadingFallback` встроен в `handleParseDocument`).
+
 ### Feat: parser — извлечение font-size/bold из OOXML + bold-only fallback heading detection (Вариант 1 из 2-этапного гибрида)
 
 `packages/doc-parser/src/paragraph-properties.ts` (новый):

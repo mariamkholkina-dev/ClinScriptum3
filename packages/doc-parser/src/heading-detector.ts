@@ -9,7 +9,7 @@
 export interface DetectedHeading {
   text: string;
   level: number;
-  method: "style" | "outline" | "visual" | "numbered";
+  method: "style" | "outline" | "visual" | "numbered" | "llm";
   paragraphIndex: number;
 }
 

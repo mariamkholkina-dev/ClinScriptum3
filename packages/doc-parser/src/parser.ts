@@ -71,6 +71,9 @@ export async function parseDocx(
   const headings: DetectedHeading[] = [];
   const contentBlocks: Array<{ block: ParsedContentBlock; heading: DetectedHeading | null }> = [];
   const tables: ParsedTable[] = [];
+  // Список paragraph'ов для возможного LLM-fallback'а (только non-table elements
+  // с непустым текстом). Собирается inline в основном loop'е.
+  const fallbackParagraphs: import("./types.js").LlmFallbackParagraph[] = [];
   let soaTable: ParsedTable | null = null;
   let blockOrder = 0;
 
@@ -116,6 +119,18 @@ export async function parseDocx(
       baseFontSize
     );
 
+    // Накопить fallback-paragraph'ы для LLM (если потребуется): только
+    // non-empty текстовые элементы. Tables идут в `tables`/`contentBlocks`,
+    // им heading не приписываем.
+    if (text.trim()) {
+      fallbackParagraphs.push({
+        paragraphIndex: i,
+        text,
+        isBold: el.isBold,
+        fontSize: el.fontSize,
+      });
+    }
+
     if (heading && heading.level <= opts.maxHeadingDepth) {
       headings.push(heading);
       continue;
@@ -133,6 +148,72 @@ export async function parseDocx(
         },
         heading: lastHeading,
       });
+    }
+  }
+
+  /* ───── LLM-fallback heading detection ─────
+   *
+   * Если rule-based detection нашёл подозрительно мало headings
+   * (< llmFallbackThreshold) и caller передал callback `llmFallback` —
+   * вызываем его с paragraph'ами документа, REPLACE'им headings на
+   * результат, и переассоциируем contentBlocks с новыми headings'ами.
+   *
+   * Замена (а не merge) — потому что для проблемных DOCX rule-based
+   * обычно даёт мусорные headings (строки шкал, footnote-row'ы), их
+   * лучше выбросить и довериться LLM. Если caller хочет merge — пусть
+   * сам это сделает в callback'е (вернуть union).
+   */
+  const fallbackThreshold = opts.llmFallbackThreshold ?? 20;
+  if (opts.llmFallback && headings.length < fallbackThreshold && fallbackParagraphs.length > 0) {
+    try {
+      const llmHeadings = await opts.llmFallback(fallbackParagraphs);
+      if (llmHeadings.length > headings.length) {
+        // Map paragraphIndex → ParagraphInfo for text lookup
+        const byIdx = new Map(fallbackParagraphs.map((p) => [p.paragraphIndex, p]));
+        const newHeadings: DetectedHeading[] = [];
+        for (const lh of llmHeadings) {
+          const para = byIdx.get(lh.paragraphIndex);
+          if (!para) continue; // LLM hallucinated index
+          if (lh.level < 1 || lh.level > 9) continue; // sanity
+          newHeadings.push({
+            text: para.text.trim(),
+            level: Math.min(lh.level, opts.maxHeadingDepth),
+            method: "llm" as DetectedHeading["method"],
+            paragraphIndex: lh.paragraphIndex,
+          });
+        }
+        // Sort by paragraphIndex чтобы headings шли в document order
+        newHeadings.sort((a, b) => a.paragraphIndex - b.paragraphIndex);
+
+        if (newHeadings.length > headings.length) {
+          headings.length = 0;
+          headings.push(...newHeadings);
+
+          // Re-associate contentBlocks с новыми headings.
+          // Block принадлежит heading'у с максимальным paragraphIndex ≤ block.paragraphIndex.
+          for (const cb of contentBlocks) {
+            const blockIdx = cb.block.sourceAnchor.paragraphIndex;
+            let lastHeading: DetectedHeading | null = null;
+            for (const h of headings) {
+              if (h.paragraphIndex <= blockIdx) lastHeading = h;
+              else break;
+            }
+            cb.heading = lastHeading;
+          }
+
+          // Также — paragraph'ы которые ТЕПЕРЬ headings (по LLM) но раньше
+          // были contentBlocks: убрать их из contentBlocks (они стали headings,
+          // не должны дублироваться как content). Detect by paragraphIndex match.
+          const newHeadingIdxSet = new Set(newHeadings.map((h) => h.paragraphIndex));
+          const filteredCBs = contentBlocks.filter(
+            (cb) => !newHeadingIdxSet.has(cb.block.sourceAnchor.paragraphIndex),
+          );
+          contentBlocks.length = 0;
+          contentBlocks.push(...filteredCBs);
+        }
+      }
+    } catch {
+      // LLM-fallback best-effort — на ошибке оставляем rule-based result.
     }
   }
 
