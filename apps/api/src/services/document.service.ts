@@ -400,6 +400,25 @@ export const documentService = {
     });
   },
 
+  /**
+   * Помечает секцию как ложный заголовок (или снимает пометку).
+   *
+   * Cascade cleanup при transition false → true:
+   *   - Чистит classification поля Section (standardSection, algoSection,
+   *     llmSection, confidence'ы, classifiedBy, classificationStatus,
+   *     classificationComment) — раз заголовок ложный, его привязка к зоне
+   *     теряет смысл.
+   *   - Удаляет GoldenAnnotation записи (по sectionKey = title.lower().trim()
+   *     + golden_samples этого doc_version'а). GoldenAnnotationDecision удалится
+   *     каскадно через FK.
+   *   - Удаляет из expected_results.sections (JSON в GoldenSampleStageStatus)
+   *     записи с этим title — для всех stages этого sample'а.
+   *   - Возвращает дополнительный объект `cleanupSummary` чтобы UI мог
+   *     показать «удалено N annotations / M expected entries» в подтверждении.
+   *
+   * При обратном transition (true → false) ничего не восстанавливаем:
+   * следующий reprocess заполнит классификацию автоматически.
+   */
   async markSectionFalseHeading(
     tenantId: string,
     sectionId: string,
@@ -411,10 +430,172 @@ export const documentService = {
     });
     requireTenantResource(section, tenantId, (s) => s.docVersion.document.study.tenantId);
 
-    return prisma.section.update({
-      where: { id: sectionId },
-      data: { isFalseHeading },
+    const transitioning = isFalseHeading === true && !section!.isFalseHeading;
+    const sectionKey = section!.title.trim().toLowerCase();
+
+    return prisma.$transaction(async (tx) => {
+      // 1. Section update (вкл. cleanup classification если transitioning)
+      const updateData: Record<string, unknown> = { isFalseHeading };
+      if (transitioning) {
+        Object.assign(updateData, {
+          standardSection: null,
+          algoSection: null,
+          algoConfidence: 0,
+          llmSection: null,
+          llmConfidence: 0,
+          classifiedBy: null,
+          confidence: 0,
+          classificationStatus: "not_validated",
+          classificationComment: null,
+        });
+      }
+      const updated = await tx.section.update({
+        where: { id: sectionId },
+        data: updateData,
+      });
+
+      const cleanupSummary = {
+        clearedClassification: transitioning,
+        deletedAnnotations: 0,
+        clearedExpectedEntries: 0,
+        clearedStageStatuses: 0,
+      };
+
+      if (!transitioning) {
+        return { ...updated, cleanupSummary };
+      }
+
+      // 2. GoldenAnnotation для этого sectionKey по всем golden_samples
+      //    которые ссылаются на ЭТОТ doc_version (через goldenSampleDocuments)
+      const annotationsToDelete = await tx.goldenAnnotation.findMany({
+        where: {
+          sectionKey,
+          goldenSample: {
+            documents: { some: { documentVersionId: section!.docVersionId } },
+          },
+        },
+        select: { id: true },
+      });
+      if (annotationsToDelete.length > 0) {
+        await tx.goldenAnnotation.deleteMany({
+          where: { id: { in: annotationsToDelete.map((a) => a.id) } },
+        });
+        cleanupSummary.deletedAnnotations = annotationsToDelete.length;
+      }
+
+      // 3. expected_results.sections — удалить entry с этим title
+      //    (для всех stages: parsing, classification — обе используют sections[])
+      const stageStatuses = await tx.goldenSampleStageStatus.findMany({
+        where: {
+          goldenSample: {
+            documents: { some: { documentVersionId: section!.docVersionId } },
+          },
+        },
+      });
+      let clearedStageStatuses = 0;
+      let clearedExpectedEntries = 0;
+      for (const ss of stageStatuses) {
+        const expected = (ss.expectedResults ?? {}) as {
+          sections?: Array<{ title?: string }>;
+        };
+        if (!Array.isArray(expected.sections)) continue;
+        const before = expected.sections.length;
+        expected.sections = expected.sections.filter(
+          (s) => (s.title ?? "").trim().toLowerCase() !== sectionKey,
+        );
+        const removed = before - expected.sections.length;
+        if (removed > 0) {
+          await tx.goldenSampleStageStatus.update({
+            where: { id: ss.id },
+            data: { expectedResults: expected as object },
+          });
+          clearedStageStatuses += 1;
+          clearedExpectedEntries += removed;
+        }
+      }
+      cleanupSummary.clearedStageStatuses = clearedStageStatuses;
+      cleanupSummary.clearedExpectedEntries = clearedExpectedEntries;
+
+      logger.info("section_false_heading_cascade_cleanup", {
+        sectionId,
+        sectionKey,
+        ...cleanupSummary,
+      });
+
+      return { ...updated, cleanupSummary };
     });
+  },
+
+  /**
+   * Возвращает превью cascade cleanup без выполнения изменений. UI вызывает
+   * перед toggle false-heading чтобы показать confirm-диалог если есть
+   * annotations от других пользователей или записи в expected.
+   */
+  async previewFalseHeadingCleanup(
+    tenantId: string,
+    sectionId: string,
+  ) {
+    const section = await prisma.section.findUnique({
+      where: { id: sectionId },
+      include: { docVersion: { include: { document: { include: { study: true } } } } },
+    });
+    requireTenantResource(section, tenantId, (s) => s.docVersion.document.study.tenantId);
+
+    if (section!.isFalseHeading) {
+      // Уже отмечена → cleanup не сработает, ничего не покажем
+      return {
+        clearedClassification: false,
+        annotations: [],
+        expectedEntries: 0,
+      };
+    }
+
+    const sectionKey = section!.title.trim().toLowerCase();
+
+    const annotations = await prisma.goldenAnnotation.findMany({
+      where: {
+        sectionKey,
+        goldenSample: {
+          documents: { some: { documentVersionId: section!.docVersionId } },
+        },
+      },
+      include: {
+        annotator: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    const stageStatuses = await prisma.goldenSampleStageStatus.findMany({
+      where: {
+        goldenSample: {
+          documents: { some: { documentVersionId: section!.docVersionId } },
+        },
+      },
+    });
+    let expectedEntries = 0;
+    for (const ss of stageStatuses) {
+      const expected = (ss.expectedResults ?? {}) as { sections?: Array<{ title?: string }> };
+      if (!Array.isArray(expected.sections)) continue;
+      expectedEntries += expected.sections.filter(
+        (s) => (s.title ?? "").trim().toLowerCase() === sectionKey,
+      ).length;
+    }
+
+    const hasZone =
+      Boolean(section!.standardSection) ||
+      Boolean(section!.algoSection) ||
+      Boolean(section!.llmSection);
+
+    return {
+      clearedClassification: hasZone,
+      currentZone: section!.standardSection,
+      annotations: annotations.map((a) => ({
+        id: a.id,
+        proposedZone: a.proposedZone,
+        isQuestion: a.isQuestion,
+        annotator: a.annotator,
+      })),
+      expectedEntries,
+    };
   },
 
   /**
