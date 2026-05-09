@@ -2,6 +2,22 @@
 
 ## 2026-05-09
 
+### Feat: word-addin — пагинация версий + только готовые документы
+
+После #105 список «утрясся» до 50 documents в одном study, но user попросил:
+- показывать **только готовые** (parsed/ready) — error/uploading сюда не выводим (для error используется Web UI «перезапустить парсинг»);
+- если документов больше 50 — листание/догрузка при прокрутке.
+
+`apps/api/src/routers/word-addin.ts`:
+- Удалил endpoint `getContext` с input `includeAllStatuses` (больше не нужен).
+- Добавил новый `wordAddin.listVersions` — cursor-paginated плоский список готовых версий tenant'а с `take` (max 200) + `cursor` (UUID последнего id) + опц. фильтр `docType` (`protocol`/`icf`/`ib`/`csr`). Сортировка `createdAt desc`. Возвращает `{ items, nextCursor }`.
+
+`apps/word-addin/src/App.tsx`:
+- Новый компонент `PaginatedVersionsList` с `IntersectionObserver` — догружает следующие 50 при прокрутке к нижнему sentinel'у.
+- Inter-audit: на втором шаге (выбор protocol) запрашивает `listVersions({ docType: 'protocol' })` — пользователь не путается с другими типами.
+- Группировка по study на лету (без отдельного API запроса).
+
+
 ### Fix: wordAddin.getContext OOM на больших корпусах
 
 После расширения `getContext` в #104 (`includeAllStatuses` для парсинга) tenant'ы с большим корпусом (например 156 protocols в Bulk Corpus на dev) ловили OOM в api контейнере (limit 768m).
