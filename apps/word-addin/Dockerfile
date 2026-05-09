@@ -33,6 +33,12 @@ RUN npm install --no-save --no-audit --no-fund \
     @emnapi/runtime || true
 
 WORKDIR /app/apps/word-addin
+
+# API URL зашивается в bundle на этапе build. Передавай через docker-compose
+# build-arg, иначе add-in после деплоя будет стучаться на localhost:4000
+# (внутри Word'а пользователя — где API нет → "Failed to fetch").
+ARG VITE_API_URL=http://localhost:4000
+ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 # ──────── Stage 2: serve ────────

@@ -1,4 +1,7 @@
-const API_BASE = "http://localhost:4000";
+// API URL берётся из vite env-var `VITE_API_URL` (передаётся при build).
+// Дефолт — localhost для dev. На prod передаётся через docker-compose build-arg
+// (см. apps/word-addin/Dockerfile + docker-compose.prod.yml service `word-addin`).
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:4000";
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;

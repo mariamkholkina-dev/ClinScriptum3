@@ -115,7 +115,18 @@ export const config = {
   refreshTokenExpiresInDays: parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS ?? "30", 10),
   corsOrigin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(",")
-    : ["http://localhost:3000", "https://localhost:3001", "http://localhost:3002", "http://127.0.0.1:3000", "http://127.0.0.1:3002"],
+    : [
+        // dev local
+        "http://localhost:3000",
+        "https://localhost:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3002",
+        // dev deploy (clinscriptum.ru)
+        "https://app.dev.clinscriptum.ru",
+        "https://admin.dev.clinscriptum.ru",
+        "https://word-addin.dev.clinscriptum.ru",
+      ],
 
   storage: {
     type: (process.env.STORAGE_TYPE ?? "local") as "local" | "s3",
