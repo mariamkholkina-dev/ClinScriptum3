@@ -17,38 +17,40 @@ export const wordAddinRouter = router({
         ? undefined
         : { status: { in: ["parsed" as const, "ready" as const] } };
 
+      // select-only payload (а не include с full row) и лимит на documents,
+      // иначе у tenant'ов с большим корпусом (156+ docs) Prisma возвращает
+      // огромную JSONB через digital_twin → OOM в API контейнере.
       const studies = await prisma.study.findMany({
         where: { tenantId: ctx.user.tenantId },
-        include: {
+        select: {
+          id: true,
+          title: true,
           documents: {
-            include: {
+            select: {
+              id: true,
+              title: true,
+              type: true,
               versions: {
                 where: versionsWhere,
                 orderBy: { versionNumber: "desc" },
                 take: 3,
+                select: {
+                  id: true,
+                  versionNumber: true,
+                  versionLabel: true,
+                  status: true,
+                },
               },
             },
+            orderBy: { updatedAt: "desc" },
+            take: 50,
           },
         },
         orderBy: { updatedAt: "desc" },
         take: 20,
       });
 
-      return studies.map((s) => ({
-        id: s.id,
-        title: s.title,
-        documents: s.documents.map((d) => ({
-          id: d.id,
-          title: d.title,
-          type: d.type,
-          versions: d.versions.map((v) => ({
-            id: v.id,
-            versionNumber: v.versionNumber,
-            versionLabel: v.versionLabel,
-            status: v.status,
-          })),
-        })),
-      }));
+      return studies;
     }),
 
   // Список всех сгенерированных документов tenant'а — для выбора в add-in

@@ -2,6 +2,17 @@
 
 ## 2026-05-09
 
+### Fix: wordAddin.getContext OOM на больших корпусах
+
+После расширения `getContext` в #104 (`includeAllStatuses` для парсинга) tenant'ы с большим корпусом (например 156 protocols в Bulk Corpus на dev) ловили OOM в api контейнере (limit 768m).
+
+`apps/api/src/routers/word-addin.ts`:
+- Заменил `include` на `select` — Prisma больше не возвращает огромный `digital_twin` JSONB и другие неиспользуемые поля.
+- Добавил `take: 50` + `orderBy: updatedAt desc` на documents (раньше всё было unbounded).
+
+`docker-compose.prod.yml`:
+- Поднял memory limit api с 768m → 1g для запаса (на случай ещё каких-то «толстых» запросов).
+
 ### Feat: word-addin manual mode selector — расширение режимов
 
 `ManualModeSelector` (Word add-in) теперь поддерживает все 5 режимов pipeline вместо двух (intra/inter audit):
