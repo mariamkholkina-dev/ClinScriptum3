@@ -193,15 +193,21 @@ function AppContent() {
   );
 }
 
-interface StudyDoc {
-  id: string;
-  title: string;
-  documents: {
-    id: string;
-    title: string;
-    type: string;
-    versions: { id: string; versionNumber: number; versionLabel: string | null; status: string }[];
-  }[];
+interface VersionItem {
+  versionId: string;
+  versionNumber: number;
+  versionLabel: string | null;
+  status: string;
+  documentId: string;
+  documentTitle: string;
+  documentType: string;
+  studyId: string;
+  studyTitle: string;
+}
+
+interface VersionsPage {
+  items: VersionItem[];
+  nextCursor: string | null;
 }
 
 interface GeneratedDocSummary {
@@ -244,22 +250,12 @@ function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => v
   // Для inter_audit — двухшаговый выбор: сначала checked-версия, потом protocol.
   const [pendingCheckedVersionId, setPendingCheckedVersionId] = useState<string | null>(null);
 
-  // Списки для разных режимов.
-  const [studies, setStudies] = useState<StudyDoc[]>([]);
-  const [loadingStudies, setLoadingStudies] = useState(true);
   const [generatedDocs, setGeneratedDocs] = useState<GeneratedDocSummary[]>([]);
   const [loadingGenerated, setLoadingGenerated] = useState(false);
 
-  // Для парсинга нужно видеть все статусы (включая error для restart).
-  const includeAllStatuses = selectedMode === "parsing";
-
-  useEffect(() => {
-    setLoadingStudies(true);
-    trpcCall<StudyDoc[]>("wordAddin.getContext", { includeAllStatuses })
-      .then(setStudies)
-      .catch(() => setStudies([]))
-      .finally(() => setLoadingStudies(false));
-  }, [includeAllStatuses]);
+  // На втором шаге inter_audit показываем только версии типа protocol.
+  const versionsDocType =
+    selectedMode === "inter_audit" && pendingCheckedVersionId ? "protocol" : undefined;
 
   useEffect(() => {
     if (!isGenerationMode(selectedMode)) return;
@@ -280,7 +276,6 @@ function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => v
       if (!pendingCheckedVersionId) {
         setPendingCheckedVersionId(versionId);
       } else {
-        // Второй клик = выбор protocol-версии.
         onSelect({
           docVersionId: pendingCheckedVersionId,
           protocolVersionId: versionId,
@@ -295,8 +290,6 @@ function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => v
   const handleGeneratedClick = (generatedDocId: string) => {
     onSelect({ generatedDocId, mode: selectedMode });
   };
-
-  const isLoading = isGenerationMode(selectedMode) ? loadingGenerated : loadingStudies;
 
   return (
     <div className={styles.selector}>
@@ -329,15 +322,15 @@ function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => v
 
       <Divider />
 
-      {isLoading && <Spinner label="Загрузка..." size="small" />}
-
-      {!isLoading && isGenerationMode(selectedMode) && (
-        <GeneratedDocsList docs={generatedDocs} onSelect={handleGeneratedClick} />
-      )}
-
-      {!isLoading && !isGenerationMode(selectedMode) && (
-        <StudiesList
-          studies={studies}
+      {isGenerationMode(selectedMode) ? (
+        loadingGenerated ? (
+          <Spinner label="Загрузка..." size="small" />
+        ) : (
+          <GeneratedDocsList docs={generatedDocs} onSelect={handleGeneratedClick} />
+        )
+      ) : (
+        <PaginatedVersionsList
+          docType={versionsDocType}
           onVersionClick={handleVersionClick}
           highlightVersionId={pendingCheckedVersionId}
         />
@@ -346,18 +339,79 @@ function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => v
   );
 }
 
-function StudiesList({
-  studies,
+function PaginatedVersionsList({
+  docType,
   onVersionClick,
   highlightVersionId,
 }: {
-  studies: StudyDoc[];
+  docType: string | undefined;
   onVersionClick: (versionId: string) => void;
   highlightVersionId: string | null;
 }) {
   const styles = useStyles();
+  const [items, setItems] = useState<VersionItem[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [initialLoad, setInitialLoad] = useState(true);
+  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  const inFlightRef = React.useRef(false);
 
-  if (studies.length === 0) {
+  const loadPage = React.useCallback(
+    async (currentCursor: string | null) => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      setLoading(true);
+      try {
+        const page = await trpcCall<VersionsPage>("wordAddin.listVersions", {
+          cursor: currentCursor ?? undefined,
+          take: 50,
+          docType,
+        });
+        setItems((prev) => (currentCursor ? [...prev, ...page.items] : page.items));
+        setCursor(page.nextCursor);
+        setHasMore(page.nextCursor !== null);
+      } catch {
+        setHasMore(false);
+      } finally {
+        setLoading(false);
+        setInitialLoad(false);
+        inFlightRef.current = false;
+      }
+    },
+    [docType]
+  );
+
+  // Сброс при изменении docType (например, на втором шаге inter_audit).
+  useEffect(() => {
+    setItems([]);
+    setCursor(null);
+    setHasMore(true);
+    setInitialLoad(true);
+    loadPage(null);
+  }, [docType, loadPage]);
+
+  // IntersectionObserver — догружаем когда sentinel становится видимым.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || loading) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadPage(cursor);
+        }
+      },
+      { rootMargin: "120px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [cursor, hasMore, loading, loadPage]);
+
+  if (initialLoad) {
+    return <Spinner label="Загрузка..." size="small" />;
+  }
+
+  if (items.length === 0) {
     return (
       <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
         Нет доступных документов
@@ -365,42 +419,62 @@ function StudiesList({
     );
   }
 
+  // Группируем по study для визуального заголовка между группами.
+  const grouped: { studyId: string; studyTitle: string; items: VersionItem[] }[] = [];
+  for (const v of items) {
+    const last = grouped[grouped.length - 1];
+    if (last && last.studyId === v.studyId) {
+      last.items.push(v);
+    } else {
+      grouped.push({ studyId: v.studyId, studyTitle: v.studyTitle, items: [v] });
+    }
+  }
+
   return (
-    <>
-      {studies.map((study) => (
-        <div key={study.id} style={{ marginBottom: 12 }}>
+    <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
+      {grouped.map((g, gi) => (
+        <div key={`${g.studyId}-${gi}`} style={{ marginBottom: 12 }}>
           <Text weight="semibold" size={200}>
-            {study.title}
+            {g.studyTitle}
           </Text>
-          {study.documents.map((doc) =>
-            doc.versions.map((v) => {
-              const isHighlighted = v.id === highlightVersionId;
-              return (
-                <div
-                  key={v.id}
-                  className={styles.selectItem}
-                  style={
-                    isHighlighted
-                      ? { backgroundColor: tokens.colorBrandBackground2 }
-                      : undefined
-                  }
-                  onClick={() => onVersionClick(v.id)}
-                >
-                  <Text size={200}>
-                    {doc.title} — {v.versionLabel ?? `v${v.versionNumber}`}
-                  </Text>
-                  <br />
-                  <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                    {doc.type} · {v.status}
-                    {isHighlighted ? " · ✓ выбрано" : ""}
-                  </Text>
-                </div>
-              );
-            })
-          )}
+          {g.items.map((v) => {
+            const isHighlighted = v.versionId === highlightVersionId;
+            return (
+              <div
+                key={v.versionId}
+                className={styles.selectItem}
+                style={
+                  isHighlighted
+                    ? { backgroundColor: tokens.colorBrandBackground2 }
+                    : undefined
+                }
+                onClick={() => onVersionClick(v.versionId)}
+              >
+                <Text size={200}>
+                  {v.documentTitle} — {v.versionLabel ?? `v${v.versionNumber}`}
+                </Text>
+                <br />
+                <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                  {v.documentType} · {v.status}
+                  {isHighlighted ? " · ✓ выбрано" : ""}
+                </Text>
+              </div>
+            );
+          })}
         </div>
       ))}
-    </>
+      {hasMore && (
+        <div ref={sentinelRef} style={{ padding: "12px", textAlign: "center" }}>
+          {loading ? (
+            <Spinner size="extra-tiny" />
+          ) : (
+            <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+              Прокрутите для загрузки
+            </Text>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

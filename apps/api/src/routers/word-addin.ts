@@ -7,50 +7,66 @@ import { enqueueJob } from "../lib/queue.js";
 import { logger } from "../lib/logger.js";
 
 export const wordAddinRouter = router({
-  getContext: protectedProcedure
-    .input(z.object({ includeAllStatuses: z.boolean().optional() }).optional())
+  // Cursor-paginated список готовых версий (parsed/ready) для tenant'а.
+  // Возвращает плоский список с метаданными study/document, сортировка по
+  // createdAt версии (свежие сверху). UI группирует по study при рендеринге.
+  // Для inter_audit на втором шаге используется фильтр docType='protocol'.
+  listVersions: protectedProcedure
+    .input(
+      z.object({
+        cursor: z.string().uuid().optional(),
+        take: z.number().int().min(1).max(200).optional(),
+        docType: z.enum(["protocol", "icf", "ib", "csr"]).optional(),
+      })
+    )
     .query(async ({ ctx, input }) => {
-      // По умолчанию add-in работает только с готовыми (parsed/ready) версиями.
-      // Для режима «Парсинг» add-in передаёт includeAllStatuses=true чтобы
-      // увидеть и uploading/parsing/error и иметь возможность перезапустить.
-      const versionsWhere = input?.includeAllStatuses
-        ? undefined
-        : { status: { in: ["parsed" as const, "ready" as const] } };
-
-      // select-only payload (а не include с full row) и лимит на documents,
-      // иначе у tenant'ов с большим корпусом (156+ docs) Prisma возвращает
-      // огромную JSONB через digital_twin → OOM в API контейнере.
-      const studies = await prisma.study.findMany({
-        where: { tenantId: ctx.user.tenantId },
+      const take = input.take ?? 50;
+      const versions = await prisma.documentVersion.findMany({
+        where: {
+          status: { in: ["parsed", "ready"] },
+          document: {
+            ...(input.docType ? { type: input.docType } : {}),
+            study: { tenantId: ctx.user.tenantId },
+          },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: take + 1,
+        ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
         select: {
           id: true,
-          title: true,
-          documents: {
+          versionNumber: true,
+          versionLabel: true,
+          status: true,
+          createdAt: true,
+          document: {
             select: {
               id: true,
               title: true,
               type: true,
-              versions: {
-                where: versionsWhere,
-                orderBy: { versionNumber: "desc" },
-                take: 3,
-                select: {
-                  id: true,
-                  versionNumber: true,
-                  versionLabel: true,
-                  status: true,
-                },
-              },
+              study: { select: { id: true, title: true } },
             },
-            orderBy: { updatedAt: "desc" },
-            take: 50,
           },
         },
-        orderBy: { updatedAt: "desc" },
-        take: 20,
       });
 
-      return studies;
+      const hasMore = versions.length > take;
+      const items = hasMore ? versions.slice(0, take) : versions;
+      const nextCursor = hasMore ? items[items.length - 1].id : null;
+
+      return {
+        items: items.map((v) => ({
+          versionId: v.id,
+          versionNumber: v.versionNumber,
+          versionLabel: v.versionLabel,
+          status: v.status,
+          documentId: v.document.id,
+          documentTitle: v.document.title,
+          documentType: v.document.type,
+          studyId: v.document.study.id,
+          studyTitle: v.document.study.title,
+        })),
+        nextCursor,
+      };
     }),
 
   // Список всех сгенерированных документов tenant'а — для выбора в add-in
