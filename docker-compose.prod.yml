@@ -163,6 +163,10 @@ services:
         # (например https://word-addin.dev.clinscriptum.ru) — при build
         # подставится в manifest.xml через sed.
         WORD_ADDIN_PUBLIC_URL: https://word-addin.dev.clinscriptum.ru
+        # API URL зашивается в JS bundle на этапе vite build. Без него add-in
+        # пытается стучаться на localhost:4000 у пользователя в Word, где
+        # никакого API нет.
+        VITE_API_URL: https://api.dev.clinscriptum.ru
     restart: unless-stopped
     ports:
       - "127.0.0.1:3001:80"
