@@ -90,7 +90,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768m
+          memory: 1g
 
   web:
     build:
