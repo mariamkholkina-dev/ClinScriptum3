@@ -7,38 +7,80 @@ import { enqueueJob } from "../lib/queue.js";
 import { logger } from "../lib/logger.js";
 
 export const wordAddinRouter = router({
-  getContext: protectedProcedure.query(async ({ ctx }) => {
-    const studies = await prisma.study.findMany({
-      where: { tenantId: ctx.user.tenantId },
-      include: {
-        documents: {
-          include: {
-            versions: {
-              where: { status: { in: ["parsed", "ready"] } },
-              orderBy: { versionNumber: "desc" },
-              take: 3,
+  getContext: protectedProcedure
+    .input(z.object({ includeAllStatuses: z.boolean().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      // По умолчанию add-in работает только с готовыми (parsed/ready) версиями.
+      // Для режима «Парсинг» add-in передаёт includeAllStatuses=true чтобы
+      // увидеть и uploading/parsing/error и иметь возможность перезапустить.
+      const versionsWhere = input?.includeAllStatuses
+        ? undefined
+        : { status: { in: ["parsed" as const, "ready" as const] } };
+
+      const studies = await prisma.study.findMany({
+        where: { tenantId: ctx.user.tenantId },
+        include: {
+          documents: {
+            include: {
+              versions: {
+                where: versionsWhere,
+                orderBy: { versionNumber: "desc" },
+                take: 3,
+              },
             },
           },
         },
+        orderBy: { updatedAt: "desc" },
+        take: 20,
+      });
+
+      return studies.map((s) => ({
+        id: s.id,
+        title: s.title,
+        documents: s.documents.map((d) => ({
+          id: d.id,
+          title: d.title,
+          type: d.type,
+          versions: d.versions.map((v) => ({
+            id: v.id,
+            versionNumber: v.versionNumber,
+            versionLabel: v.versionLabel,
+            status: v.status,
+          })),
+        })),
+      }));
+    }),
+
+  // Список всех сгенерированных документов tenant'а — для выбора в add-in
+  // (режимы generation_review / generation_insert). Унаследовано через
+  // protocolVersion → document → study → tenantId.
+  listGeneratedDocs: protectedProcedure.query(async ({ ctx }) => {
+    const docs = await prisma.generatedDoc.findMany({
+      where: {
+        protocolVersion: {
+          document: { study: { tenantId: ctx.user.tenantId } },
+        },
       },
-      orderBy: { updatedAt: "desc" },
-      take: 20,
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: {
+        sections: { select: { id: true, status: true } },
+        protocolVersion: {
+          include: { document: { include: { study: true } } },
+        },
+      },
     });
 
-    return studies.map((s) => ({
-      id: s.id,
-      title: s.title,
-      documents: s.documents.map((d) => ({
-        id: d.id,
-        title: d.title,
-        type: d.type,
-        versions: d.versions.map((v) => ({
-          id: v.id,
-          versionNumber: v.versionNumber,
-          versionLabel: v.versionLabel,
-          status: v.status,
-        })),
-      })),
+    return docs.map((d) => ({
+      id: d.id,
+      docType: d.docType,
+      status: d.status,
+      createdAt: d.createdAt.toISOString(),
+      studyTitle: d.protocolVersion.document.study.title,
+      protocolTitle: d.protocolVersion.document.title,
+      protocolLabel: d.protocolVersion.versionLabel ?? `v${d.protocolVersion.versionNumber}`,
+      totalSections: d.sections.length,
+      completedSections: d.sections.filter((s) => s.status === "completed").length,
     }));
   }),
 
