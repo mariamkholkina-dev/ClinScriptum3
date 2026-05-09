@@ -119,7 +119,7 @@ function AppContent() {
         />
       </div>
 
-      {(mode === "intra_audit" || mode === "inter_audit") && docVersionId && (
+      {(mode === "intra_audit" || mode === "intra_fact_audit" || mode === "inter_audit") && docVersionId && (
         <>
           <TabList
             size="small"
@@ -135,7 +135,10 @@ function AppContent() {
           </TabList>
           <div className={styles.content}>
             {activeTab === "findings" && mode === "intra_audit" && (
-              <FindingsPanel docVersionId={docVersionId} />
+              <FindingsPanel docVersionId={docVersionId} categoryFilter="section" />
+            )}
+            {activeTab === "findings" && mode === "intra_fact_audit" && (
+              <FindingsPanel docVersionId={docVersionId} categoryFilter="fact" />
             )}
             {activeTab === "findings" && mode === "inter_audit" && sessionContext.protocolVersionId && (
               <InterAuditPanel
@@ -201,26 +204,99 @@ interface StudyDoc {
   }[];
 }
 
+interface GeneratedDocSummary {
+  id: string;
+  docType: string;
+  status: string;
+  createdAt: string;
+  studyTitle: string;
+  protocolTitle: string;
+  protocolLabel: string;
+  totalSections: number;
+  completedSections: number;
+}
+
+type Mode =
+  | "parsing"
+  | "intra_audit"
+  | "intra_fact_audit"
+  | "inter_audit"
+  | "generation_review"
+  | "generation_insert";
+
+const MODE_LABELS: { value: Mode; label: string }[] = [
+  { value: "parsing", label: "Парсинг" },
+  { value: "intra_audit", label: "Внутридокументный аудит (секции)" },
+  { value: "intra_fact_audit", label: "Внутридокументный аудит фактов" },
+  { value: "inter_audit", label: "Междокументный аудит" },
+  { value: "generation_review", label: "Генерация — просмотр" },
+  { value: "generation_insert", label: "Генерация — вставка" },
+];
+
+function isGenerationMode(mode: Mode): boolean {
+  return mode === "generation_review" || mode === "generation_insert";
+}
+
 function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => void }) {
   const styles = useStyles();
+  const [selectedMode, setSelectedMode] = useState<Mode>("intra_audit");
+
+  // Для inter_audit — двухшаговый выбор: сначала checked-версия, потом protocol.
+  const [pendingCheckedVersionId, setPendingCheckedVersionId] = useState<string | null>(null);
+
+  // Списки для разных режимов.
   const [studies, setStudies] = useState<StudyDoc[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedMode, setSelectedMode] = useState("intra_audit");
+  const [loadingStudies, setLoadingStudies] = useState(true);
+  const [generatedDocs, setGeneratedDocs] = useState<GeneratedDocSummary[]>([]);
+  const [loadingGenerated, setLoadingGenerated] = useState(false);
+
+  // Для парсинга нужно видеть все статусы (включая error для restart).
+  const includeAllStatuses = selectedMode === "parsing";
 
   useEffect(() => {
-    trpcCall<StudyDoc[]>("wordAddin.getContext", {})
+    setLoadingStudies(true);
+    trpcCall<StudyDoc[]>("wordAddin.getContext", { includeAllStatuses })
       .then(setStudies)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+      .catch(() => setStudies([]))
+      .finally(() => setLoadingStudies(false));
+  }, [includeAllStatuses]);
 
-  if (loading) {
-    return (
-      <div className={styles.loading}>
-        <Spinner label="Загрузка документов..." />
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!isGenerationMode(selectedMode)) return;
+    setLoadingGenerated(true);
+    trpcCall<GeneratedDocSummary[]>("wordAddin.listGeneratedDocs", {})
+      .then(setGeneratedDocs)
+      .catch(() => setGeneratedDocs([]))
+      .finally(() => setLoadingGenerated(false));
+  }, [selectedMode]);
+
+  // Сбрасываем pending выбор при смене режима.
+  useEffect(() => {
+    setPendingCheckedVersionId(null);
+  }, [selectedMode]);
+
+  const handleVersionClick = (versionId: string) => {
+    if (selectedMode === "inter_audit") {
+      if (!pendingCheckedVersionId) {
+        setPendingCheckedVersionId(versionId);
+      } else {
+        // Второй клик = выбор protocol-версии.
+        onSelect({
+          docVersionId: pendingCheckedVersionId,
+          protocolVersionId: versionId,
+          mode: selectedMode,
+        });
+      }
+    } else {
+      onSelect({ docVersionId: versionId, mode: selectedMode });
+    }
+  };
+
+  const handleGeneratedClick = (generatedDocId: string) => {
+    onSelect({ generatedDocId, mode: selectedMode });
+  };
+
+  const isLoading = isGenerationMode(selectedMode) ? loadingGenerated : loadingStudies;
 
   return (
     <div className={styles.selector}>
@@ -233,50 +309,132 @@ function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => v
 
       <Select
         value={selectedMode}
-        onChange={(_, d) => setSelectedMode(d.value)}
+        onChange={(_, d) => setSelectedMode(d.value as Mode)}
         size="small"
       >
-        <option value="intra_audit">Внутридокументный аудит</option>
-        <option value="inter_audit">Междокументный аудит</option>
+        {MODE_LABELS.map((m) => (
+          <option key={m.value} value={m.value}>
+            {m.label}
+          </option>
+        ))}
       </Select>
+
+      {selectedMode === "inter_audit" && (
+        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+          {pendingCheckedVersionId
+            ? "Шаг 2: выберите версию протокола (эталон)."
+            : "Шаг 1: выберите проверяемую версию."}
+        </Text>
+      )}
 
       <Divider />
 
+      {isLoading && <Spinner label="Загрузка..." size="small" />}
+
+      {!isLoading && isGenerationMode(selectedMode) && (
+        <GeneratedDocsList docs={generatedDocs} onSelect={handleGeneratedClick} />
+      )}
+
+      {!isLoading && !isGenerationMode(selectedMode) && (
+        <StudiesList
+          studies={studies}
+          onVersionClick={handleVersionClick}
+          highlightVersionId={pendingCheckedVersionId}
+        />
+      )}
+    </div>
+  );
+}
+
+function StudiesList({
+  studies,
+  onVersionClick,
+  highlightVersionId,
+}: {
+  studies: StudyDoc[];
+  onVersionClick: (versionId: string) => void;
+  highlightVersionId: string | null;
+}) {
+  const styles = useStyles();
+
+  if (studies.length === 0) {
+    return (
+      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        Нет доступных документов
+      </Text>
+    );
+  }
+
+  return (
+    <>
       {studies.map((study) => (
         <div key={study.id} style={{ marginBottom: 12 }}>
           <Text weight="semibold" size={200}>
             {study.title}
           </Text>
           {study.documents.map((doc) =>
-            doc.versions.map((v) => (
-              <div
-                key={v.id}
-                className={styles.selectItem}
-                onClick={() =>
-                  onSelect({
-                    docVersionId: v.id,
-                    mode: selectedMode as any,
-                  })
-                }
-              >
-                <Text size={200}>
-                  {doc.title} — {v.versionLabel ?? `v${v.versionNumber}`}
-                </Text>
-                <br />
-                <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                  {doc.type} · {v.status}
-                </Text>
-              </div>
-            ))
+            doc.versions.map((v) => {
+              const isHighlighted = v.id === highlightVersionId;
+              return (
+                <div
+                  key={v.id}
+                  className={styles.selectItem}
+                  style={
+                    isHighlighted
+                      ? { backgroundColor: tokens.colorBrandBackground2 }
+                      : undefined
+                  }
+                  onClick={() => onVersionClick(v.id)}
+                >
+                  <Text size={200}>
+                    {doc.title} — {v.versionLabel ?? `v${v.versionNumber}`}
+                  </Text>
+                  <br />
+                  <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                    {doc.type} · {v.status}
+                    {isHighlighted ? " · ✓ выбрано" : ""}
+                  </Text>
+                </div>
+              );
+            })
           )}
         </div>
       ))}
+    </>
+  );
+}
 
-      {studies.length === 0 && (
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-          Нет доступных документов
-        </Text>
-      )}
-    </div>
+function GeneratedDocsList({
+  docs,
+  onSelect,
+}: {
+  docs: GeneratedDocSummary[];
+  onSelect: (id: string) => void;
+}) {
+  const styles = useStyles();
+
+  if (docs.length === 0) {
+    return (
+      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        Нет сгенерированных документов
+      </Text>
+    );
+  }
+
+  return (
+    <>
+      {docs.map((d) => (
+        <div key={d.id} className={styles.selectItem} onClick={() => onSelect(d.id)}>
+          <Text size={200}>
+            {d.docType.toUpperCase()} — {d.studyTitle}
+          </Text>
+          <br />
+          <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+            {d.protocolTitle} ({d.protocolLabel}) · {d.status} ·{" "}
+            {d.completedSections}/{d.totalSections} разделов
+          </Text>
+        </div>
+      ))}
+    </>
   );
 }

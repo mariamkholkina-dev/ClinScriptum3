@@ -56,9 +56,16 @@ const useStyles = makeStyles({
 
 interface Props {
   docVersionId: string;
+  /**
+   * Фильтр по категории findings (auditCategory):
+   * - "section" — только структура / противоречия (intra_audit)
+   * - "fact" — только аудит фактов (intra_fact_audit)
+   * - undefined / "all" — все findings
+   */
+  categoryFilter?: "section" | "fact" | "all";
 }
 
-export function FindingsPanel({ docVersionId }: Props) {
+export function FindingsPanel({ docVersionId, categoryFilter }: Props) {
   const styles = useStyles();
   const { findings, loading, error, refetch, updateStatus } = useFindings({
     docVersionId,
@@ -73,9 +80,17 @@ export function FindingsPanel({ docVersionId }: Props) {
     return findings.filter((f) => {
       if (severityFilter !== "all" && f.severity !== severityFilter) return false;
       if (statusFilter !== "all" && f.status !== statusFilter) return false;
+      if (categoryFilter && categoryFilter !== "all") {
+        // auditCategory может быть "fact" / "section_fact" / "structure" / null.
+        // Простая эвристика: содержит "fact" → fact-аудит, иначе — секционный.
+        const cat = (f.auditCategory ?? "").toLowerCase();
+        const isFact = cat.includes("fact");
+        if (categoryFilter === "fact" && !isFact) return false;
+        if (categoryFilter === "section" && isFact) return false;
+      }
       return true;
     });
-  }, [findings, severityFilter, statusFilter]);
+  }, [findings, severityFilter, statusFilter, categoryFilter]);
 
   const selected = filtered.find((f) => f.id === selectedId);
   const pendingCount = findings.filter((f) => f.status === "pending").length;

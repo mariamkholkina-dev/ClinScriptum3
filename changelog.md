@@ -2,6 +2,28 @@
 
 ## 2026-05-09
 
+### Feat: word-addin manual mode selector — расширение режимов
+
+`ManualModeSelector` (Word add-in) теперь поддерживает все 5 режимов pipeline вместо двух (intra/inter audit):
+
+- **Парсинг** — выбор любой версии (включая `error`/`uploading`/`parsing`) для запуска парсинга в Word из add-in. Backend (`wordAddin.getContext`) принимает новый input `includeAllStatuses: boolean` чтобы вернуть версии в любом статусе.
+- **Внутридокументный аудит (секции)** — existing `intra_audit`, теперь FindingsPanel получает prop `categoryFilter="section"` и фильтрует находки с `auditCategory != fact*`.
+- **Внутридокументный аудит фактов** — новый mode `intra_fact_audit`, FindingsPanel получает `categoryFilter="fact"` и показывает только fact-аудит.
+- **Междокументный аудит** — двухшаговый wizard в selector'е: первый клик выбирает checked-версию, второй клик — protocol-версию (highlighted UI hint).
+- **Генерация — просмотр / вставка** — отдельный список `wordAddin.listGeneratedDocs` (новый tRPC endpoint, фильтрация tenant'а через `protocolVersion → document → study → tenantId`).
+
+`apps/api/src/routers/word-addin.ts`:
+- `getContext.input` extended with optional `includeAllStatuses`.
+- New procedure `listGeneratedDocs` — lists tenant's `generated_docs` с агрегатами `completedSections/totalSections`.
+
+`apps/word-addin/src/App.tsx`:
+- `MODE_LABELS` constant, `Mode` type union для 5 mode'ов.
+- Извлечены `StudiesList` и `GeneratedDocsList` компоненты.
+- Inter-audit pair selection с visual highlight выбранной checked-версии.
+
+`apps/word-addin/src/findings/FindingsPanel.tsx`:
+- New optional prop `categoryFilter: "section" | "fact" | "all"`.
+
 ### Chore: word-addin docker service для dev-deploy
 
 Word add-in теперь собирается и раздаётся через Docker compose.
