@@ -34,23 +34,37 @@ const useStyles = makeStyles({
     minHeight: 0,
   },
   header: {
-    padding: "10px 12px",
+    padding: "8px 12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+  },
+  headerTopRow: {
     display: "flex",
     alignItems: "center",
-    gap: "8px",
-    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+    gap: "6px",
+  },
+  headerBottomRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    minWidth: 0,
   },
   title: {
     flex: 1,
     minWidth: 0,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   docTitle: {
+    flex: 1,
+    minWidth: 0,
     color: tokens.colorNeutralForeground3,
-    display: "-webkit-box",
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: "vertical",
+    whiteSpace: "nowrap",
     overflow: "hidden",
-    wordBreak: "break-word",
+    textOverflow: "ellipsis",
   },
   tabBar: {
     padding: "0 8px",
@@ -613,49 +627,51 @@ export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        {onBack && (
+        <div className={styles.headerTopRow}>
+          {onBack && (
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<ArrowLeft20Regular />}
+              onClick={onBack}
+              title="Вернуться к выбору операций"
+              aria-label="Назад"
+            />
+          )}
+          <Text weight="semibold" size={300} className={styles.title}>
+            Парсинг и разметка
+          </Text>
           <Button
             size="small"
             appearance="subtle"
-            icon={<ArrowLeft20Regular />}
-            onClick={onBack}
-            title="Вернуться к выбору операций"
-            aria-label="Назад"
+            icon={<ArrowSync20Regular />}
+            onClick={() => void load()}
+            disabled={loading}
+            title="Обновить"
+            aria-label="Обновить"
           />
-        )}
-        <div className={styles.title}>
-          <Text weight="semibold" size={300}>
-            Парсинг и разметка
-          </Text>
+        </div>
+        <div className={styles.headerBottomRow}>
           {data && (
-            <Text size={200} block className={styles.docTitle} title={data.document.title}>
+            <Text size={200} className={styles.docTitle} title={data.document.title}>
               {data.document.title} — {data.versionLabel ?? `v${data.versionNumber}`}
             </Text>
           )}
+          <Badge size="small" appearance="outline" title="Всего секций">
+            {sections.length}
+          </Badge>
+          {showAddButton && (
+            <Button
+              size="small"
+              appearance="subtle"
+              icon={<Add20Regular />}
+              onClick={() => void handleOpenAddDialog()}
+              disabled={loading || addPending}
+              title="Добавить раздел из выделения"
+              aria-label="Добавить раздел"
+            />
+          )}
         </div>
-        <Badge size="small" appearance="outline" title="Всего секций">
-          {sections.length}
-        </Badge>
-        {showAddButton && (
-          <Button
-            size="small"
-            appearance="subtle"
-            icon={<Add20Regular />}
-            onClick={() => void handleOpenAddDialog()}
-            disabled={loading || addPending}
-            title="Добавить раздел из выделения"
-            aria-label="Добавить раздел"
-          />
-        )}
-        <Button
-          size="small"
-          appearance="subtle"
-          icon={<ArrowSync20Regular />}
-          onClick={() => void load()}
-          disabled={loading}
-          title="Обновить"
-          aria-label="Обновить"
-        />
       </div>
 
       {goldenSampleId && (
