@@ -70,3 +70,77 @@ export async function injectSessionXml(
   const result = await zip.generateAsync({ type: "nodebuffer" });
   return Buffer.from(result);
 }
+
+/**
+ * Встраивает в DOCX ссылку на наш Word add-in (webextensions + taskpanes
+ * parts) — Word при открытии файла автоматически загружает add-in в
+ * правый task pane без необходимости юзера лезть в Insert → My Add-ins.
+ *
+ * Add-in должен быть зарегистрирован у юзера через Trusted Catalog
+ * (на dev — `\\localhost\OfficeAddins` SMB share). `storeType="EXCatalog"`
+ * + пустой `store` означает «найти add-in по id в любом доступном каталоге».
+ *
+ * `addinId` берётся из `apps/word-addin/manifest.xml` `<Id>`.
+ */
+export async function injectEmbeddedAddin(
+  docxBuffer: Buffer,
+  addinId: string,
+  addinVersion = "1.0.0.0"
+): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(docxBuffer);
+  const webextId = `{${crypto.randomUUID()}}`;
+
+  const webextensionXml = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<we:webextension xmlns:we="http://schemas.microsoft.com/office/webextensions/webextension/2010/11" id="${webextId}">`,
+    `  <we:reference id="${addinId}" version="${addinVersion}" store="" storeType="EXCatalog"/>`,
+    `  <we:alternateReferences/>`,
+    `  <we:properties/>`,
+    `  <we:bindings/>`,
+    `  <we:snapshot xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`,
+    `</we:webextension>`,
+  ].join("\n");
+
+  const taskpanesXml = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<wetp:taskpanes xmlns:wetp="http://schemas.microsoft.com/office/webextensions/taskpanes/2010/11">`,
+    `  <wetp:taskpane dockstate="right" visibility="1" width="350" row="0">`,
+    `    <wetp:webextensionref xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/>`,
+    `  </wetp:taskpane>`,
+    `</wetp:taskpanes>`,
+  ].join("\n");
+
+  const taskpanesRelsXml = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`,
+    `  <Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2011/relationships/webextension" Target="webextension1.xml"/>`,
+    `</Relationships>`,
+  ].join("\n");
+
+  zip.file("word/webextensions/webextension1.xml", webextensionXml);
+  zip.file("word/webextensions/taskpanes.xml", taskpanesXml);
+  zip.file("word/webextensions/_rels/taskpanes.xml.rels", taskpanesRelsXml);
+
+  // Override types в [Content_Types].xml
+  const contentTypesXml = await zip.file("[Content_Types].xml")!.async("string");
+  const overrides = [
+    `<Override PartName="/word/webextensions/webextension1.xml" ContentType="application/vnd.ms-office.webextension+xml"/>`,
+    `<Override PartName="/word/webextensions/taskpanes.xml" ContentType="application/vnd.ms-office.webextensiontaskpanes+xml"/>`,
+  ].join("");
+  zip.file(
+    "[Content_Types].xml",
+    contentTypesXml.replace("</Types>", `${overrides}</Types>`)
+  );
+
+  // Relationship document.xml → taskpanes.xml
+  const docRelsPath = "word/_rels/document.xml.rels";
+  if (zip.file(docRelsPath)) {
+    let docRelsXml = await zip.file(docRelsPath)!.async("string");
+    const newRel = `<Relationship Id="rIdEmbeddedAddin" Type="http://schemas.microsoft.com/office/2011/relationships/webextensiontaskpanes" Target="webextensions/taskpanes.xml"/>`;
+    docRelsXml = docRelsXml.replace("</Relationships>", `${newRel}</Relationships>`);
+    zip.file(docRelsPath, docRelsXml);
+  }
+
+  const result = await zip.generateAsync({ type: "nodebuffer" });
+  return Buffer.from(result);
+}

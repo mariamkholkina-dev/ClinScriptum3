@@ -2,6 +2,18 @@
 
 ## 2026-05-10
 
+### Feat: embedded add-in в DOCX — авто-открытие task pane
+
+После #109 «Открыть в Word» работало, но add-in приходилось запускать вручную (Insert → My Add-ins). Теперь backend инжектирует в DOCX `webextensions/taskpanes` parts → Word при открытии файла автоматически загружает task pane add-in'а на правую панель.
+
+`apps/api/src/lib/docx-tag.ts`:
+- Новая функция `injectEmbeddedAddin(buffer, addinId)` — добавляет в DOCX `word/webextensions/webextension1.xml` + `taskpanes.xml` + relationship parts. `storeType="EXCatalog"` со пустым store позволяет Word найти add-in по id в любом доступном Trusted Catalog (на dev — SMB share `\\localhost\OfficeAddins`).
+
+`apps/api/src/index.ts`:
+- `/api/word-open/:sessionId` теперь вызывает `injectEmbeddedAddin` после `injectSessionXml` (оба для protocol mode и для generated-doc mode). Add-in id берётся из env `WORD_ADDIN_ID`, дефолт = ID из `apps/word-addin/manifest.xml`.
+
+Quick-fix для уже открытых документов: правый клик в task pane add-in'а → «Закрепить / Pin» — следующие документы будут открываться с add-in'ом автоматически без перебилда сервера.
+
 ### Fix: «Открыть в Word» — добавить .docx к URL для Office Protocol Handler
 
 После #108 кнопка «Открыть в Word» вызывала ошибку «Office не распознаёт указанную команду» — `ms-word:ofe|u|<url>` требует чтобы URL заканчивался на `.docx`. Без расширения Word отказывается обрабатывать запрос.
