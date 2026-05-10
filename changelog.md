@@ -2,6 +2,16 @@
 
 ## 2026-05-10
 
+### Feat: «Открыть в Word» через Office Protocol Handler + кнопка в web
+
+Backend инфраструктура (`/api/word-sessions`, `/api/word-open/:id`, injectSessionXml в DOCX) уже существовала, но frontend `openInWord` использовал `window.open(url)` — браузер просто скачивал .docx, не открывал Word напрямую.
+
+`apps/web/src/lib/open-in-word.ts` + `apps/rule-admin/src/lib/open-in-word.ts`:
+- Заменил `window.open(url)` на Office Protocol Handler `ms-word:ofe|u|<url>` через скрытый `<a>` элемент с программным `.click()`. Word открывает файл, скачивает по url и одновременно загружает add-in — `useAutoAuth` в add-in читает sessionId из CustomXMLPart и обменивает на токены. Без формы логина и без диалога выбора режима.
+
+`apps/web/src/app/(app)/documents/[versionId]/page.tsx`:
+- Кнопка «Открыть в Word» в SectionsTab сайдбаре с `mode='parsing'`. До этого web вообще не имел запуска парсинг-режима в add-in (только rule-admin parsing-viewer).
+
 ### Chore: word-addin parsing UX — пакет правок по замечаниям
 
 - Кнопка «← Назад» в header `ParsingPanel` — возврат в `ManualModeSelector` без logout. Новый `clearSessionCtx()` в `AuthProvider`.
