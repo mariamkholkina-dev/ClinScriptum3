@@ -17,6 +17,9 @@ interface AuthContextValue {
   sessionContext: SessionContext | null;
   login: (accessToken: string, refreshToken: string, userId: string, tenantId: string) => void;
   setSessionCtx: (ctx: SessionContext) => void;
+  /** Сбросить session context, оставив юзера залогиненным —
+   *  возврат в ManualModeSelector (выбор режима + документа). */
+  clearSessionCtx: () => void;
   logout: () => void;
 }
 
@@ -42,6 +45,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSessionContext(ctx);
   }, []);
 
+  const clearSessionCtx = useCallback(() => {
+    setSessionContext(null);
+  }, []);
+
   const logout = useCallback(() => {
     clearTokens();
     setUserId(null);
@@ -52,7 +59,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ isAuthenticated, userId, tenantId, sessionContext, login, setSessionCtx, logout }}
+      value={{
+        isAuthenticated,
+        userId,
+        tenantId,
+        sessionContext,
+        login,
+        setSessionCtx,
+        clearSessionCtx,
+        logout,
+      }}
     >
       {children}
     </AuthContext.Provider>

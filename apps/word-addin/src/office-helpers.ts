@@ -147,6 +147,37 @@ export async function jumpToTextInWord(text: string): Promise<boolean> {
 }
 
 /**
+ * Anchor-based навигация: переход к параграфу по индексу (как индексирует
+ * doc-parser при разборе DOCX). Это надёжнее чем body.search(textSnippet),
+ * который может найти несколько вхождений или не найти вовсе при изменении
+ * пунктуации/пробелов.
+ *
+ * Если paragraphIndex выходит за границы — возвращаем false; вызывающий код
+ * должен fallback'нуть на jumpToTextInWord по textSnippet.
+ *
+ * Возвращает true если параграф найден и выделен.
+ */
+export async function jumpToParagraphByIndex(paragraphIndex: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    Word.run(async (ctx: any) => {
+      const paragraphs = ctx.document.body.paragraphs;
+      paragraphs.load("items");
+      await ctx.sync();
+      const items = paragraphs.items;
+      if (paragraphIndex < 0 || paragraphIndex >= items.length) {
+        resolve(false);
+        return;
+      }
+      const target = items[paragraphIndex];
+      target.select();
+      target.font.highlightColor = "yellow";
+      await ctx.sync();
+      resolve(true);
+    }).catch(() => resolve(false));
+  });
+}
+
+/**
  * Возвращает текст текущего выделения + paragraphIndex (примерный — позиция
  * параграфа, в котором находится начало выделения, среди всех параграфов body).
  *

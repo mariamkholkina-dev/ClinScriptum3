@@ -81,7 +81,7 @@ type ActiveTab = "findings" | "upload";
 
 function AppContent() {
   const styles = useStyles();
-  const { isAuthenticated, sessionContext, logout, setSessionCtx } = useAuth();
+  const { isAuthenticated, sessionContext, logout, setSessionCtx, clearSessionCtx } = useAuth();
   const { loading, autoAuthFailed } = useAutoAuth();
   const [activeTab, setActiveTab] = useState<ActiveTab>("findings");
 
@@ -158,6 +158,7 @@ function AppContent() {
           <ParsingPanel
             docVersionId={docVersionId}
             goldenSampleId={sessionContext.goldenSampleId}
+            onBack={clearSessionCtx}
           />
         </div>
       )}

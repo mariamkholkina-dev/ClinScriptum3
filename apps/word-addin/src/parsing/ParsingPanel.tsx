@@ -11,9 +11,14 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { Add20Regular, ArrowSync20Regular } from "@fluentui/react-icons";
+import { Add20Regular, ArrowLeft20Regular, ArrowSync20Regular } from "@fluentui/react-icons";
 import { trpcCall } from "../api";
-import { getSelectionContext, jumpToTextInWord } from "../office-helpers";
+import {
+  clearHighlights,
+  getSelectionContext,
+  jumpToParagraphByIndex,
+  jumpToTextInWord,
+} from "../office-helpers";
 import { SectionTree } from "./SectionTree";
 import { BulkActionsBar } from "./BulkActionsBar";
 import { AddManualSectionDialog, type AddManualSectionInput } from "./AddManualSectionDialog";
@@ -38,8 +43,14 @@ const useStyles = makeStyles({
   title: {
     flex: 1,
     minWidth: 0,
+  },
+  docTitle: {
+    color: tokens.colorNeutralForeground3,
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
     overflow: "hidden",
-    textOverflow: "ellipsis",
+    wordBreak: "break-word",
   },
   tabBar: {
     padding: "0 8px",
@@ -68,6 +79,8 @@ const useStyles = makeStyles({
 interface Props {
   docVersionId: string;
   goldenSampleId?: string;
+  /** Возврат в ManualModeSelector (выбор операции/документа). */
+  onBack?: () => void;
 }
 
 /** Минимальный shape ответа `goldenDataset.getSample`, нужный для diff overlay.
@@ -106,7 +119,7 @@ type TabKey = "tree" | "diff";
  *  - «Diff с эталоном» — виден только при `goldenSampleId`, рендерит DiffPanel.
  *    BulkActions и кнопка «+ Добавить» скрыты на этом табе.
  */
-export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
+export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
   const styles = useStyles();
   const [data, setData] = useState<DocumentVersionResponse | null>(null);
   const [goldenSample, setGoldenSample] = useState<GoldenSampleResponse | null>(null);
@@ -115,6 +128,7 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [togglingFalseHeadingId, setTogglingFalseHeadingId] = useState<string | null>(null);
+  const [quickValidatingId, setQuickValidatingId] = useState<string | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "success" | "warning" | "error"; text: string } | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -217,12 +231,36 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
 
   const handleActivateSection = useCallback(async (section: Section) => {
     setActiveSectionId(section.id);
-    // Берём snippet из title или первого contentBlock, чтобы Word.body.search нашёл место.
+
+    // Перед каждым прыжком очищаем предыдущую жёлтую подсветку — иначе
+    // в документе накапливаются «следы» прошлых кликов.
+    try {
+      await clearHighlights();
+    } catch {
+      // ignore — может не быть Word'a (preview-режим)
+    }
+
+    // 1) Anchor-based jump через paragraphIndex — самый надёжный путь:
+    //    doc-parser сохранил конкретный индекс параграфа при разборе.
+    const paraIdx = section.sourceAnchor?.paragraphIndex;
+    if (typeof paraIdx === "number" && paraIdx >= 0) {
+      try {
+        const ok = await jumpToParagraphByIndex(paraIdx);
+        if (ok) return;
+      } catch {
+        // fallthrough — попробуем по тексту
+      }
+    }
+
+    // 2) Fallback по textSnippet → contentBlocks[0] → title (text search).
     const snippet =
       section.sourceAnchor?.textSnippet ??
       section.contentBlocks[0]?.content ??
       section.title;
-    if (!snippet || snippet.trim().length === 0) return;
+    if (!snippet || snippet.trim().length === 0) {
+      setFeedback({ kind: "warning", text: "У раздела нет привязки к тексту документа." });
+      return;
+    }
     try {
       const found = await jumpToTextInWord(snippet);
       if (!found) {
@@ -262,6 +300,51 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
     },
     [load],
   );
+
+  const handleQuickValidate = useCallback(
+    async (section: Section) => {
+      if (section.structureStatus === "validated") return;
+      setQuickValidatingId(section.id);
+      try {
+        await trpcCall(
+          "processing.bulkUpdateSectionStructureStatus",
+          { sectionIds: [section.id], status: "validated" },
+          "mutation",
+        );
+        await load();
+
+        // После refetch найти следующую неподтверждённую (по order) и активировать.
+        // Используем sections, которые загрузились этим load() — но state ещё не
+        // обновлён. Поэтому берём из ответа load() через getVersion ещё раз:
+        // упростим — на следующем рендере activeSectionId сбросится после
+        // useEffect-сравнения; но мы сразу хотим перейти, поэтому выполним поиск
+        // прямо в последнем известном `data.sections`. Это не на 100% свежий
+        // список, но статус только что подтверждён — следующая not_validated
+        // не изменилась.
+        const fresh = await trpcCall<DocumentVersionResponse>("document.getVersion", {
+          versionId: docVersionId,
+        });
+        setData(fresh);
+        const ordered = [...fresh.sections].sort((a, b) => a.order - b.order);
+        const currentIdx = ordered.findIndex((s) => s.id === section.id);
+        const next = ordered
+          .slice(currentIdx + 1)
+          .find((s) => s.structureStatus === "not_validated" && !s.isFalseHeading);
+        if (next) {
+          await handleActivateSection(next);
+        }
+      } catch (e) {
+        setFeedback({ kind: "error", text: (e as Error).message ?? "Не удалось сохранить" });
+      } finally {
+        setQuickValidatingId(null);
+      }
+    },
+    [docVersionId, load, handleActivateSection],
+  );
+
+  const handleSelectAll = useCallback(() => {
+    setSelectedIds(new Set(sections.map((s) => s.id)));
+  }, [sections]);
 
   const handleBulkValidate = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -530,14 +613,23 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
   return (
     <div className={styles.root}>
       <div className={styles.header}>
+        {onBack && (
+          <Button
+            size="small"
+            appearance="subtle"
+            icon={<ArrowLeft20Regular />}
+            onClick={onBack}
+            title="Вернуться к выбору операций"
+            aria-label="Назад"
+          />
+        )}
         <div className={styles.title}>
           <Text weight="semibold" size={300}>
             Парсинг и разметка
           </Text>
           {data && (
-            <Text size={200} block style={{ color: tokens.colorNeutralForeground3 }}>
-              {data.document.title} —{" "}
-              {data.versionLabel ?? `v${data.versionNumber}`}
+            <Text size={200} block className={styles.docTitle} title={data.document.title}>
+              {data.document.title} — {data.versionLabel ?? `v${data.versionNumber}`}
             </Text>
           )}
         </div>
@@ -553,9 +645,7 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
             disabled={loading || addPending}
             title="Добавить раздел из выделения"
             aria-label="Добавить раздел"
-          >
-            Добавить
-          </Button>
+          />
         )}
         <Button
           size="small"
@@ -636,6 +726,8 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
             togglingFalseHeadingId={togglingFalseHeadingId}
             onUpdateComment={handleUpdateComment}
             onDeleteManual={handleDeleteManual}
+            onQuickValidate={(s) => void handleQuickValidate(s)}
+            quickValidatingId={quickValidatingId}
             diffTypeBySectionId={goldenSampleId ? diffTypeBySectionId : undefined}
           />
         )}
@@ -644,11 +736,13 @@ export function ParsingPanel({ docVersionId, goldenSampleId }: Props) {
       {showBulkActions && (
         <BulkActionsBar
           selectedCount={selectedIds.size}
+          totalCount={sections.length}
           pending={bulkPending}
           existingReworkComment={existingReworkComment}
           onValidate={() => void handleBulkValidate()}
           onRework={(comment) => void handleBulkRework(comment)}
           onClearSelection={() => setSelectedIds(new Set())}
+          onSelectAll={handleSelectAll}
         />
       )}
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-05-10
+
+### Chore: word-addin parsing UX — пакет правок по замечаниям
+
+- Кнопка «← Назад» в header `ParsingPanel` — возврат в `ManualModeSelector` без logout. Новый `clearSessionCtx()` в `AuthProvider`.
+- Убран значок уровня заголовка (L1/L2/L3) в `SectionTree` — индентация уже визуально передаёт уровень.
+- Название документа в header теперь рендерится в 2 строки (CSS line-clamp) вместо обрезанного однострочного.
+- Клик на бейдж «Не подтв.» → подтверждает секцию и автоматически переходит к следующей неподтверждённой не-false-heading секции в порядке `order`. Новый mutation handler `handleQuickValidate`.
+- В `BulkActionsBar` — кнопка «Выбрать всё» (toggle на «Снять» когда выделены все). Bar теперь видим всегда при `totalCount > 0`, а не только при наличии выделения.
+- Anchor-based навигация: новый `jumpToParagraphByIndex(idx)` в `office-helpers`. `handleActivateSection` теперь использует chain `paragraphIndex → textSnippet → contentBlocks[0] → title`. Перед каждым прыжком вызывается `clearHighlights()` чтобы прошлая жёлтая подсветка не накапливалась в документе.
+
+Не вошло в этот PR (сохранено в memory `project_word_addin_parsing_todo.md`):
+- Проверка соответствия открытого Word-документа выбранному `docVersionId`.
+- Bookmark/content-control якорь вместо `paragraphIndex` (устойчив к редактированию).
+- Auto-open в Word с веб-страницы + auto-auth через `word-sessions`.
+
 ## 2026-05-09
 
 ### Feat: word-addin — пагинация версий + только готовые документы
