@@ -75,11 +75,16 @@ app.post("/api/word-sessions/:sessionId/exchange", async (req, res) => {
   }
 });
 
+// ID add-in'а из apps/word-addin/manifest.xml <Id>. Через env var можно
+// переопределить (например, если на проде используется другой manifest).
+const WORD_ADDIN_ID =
+  process.env.WORD_ADDIN_ID ?? "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+
 app.get("/api/word-open/:sessionIdRaw", async (req, res) => {
   try {
     const { prisma } = await import("@clinscriptum/db");
     const { storage } = await import("./lib/storage.js");
-    const { injectSessionXml } = await import("./lib/docx-tag.js");
+    const { injectSessionXml, injectEmbeddedAddin } = await import("./lib/docx-tag.js");
 
     // Office Protocol Handler (`ms-word:ofe|u|<url>`) требует, чтобы URL
     // оканчивался на `.docx` — иначе Word отвечает "Office не распознаёт
@@ -105,11 +110,12 @@ app.get("/api/word-open/:sessionIdRaw", async (req, res) => {
       const { exportGeneratedDocToWord } = await import("./lib/doc-generation.js");
       const buffer = await exportGeneratedDocToWord(ctx.generatedDocId);
       const tagged = await injectSessionXml(buffer, session.id);
+      const withAddin = await injectEmbeddedAddin(tagged, WORD_ADDIN_ID);
 
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
-      res.setHeader("Content-Length", tagged.length);
-      res.send(tagged);
+      res.setHeader("Content-Length", withAddin.length);
+      res.send(withAddin);
       return;
     }
 
@@ -143,11 +149,12 @@ app.get("/api/word-open/:sessionIdRaw", async (req, res) => {
     }
 
     const tagged = await injectSessionXml(buffer, session.id);
+    const withAddin = await injectEmbeddedAddin(tagged, WORD_ADDIN_ID);
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
     res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
-    res.setHeader("Content-Length", tagged.length);
-    res.send(tagged);
+    res.setHeader("Content-Length", withAddin.length);
+    res.send(withAddin);
   } catch (err) {
     logger.error("[word-open] Error", { error: String(err) });
     res.status(500).json({ error: "Failed to prepare document" });
