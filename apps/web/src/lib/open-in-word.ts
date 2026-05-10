@@ -39,7 +39,9 @@ export async function openInWord(params: WordSessionParams): Promise<void> {
   }
 
   const { sessionId } = await res.json();
-  const fileUrl = `${API_BASE}/api/word-open/${sessionId}`;
+  // .docx суффикс нужен Office Protocol Handler'у для распознавания файла —
+  // без него Word отвечает «Office не распознаёт указанную команду».
+  const fileUrl = `${API_BASE}/api/word-open/${sessionId}.docx`;
 
   // Office Protocol Handler: ms-word:ofe|u|<url> — браузер триггерит Word,
   // тот скачивает файл по url и открывает его. Add-in грузится автоматически

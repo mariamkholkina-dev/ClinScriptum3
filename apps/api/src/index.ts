@@ -75,14 +75,21 @@ app.post("/api/word-sessions/:sessionId/exchange", async (req, res) => {
   }
 });
 
-app.get("/api/word-open/:sessionId", async (req, res) => {
+app.get("/api/word-open/:sessionIdRaw", async (req, res) => {
   try {
     const { prisma } = await import("@clinscriptum/db");
     const { storage } = await import("./lib/storage.js");
     const { injectSessionXml } = await import("./lib/docx-tag.js");
 
+    // Office Protocol Handler (`ms-word:ofe|u|<url>`) требует, чтобы URL
+    // оканчивался на `.docx` — иначе Word отвечает "Office не распознаёт
+    // указанную команду". Frontend поэтому шлёт URL вида
+    // `/api/word-open/<uuid>.docx`; здесь срезаем суффикс перед поиском
+    // session по UUID. Старый формат без расширения тоже поддерживается.
+    const sessionId = req.params.sessionIdRaw.replace(/\.docx$/i, "");
+
     const session = await prisma.wordSession.findUnique({
-      where: { id: req.params.sessionId },
+      where: { id: sessionId },
     });
 
     if (!session || session.expiresAt < new Date()) {
