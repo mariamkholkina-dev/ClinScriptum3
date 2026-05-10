@@ -96,6 +96,10 @@ interface Props {
   togglingFalseHeadingId: string | null;
   onUpdateComment: (section: Section, newComment: string) => Promise<void>;
   onDeleteManual: (section: Section) => Promise<void>;
+  /** Quick-click на статус «Не подтв.» → подтверждение секции + jump
+   *  на следующую неподтверждённую. */
+  onQuickValidate: (section: Section) => void;
+  quickValidatingId: string | null;
   /** Подсветка строк по типу diff (см. DiffPanel). Если не передан — без подсветки.
    *  Только `extra` и `wrong_level` имеют реальную секцию для матчинга. */
   diffTypeBySectionId?: Map<string, "extra" | "wrong_level">;
@@ -122,6 +126,8 @@ export function SectionTree({
   togglingFalseHeadingId,
   onUpdateComment,
   onDeleteManual,
+  onQuickValidate,
+  quickValidatingId,
   diffTypeBySectionId,
 }: Props) {
   const styles = useStyles();
@@ -169,16 +175,6 @@ export function SectionTree({
               />
             </div>
 
-            <Badge
-              className={styles.levelBadge}
-              size="small"
-              shape="rounded"
-              appearance="outline"
-              title={`Уровень заголовка ${section.level}`}
-            >
-              L{section.level}
-            </Badge>
-
             <Text
               className={mergeClasses(styles.title, isFalse && styles.titleFalse)}
               title={section.title}
@@ -196,9 +192,28 @@ export function SectionTree({
               size="small"
               appearance="filled"
               color={STATUS_COLOR[section.structureStatus]}
-              title="Статус структуры"
+              title={
+                section.structureStatus === "not_validated"
+                  ? "Кликните, чтобы подтвердить и перейти к следующему"
+                  : "Статус структуры"
+              }
+              style={
+                section.structureStatus === "not_validated"
+                  ? { cursor: "pointer" }
+                  : undefined
+              }
+              onClick={
+                section.structureStatus === "not_validated"
+                  ? (e) => {
+                      e.stopPropagation();
+                      if (quickValidatingId !== section.id) {
+                        onQuickValidate(section);
+                      }
+                    }
+                  : undefined
+              }
             >
-              {STATUS_LABEL[section.structureStatus]}
+              {quickValidatingId === section.id ? "..." : STATUS_LABEL[section.structureStatus]}
             </Badge>
 
             <SectionRowActions

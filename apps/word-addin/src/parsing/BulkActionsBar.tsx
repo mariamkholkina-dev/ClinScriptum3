@@ -35,12 +35,14 @@ const useStyles = makeStyles({
 
 interface Props {
   selectedCount: number;
+  totalCount: number;
   pending: boolean;
   /** Существующий structureComment одной из выделенных секций. Pre-fill в textarea. */
   existingReworkComment?: string;
   onValidate: () => void;
   onRework: (comment?: string) => void;
   onClearSelection: () => void;
+  onSelectAll: () => void;
 }
 
 /**
@@ -52,11 +54,13 @@ interface Props {
  */
 export function BulkActionsBar({
   selectedCount,
+  totalCount,
   pending,
   existingReworkComment,
   onValidate,
   onRework,
   onClearSelection,
+  onSelectAll,
 }: Props) {
   const styles = useStyles();
   const [reworkOpen, setReworkOpen] = useState(false);
@@ -68,31 +72,42 @@ export function BulkActionsBar({
     }
   }, [reworkOpen, existingReworkComment]);
 
-  if (selectedCount === 0) return null;
+  // Bar всегда виден когда totalCount > 0, даже без выделения — чтобы юзер
+  // мог быстро «Выбрать всё». Без totalCount (например, до загрузки) скрываем.
+  if (totalCount === 0) return null;
+
+  const isAllSelected = selectedCount === totalCount;
 
   return (
     <>
       <div className={styles.root}>
-        <Text className={styles.count}>Выбрано: {selectedCount}</Text>
+        <Text className={styles.count}>
+          {selectedCount > 0 ? `Выбрано: ${selectedCount}` : `Всего: ${totalCount}`}
+        </Text>
         <Button
           size="small"
           appearance="primary"
-          disabled={pending}
+          disabled={pending || selectedCount === 0}
           onClick={onValidate}
         >
           Подтвердить
         </Button>
         <Button
           size="small"
-          disabled={pending}
+          disabled={pending || selectedCount === 0}
           onClick={() => setReworkOpen(true)}
         >
           На доработку
         </Button>
         {pending && <Spinner size="tiny" />}
         <div className={styles.spacer} />
-        <Button size="small" appearance="subtle" onClick={onClearSelection}>
-          Снять
+        <Button
+          size="small"
+          appearance="subtle"
+          disabled={pending}
+          onClick={isAllSelected ? onClearSelection : onSelectAll}
+        >
+          {isAllSelected ? "Снять" : "Выбрать всё"}
         </Button>
       </div>
 
