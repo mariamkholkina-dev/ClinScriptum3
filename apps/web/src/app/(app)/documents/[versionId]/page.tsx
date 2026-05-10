@@ -27,7 +27,9 @@ import {
   ExternalLink,
   ChevronUp,
   Info,
+  FileEdit,
 } from "lucide-react";
+import { openInWord } from "@/lib/open-in-word";
 
 /* ──────────────────────── Constants ──────────────────────── */
 
@@ -1034,6 +1036,21 @@ function SectionsTab({ version, onRefetch }: { version: any; onRefetch: () => vo
               Все секции подтверждены
             </p>
           )}
+
+          <button
+            onClick={async () => {
+              try {
+                await openInWord({ docVersionId: version.id, mode: "parsing" });
+              } catch (e) {
+                alert(`Не удалось открыть в Word: ${(e as Error).message}`);
+              }
+            }}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+            title="Открыть документ в Word с подключением add-in для парсинга"
+          >
+            <FileEdit className="h-4 w-4" />
+            Открыть в Word
+          </button>
         </div>
 
         {/* Section list — fills remaining height */}

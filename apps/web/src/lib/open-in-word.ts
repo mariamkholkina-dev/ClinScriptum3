@@ -39,5 +39,19 @@ export async function openInWord(params: WordSessionParams): Promise<void> {
   }
 
   const { sessionId } = await res.json();
-  window.open(`${API_BASE}/api/word-open/${sessionId}`, "_blank");
+  const fileUrl = `${API_BASE}/api/word-open/${sessionId}`;
+
+  // Office Protocol Handler: ms-word:ofe|u|<url> — браузер триггерит Word,
+  // тот скачивает файл по url и открывает его. Add-in грузится автоматически
+  // (manifest зарегистрирован в Trusted Catalog), `useAutoAuth` читает
+  // sessionId из CustomXMLPart внутри DOCX и выполняет exchange — без формы
+  // логина и без навигации в селекторе режима.
+  const officeUrl = `ms-word:ofe|u|${fileUrl}`;
+  const a = document.createElement("a");
+  a.href = officeUrl;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  // На некоторых браузерах элемент должен пожить ещё кадр — потом убираем.
+  setTimeout(() => a.remove(), 1000);
 }
