@@ -2,6 +2,18 @@
 
 ## 2026-05-10
 
+### Fix: «Открыть в Word» — добавить .docx к URL для Office Protocol Handler
+
+После #108 кнопка «Открыть в Word» вызывала ошибку «Office не распознаёт указанную команду» — `ms-word:ofe|u|<url>` требует чтобы URL заканчивался на `.docx`. Без расширения Word отказывается обрабатывать запрос.
+
+`apps/api/src/index.ts`:
+- Параметр `:sessionId` стал `:sessionIdRaw`; внутри handler'а срезаем суффикс `.docx` перед поиском session. Поддерживаются оба формата (с/без расширения).
+
+`apps/web/src/lib/open-in-word.ts` + `apps/rule-admin/src/lib/open-in-word.ts`:
+- Frontend теперь формирует URL вида `/api/word-open/<sessionId>.docx`.
+
+
+
 ### Feat: «Открыть в Word» через Office Protocol Handler + кнопка в web
 
 Backend инфраструктура (`/api/word-sessions`, `/api/word-open/:id`, injectSessionXml в DOCX) уже существовала, но frontend `openInWord` использовал `window.open(url)` — браузер просто скачивал .docx, не открывал Word напрямую.
