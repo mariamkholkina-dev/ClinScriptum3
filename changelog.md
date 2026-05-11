@@ -2,6 +2,17 @@
 
 ## 2026-05-11
 
+### Fix: word-addin parsing — TOC ложный jump + scrollIntoView заголовков в таблицах
+
+Из live-теста:
+1. Клик на запись оглавления (`isFalseHeading=true`) с trailing номером страницы в title («8.2.5 Последующее наблюдение День 7 58») искал полный текст и попадал на случайный фрагмент с цифрой (например «стр. 1» в адресе ООО).
+2. Клик на заголовок-первую-строку-таблицы выделял ячейку, но `select()` не скроллил Word — заголовок оставался на следующей странице, юзер не видел реакции.
+
+Изменения в `apps/word-addin/src/parsing/ParsingPanel.tsx` + `office-helpers.ts`:
+- **Skip jump для `isFalseHeading=true`** — показываем «Это запись оглавления» вместо search.
+- **Strip trailing page number из title** перед body.search (`/\s+\d+\.?\s*$/`) — heading-aware match всё ещё работает по точному совпадению, а fallback search не цепляется за лишние цифры.
+- **`range.scrollIntoView()` после select** — Word теперь явно скроллит к выбранному heading, даже если он на page boundary внутри таблицы.
+
 ### Feat: heading-numbers — резолв номеров заголовков из Word
 
 Новое поле `Section.headingNumber` хранит иерархический номер заголовка как его рендерит Word («1», «1.2», «5.4.1»). Источники в приоритете:
