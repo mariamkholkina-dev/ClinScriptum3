@@ -2,6 +2,19 @@
 
 ## 2026-05-11
 
+### Fix: word-addin parsing — позиционирование на правильный параграф + сброс жёлтой подсветки
+
+Из live-теста на dev:
+- Клик на раздел подсвечивал не тот параграф (часто далеко от заголовка).
+- Прошлое жёлтое выделение оставалось при клике на следующий раздел.
+
+`apps/word-addin/src/office-helpers.ts`:
+- `clearHighlights()` теперь ставит `null` вместо строки `"None"` — Office.js API для снятия highlight требует именно `null`. Раньше Word игнорировал невалидный color, поэтому подсветка накапливалась.
+- Новая функция `jumpToHeading(title)` — ищет параграф со стилем `Heading X`/`Заголовок X`, текст которого совпадает с title раздела (точное совпадение → fallback на substring). Это надёжнее чем `paragraphIndex` (mammoth и Word.body.paragraphs считают по-разному) и body.search (выделяет первое попавшееся вхождение текста в обычном параграфе).
+
+`apps/word-addin/src/parsing/ParsingPanel.tsx`:
+- Поменял порядок стратегий fallback'а: heading-aware (по title) → textSnippet → paragraphIndex (last resort) → plain title search. Раньше `paragraphIndex` был primary и почти всегда промахивался.
+
 ### Chore: word-addin ParsingPanel header — компактная 2-строчная раскладка
 
 Сейчас header был flex-row, где длинное имя документа сжимало все кнопки в верхний правый угол (badge 193 + Добавить + Refresh).
