@@ -13,13 +13,7 @@ import {
 } from "@fluentui/react-components";
 import { Add20Regular, ArrowLeft20Regular, ArrowSync20Regular } from "@fluentui/react-icons";
 import { trpcCall } from "../api";
-import {
-  clearHighlights,
-  getSelectionContext,
-  jumpToHeading,
-  jumpToParagraphByIndex,
-  jumpToTextInWord,
-} from "../office-helpers";
+import { getSelectionContext, selectSection } from "../office-helpers";
 import { SectionTree } from "./SectionTree";
 import { BulkActionsBar } from "./BulkActionsBar";
 import { AddManualSectionDialog, type AddManualSectionInput } from "./AddManualSectionDialog";
@@ -247,45 +241,23 @@ export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
   const handleActivateSection = useCallback(async (section: Section) => {
     setActiveSectionId(section.id);
 
-    // Перед каждым прыжком очищаем предыдущую жёлтую подсветку — иначе
-    // в документе накапливаются «следы» прошлых кликов.
+    // Все стратегии (сброс прошлой жёлтой подсветки + heading-aware +
+    // textSnippet + paragraphIndex + fallback) выполняются в одном
+    // Word.run с одним ctx.sync — это сокращает задержку клик→jump
+    // примерно в 2 раза против цепочки отдельных Word.run'ов.
     try {
-      await clearHighlights();
-    } catch {
-      // ignore — может не быть Word'a (preview-режим)
-    }
-
-    // Стратегии fallback'а (от наиболее надёжной к наименее):
-    //  1) Heading-aware поиск по title (фильтр style="Heading X" / "Заголовок X").
-    //     Точное совпадение текста; не путает с обычными параграфами,
-    //     даже если в документе тот же текст встречается.
-    //  2) Search по textSnippet (если parser сохранил кусок текста раздела).
-    //  3) paragraphIndex — последний resort. Часто рассинхронизирован,
-    //     потому что mammoth и Word.body.paragraphs считают по-разному.
-    //  4) Plain title search (любые параграфы).
-    try {
-      if (section.title && (await jumpToHeading(section.title))) return;
-
-      const snippet = section.sourceAnchor?.textSnippet;
-      if (snippet && snippet.trim().length > 0) {
-        if (await jumpToTextInWord(snippet)) return;
-      }
-
-      const paraIdx = section.sourceAnchor?.paragraphIndex;
-      if (typeof paraIdx === "number" && paraIdx >= 0) {
-        if (await jumpToParagraphByIndex(paraIdx)) return;
-      }
-
-      const fallbackText =
-        section.contentBlocks[0]?.content ?? section.title;
-      if (fallbackText && fallbackText.trim().length > 0) {
-        if (await jumpToTextInWord(fallbackText)) return;
-      }
-
-      setFeedback({
-        kind: "warning",
-        text: "Не удалось найти раздел в документе.",
+      const ok = await selectSection({
+        title: section.title,
+        textSnippet: section.sourceAnchor?.textSnippet ?? undefined,
+        paragraphIndex: section.sourceAnchor?.paragraphIndex,
+        fallbackText: section.contentBlocks[0]?.content ?? section.title,
       });
+      if (!ok) {
+        setFeedback({
+          kind: "warning",
+          text: "Не удалось найти раздел в документе.",
+        });
+      }
     } catch {
       // Игнорируем — пользователь мог открыть add-in вне Word (preview-режим).
     }
