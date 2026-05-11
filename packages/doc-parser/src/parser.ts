@@ -15,6 +15,12 @@ import {
   fingerprint,
   type ParagraphProperties,
 } from "./paragraph-properties.js";
+import {
+  parseNumberingXml,
+  NumberingState,
+  cleanRenderedNumber,
+  type NumberingDefinitions,
+} from "./numbering-parser.js";
 import type {
   ParsedDocument,
   ParsedSection,
@@ -44,6 +50,7 @@ export async function parseDocx(
   let tableGeometries: TableGeometry[] = [];
   let wordFootnotes: Record<string, string> = {};
   let paragraphProps: ParagraphProperties[] = [];
+  let numberingDefs: NumberingDefinitions = { numIdToAbstract: new Map() };
   try {
     const zip = await JSZip.loadAsync(buffer);
     const docXmlEntry = zip.file("word/document.xml");
@@ -52,6 +59,11 @@ export async function parseDocx(
       drawings = extractDrawingsFromDocumentXml(xml);
       tableGeometries = extractTableGeometry(xml);
       paragraphProps = extractParagraphProperties(xml);
+    }
+    const numEntry = zip.file("word/numbering.xml");
+    if (numEntry) {
+      const numXml = await numEntry.async("text");
+      numberingDefs = parseNumberingXml(numXml);
     }
     const fnEntry = zip.file("word/footnotes.xml");
     if (fnEntry) {
@@ -68,6 +80,7 @@ export async function parseDocx(
   const propsByText = buildPropsByText(paragraphProps);
 
   const elements = splitHtmlElements(html, propsByText);
+  const numberingState = new NumberingState(numberingDefs);
   const headings: DetectedHeading[] = [];
   const contentBlocks: Array<{ block: ParsedContentBlock; heading: DetectedHeading | null }> = [];
   const tables: ParsedTable[] = [];
@@ -109,6 +122,17 @@ export async function parseDocx(
       continue;
     }
 
+    // Word auto-numbering: дёргаем counter ДО detectHeading чтобы не пропустить
+    // ни один номер. Если элемент окажется heading'ом — приклеим номер ниже.
+    // Inкрементим в любом случае: numId может относиться к нумерованному
+    // bullet-list, и его игнорирование не повлияло бы на heading-нумерацию
+    // (numbering.xml per-numId), но проще держать single sweep.
+    let autoNumber: string | null = null;
+    if (typeof el.numId === "number" && typeof el.ilvl === "number") {
+      const rendered = numberingState.next(el.numId, el.ilvl);
+      if (rendered !== null) autoNumber = cleanRenderedNumber(rendered);
+    }
+
     const heading = detectHeading(
       text,
       i,
@@ -118,6 +142,20 @@ export async function parseDocx(
       el.fontSize,
       baseFontSize
     );
+
+    if (heading) {
+      // Источник 1: автоматическая нумерация Word (резолвили выше).
+      // Источник 2: regex по началу title — для случая когда автор сам
+      // напечатал «5.4 Заслепление». Не дублируем номер если он уже из
+      // auto-numbering (auto-numbered headings обычно НЕ имеют префикса
+      // в text, так что коллизии редки).
+      if (autoNumber) {
+        heading.headingNumber = autoNumber;
+      } else {
+        const manual = heading.text.match(/^(\d+(?:\.\d+)*\.?)\s+/);
+        if (manual) heading.headingNumber = cleanRenderedNumber(manual[1]);
+      }
+    }
 
     // Накопить fallback-paragraph'ы для LLM (если потребуется): только
     // non-empty текстовые элементы. Tables идут в `tables`/`contentBlocks`,
@@ -324,6 +362,7 @@ function buildSectionTree(
         paragraphIndex: h.paragraphIndex,
         textSnippet: h.text.slice(0, 80),
       },
+      headingNumber: h.headingNumber ?? null,
     };
 
     while (stack.length > 0 && stack[stack.length - 1].level >= h.level) {
@@ -369,6 +408,9 @@ interface HtmlElement {
   style?: string;
   isBold?: boolean;
   fontSize?: number;
+  numId?: number;
+  ilvl?: number;
+  pStyle?: string;
 }
 
 function splitHtmlElements(
@@ -413,6 +455,9 @@ function splitHtmlElements(
       style: styleMatch ? `heading ${styleMatch[1]}` : undefined,
       isBold,
       fontSize,
+      numId: ooxmlProps?.numId,
+      ilvl: ooxmlProps?.ilvl,
+      pStyle: ooxmlProps?.pStyle,
     });
   }
 

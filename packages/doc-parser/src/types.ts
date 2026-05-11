@@ -38,6 +38,8 @@ export interface ParsedSection {
   contentBlocks: ParsedContentBlock[];
   children: ParsedSection[];
   sourceAnchor: SourceAnchor;
+  /** Иерархический номер заголовка как рендерит Word. См. DetectedHeading.headingNumber. */
+  headingNumber?: string | null;
 }
 
 export interface ParsedContentBlock {

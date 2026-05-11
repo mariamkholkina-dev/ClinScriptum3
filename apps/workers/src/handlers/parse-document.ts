@@ -282,6 +282,7 @@ async function saveSectionsBatch(
         level: s.level,
         order: counter.value++,
         sourceAnchor: s.sourceAnchor ?? {},
+        headingNumber: s.headingNumber ?? null,
       },
     });
 

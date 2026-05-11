@@ -1065,6 +1065,11 @@ function SectionTreeRow({
           className={`flex-1 min-w-0 truncate text-sm font-medium ${isFalse ? "text-gray-400 line-through" : "text-gray-900"}`}
           title={section.title || "(без названия)"}
         >
+          {section.headingNumber && (
+            <span className="mr-1 font-semibold text-gray-500">
+              {section.headingNumber}
+            </span>
+          )}
           {section.title || "(без названия)"}
         </span>
 
