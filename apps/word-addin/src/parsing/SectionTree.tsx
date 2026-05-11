@@ -21,10 +21,10 @@ const useStyles = makeStyles({
   },
   row: {
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: "6px",
-    paddingTop: "4px",
-    paddingBottom: "4px",
+    paddingTop: "6px",
+    paddingBottom: "6px",
     paddingRight: "8px",
     cursor: "pointer",
     borderTop: `1px solid ${tokens.colorNeutralStroke3}`,
@@ -39,10 +39,16 @@ const useStyles = makeStyles({
   title: {
     flex: 1,
     minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
     fontSize: tokens.fontSizeBase200,
+    // Word-wrap до 2 строк, чтобы длинные заголовки разделов
+    // не обрезались ellipsis'ом из-за badge'a статуса + action-иконок.
+    // Полный текст всё равно остаётся в `title=` для hover-tooltip.
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+    wordBreak: "break-word",
+    lineHeight: 1.3,
   },
   titleFalse: {
     textDecoration: "line-through",
