@@ -2,6 +2,21 @@
 
 ## 2026-05-11
 
+### Perf: word-addin parsing — клик→jump в одном Word.run
+
+Раньше клик на раздел делал два последовательных `Word.run` (clearHighlights → jumpToHeading/text/paragraph), каждый со своим `ctx.sync()` — на больших протоколах задержка между кликом и переходом достигала ~1 сек.
+
+Новый `selectSection()` в `apps/word-addin/src/office-helpers.ts` объединяет:
+1. сброс предыдущей жёлтой подсветки;
+2. heading-aware поиск по title;
+3. fallback по textSnippet;
+4. fallback по paragraphIndex;
+5. fallback по contentBlocks[0]/title plain search
+
+— в **один** Word.run с **одним** sync (плюс ещё один sync на финальный highlight). На 152-страничном протоколе клик отвечает заметно быстрее (~2×).
+
+`ParsingPanel.handleActivateSection` упрощён: одна вызов `selectSection({title, textSnippet, paragraphIndex, fallbackText})` вместо последовательной цепочки.
+
 ### Chore: word-addin SectionTree — заголовки разделов в 2 строки
 
 В узкой панели Word add-in'а Badge «Не подтв.» + 3 action-иконки занимали много места → заголовки обрезались ellipsis (`14.1 ПРИЛО...`, `Цели клиничес...`). Теперь длинные заголовки переносятся до 2 строк word-wrap. Полный текст по-прежнему доступен через tooltip (`title` attribute).
