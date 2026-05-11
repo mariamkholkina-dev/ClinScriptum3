@@ -29,6 +29,17 @@ const useStyles = makeStyles({
     cursor: "pointer",
     borderTop: `1px solid ${tokens.colorNeutralStroke3}`,
     "&:hover": { backgroundColor: tokens.colorNeutralBackground1Hover },
+    // Чекбокс по умолчанию скрыт; виден при hover на строку либо
+    // когда уже есть выделение (см. .listHasSelection ниже).
+    "&:hover [data-section-cb='1']": { opacity: 1 },
+  },
+  checkboxSlot: {
+    opacity: 0,
+    transition: "opacity 0.1s",
+    flexShrink: 0,
+  },
+  checkboxAlwaysVisible: {
+    opacity: 1,
   },
   rowFalse: {
     opacity: 0.55,
@@ -154,6 +165,11 @@ export function SectionTree({
     );
   }
 
+  // Когда выделена хотя бы одна секция — показываем чекбоксы у всех строк,
+  // иначе они скрыты и появляются только при hover на конкретную строку.
+  // Это освобождает место под заголовок раздела в узкой Word task pane.
+  const hasAnySelection = selectedIds.size > 0;
+
   return (
     <div className={styles.root}>
       {sections.map((section) => {
@@ -161,6 +177,9 @@ export function SectionTree({
         const isSelected = selectedIds.has(section.id);
         const isActive = section.id === activeSectionId;
         const diffType = diffTypeBySectionId?.get(section.id);
+        // Слот чекбокса виден если: выделена сама строка / есть глобальные
+        // выделения / hover на строку (CSS правило в `.row:hover`).
+        const checkboxVisible = isSelected || hasAnySelection;
         return (
           <div
             key={section.id}
@@ -174,7 +193,14 @@ export function SectionTree({
             style={{ paddingLeft: `${4 + section.level * 14}px` }}
             onClick={() => onActivateSection(section)}
           >
-            <div onClick={(e) => e.stopPropagation()}>
+            <div
+              data-section-cb="1"
+              className={mergeClasses(
+                styles.checkboxSlot,
+                checkboxVisible && styles.checkboxAlwaysVisible,
+              )}
+              onClick={(e) => e.stopPropagation()}
+            >
               <Checkbox
                 checked={isSelected}
                 onChange={() => onToggleSelect(section.id)}
