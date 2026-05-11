@@ -212,6 +212,11 @@ model Section {
   isFalseHeading  Boolean       @default(false) @map("is_false_heading")
   isManual        Boolean       @default(false) @map("is_manual")
   manualCreatedById String?     @map("manual_created_by_id") @db.Uuid
+  // Иерархический номер заголовка как его рендерит Word (например "1.2.3").
+  // Источники в порядке приоритета: автоматическая нумерация Word через
+  // numbering.xml → ручной номер в начале title (regex). null если ни один
+  // не подошёл (например визуальный bold-only heading без номера).
+  headingNumber   String?       @map("heading_number")
   sourceAnchor    Json          @map("source_anchor") @db.JsonB
 
   docVersion    DocumentVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)

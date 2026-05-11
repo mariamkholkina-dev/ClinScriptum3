@@ -32,6 +32,8 @@ export interface Section {
   isFalseHeading: boolean;
   isManual?: boolean;
   manualCreatedById?: string | null;
+  /** Иерархический номер заголовка как рендерит Word ("1.2.3"). null если не определён. */
+  headingNumber?: string | null;
   sourceAnchor?: { paragraphIndex?: number; textSnippet?: string; contentBlockId?: string };
   contentBlocks: ContentBlock[];
 }

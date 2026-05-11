@@ -11,6 +11,13 @@ export interface DetectedHeading {
   level: number;
   method: "style" | "outline" | "visual" | "numbered" | "llm";
   paragraphIndex: number;
+  /**
+   * Иерархический номер как его рендерит Word (e.g. "1.2.3"). Источник:
+   *   - Word auto-numbering (резолвится parser'ом из numbering.xml)
+   *   - либо regex по началу text (для случая когда автор печатал номер сам).
+   * null если ни один источник не дал номер.
+   */
+  headingNumber?: string | null;
 }
 
 const HEADING_STYLE_RE = /^heading\s*(\d+)$/i;

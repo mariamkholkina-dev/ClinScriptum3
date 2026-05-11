@@ -24,6 +24,12 @@ export interface ParagraphProperties {
   fontSize?: number;
   /** True если paragraph содержит хотя бы один bold run (или весь bold). */
   isBold?: boolean;
+  /** `<w:pPr><w:numPr><w:numId>` — ссылка на список из `word/numbering.xml`. */
+  numId?: number;
+  /** `<w:pPr><w:numPr><w:ilvl>` — уровень в списке (0-based). */
+  ilvl?: number;
+  /** `<w:pPr><w:pStyle w:val="…">` — стиль параграфа ("Heading1", "Heading2", и т.д.). */
+  pStyle?: string;
 }
 
 // preserveOrder=true — даёт нам plain array of children в исходном document-order'е.
@@ -148,6 +154,34 @@ function parseParagraph(p: PreservedNode): ParagraphProperties | null {
   let maxSize: number | undefined;
   let totalChars = 0;
   let boldChars = 0;
+  let numId: number | undefined;
+  let ilvl: number | undefined;
+  let pStyle: string | undefined;
+
+  // pPr (если есть) обычно идёт первым — читаем его до runs.
+  for (const child of children) {
+    const tag = tagOf(child);
+    if (tag !== "w:pPr") continue;
+    for (const pprChild of childrenOf(child, "w:pPr")) {
+      const ptag = tagOf(pprChild);
+      if (ptag === "w:pStyle") {
+        const v = attrsOf(pprChild)["@_w:val"];
+        if (v !== undefined) pStyle = String(v);
+      } else if (ptag === "w:numPr") {
+        for (const np of childrenOf(pprChild, "w:numPr")) {
+          const npTag = tagOf(np);
+          const npAttrs = attrsOf(np);
+          if (npTag === "w:numId") {
+            const v = Number(npAttrs["@_w:val"]);
+            if (Number.isFinite(v)) numId = v;
+          } else if (npTag === "w:ilvl") {
+            const v = Number(npAttrs["@_w:val"]);
+            if (Number.isFinite(v)) ilvl = v;
+          }
+        }
+      }
+    }
+  }
 
   for (const child of children) {
     const tag = tagOf(child);
@@ -199,6 +233,9 @@ function parseParagraph(p: PreservedNode): ParagraphProperties | null {
     text: text.trim(),
     fontSize: maxSize,
     isBold,
+    numId,
+    ilvl,
+    pStyle,
   };
 }
 

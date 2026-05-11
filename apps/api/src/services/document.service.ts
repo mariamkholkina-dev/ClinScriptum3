@@ -230,6 +230,7 @@ export const documentService = {
           isFalseHeading: true,
           isManual: true,
           manualCreatedById: true,
+          headingNumber: true,
           sourceAnchor: true,
           contentBlocks: {
             orderBy: { order: "asc" },
@@ -264,6 +265,7 @@ export const documentService = {
       structureComment: string | null;
       classificationComment: string | null;
       isFalseHeading: boolean | null;
+      headingNumber: string | null;
     };
     type RawBlockRow = {
       id: string;
@@ -286,7 +288,8 @@ export const documentService = {
              s.llm_confidence AS "llmConfidence",
              s.structure_comment AS "structureComment",
              s.classification_comment AS "classificationComment",
-             s.is_false_heading AS "isFalseHeading"
+             s.is_false_heading AS "isFalseHeading",
+             s.heading_number AS "headingNumber"
       FROM sections s WHERE s.doc_version_id = ${versionId}::uuid
       ORDER BY s."order" ASC
     `;
@@ -327,6 +330,7 @@ export const documentService = {
       structureComment: s.structureComment,
       classificationComment: s.classificationComment,
       isFalseHeading: Boolean(s.isFalseHeading ?? false),
+      headingNumber: s.headingNumber,
       contentBlocks: (blocksBySection.get(s.id) ?? []).map((b) => ({
         id: b.id,
         type: validTypes.has(b.type ?? "") ? b.type : "paragraph",

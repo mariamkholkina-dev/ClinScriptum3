@@ -2,6 +2,24 @@
 
 ## 2026-05-11
 
+### Feat: heading-numbers — резолв номеров заголовков из Word
+
+Новое поле `Section.headingNumber` хранит иерархический номер заголовка как его рендерит Word («1», «1.2», «5.4.1»). Источники в приоритете:
+1. **Auto-numbering Word** — резолвится из `word/numbering.xml` (`<w:numPr><w:numId>`/`<w:ilvl>` + format string `%1.%2`). Покрывает случай когда автор использовал стиль Heading 1/2/3 со списком — Word рендерит номер автоматически, в `<w:t>` его нет.
+2. **Manual prefix** — regex `^(\d+(?:\.\d+)*\.?)\s+` по началу `title`. Покрывает случай когда автор сам напечатал «5.4 Заслепление».
+3. `null` если ни один источник не сработал.
+
+**Изменения:**
+- `packages/doc-parser/src/numbering-parser.ts` — новый модуль: парсинг `numbering.xml`, `NumberingState` стейт-машина (per-numId counters с правильным reset deeper levels). 9 unit-тестов.
+- `paragraph-properties.ts` — добавлены поля `numId/ilvl/pStyle` в `ParagraphProperties`.
+- `parser.ts` — загружает `numbering.xml`, прокидывает numId/ilvl, резолвит rendered number → fallback на regex → присваивает `ParsedSection.headingNumber`.
+- Prisma migration `20260511140000_add_section_heading_number` — `ALTER TABLE sections ADD COLUMN heading_number TEXT`.
+- `document.service.ts` — `getVersion` (+ raw-SQL fallback) возвращают `headingNumber`.
+- `parse-document.ts` handler — сохраняет `headingNumber` при создании Section.
+- `word-addin SectionTree.tsx` + `rule-admin ParsingTreeViewer.tsx` — рендерят серую semibold цифру перед заголовком.
+
+Backfill для уже распарсенных документов: новые upload'ы получат поле автоматически. Для существующих — отдельная задача (re-parse скрипт).
+
 ### Chore: word-addin SectionTree — чекбоксы скрыты по умолчанию
 
 Чекбоксы мультивыделения занимали место в каждой строке, хотя редко используются. Теперь чекбокс скрыт (`opacity:0`) и появляется только когда:

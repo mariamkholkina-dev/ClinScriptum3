@@ -211,6 +211,15 @@ export function SectionTree({
               className={mergeClasses(styles.title, isFalse && styles.titleFalse)}
               title={section.title}
             >
+              {section.headingNumber && (
+                <span style={{
+                  color: tokens.colorNeutralForeground3,
+                  marginRight: "4px",
+                  fontWeight: tokens.fontWeightSemibold,
+                }}>
+                  {section.headingNumber}
+                </span>
+              )}
               {section.title || "(без названия)"}
             </Text>
 
