@@ -112,7 +112,9 @@ export async function highlightFindingLocations(
 export async function clearHighlights(): Promise<void> {
   return Word.run(async (context: any) => {
     const body = context.document.body;
-    body.font.highlightColor = "None";
+    // Office.js API: для снятия highlight нужно ставить null,
+    // строка "None" игнорируется (невалидный color).
+    body.font.highlightColor = null;
     await context.sync();
   });
 }
@@ -142,6 +144,64 @@ export async function jumpToTextInWord(text: string): Promise<boolean> {
       ranges.items[0].font.highlightColor = "yellow";
       await ctx.sync();
       resolve(true);
+    }).catch(() => resolve(false));
+  });
+}
+
+/**
+ * Поиск параграфа со стилем Heading X, текст которого совпадает с
+ * заголовком раздела. Это надёжнее чем body.search(text) — учитывает что
+ * тот же текст может встречаться в обычных параграфах. И надёжнее
+ * paragraphIndex — Word и mammoth по-разному считают параграфы.
+ *
+ * При первой попытке требуем точное совпадение текста (case-insensitive
+ * после trim). Если не нашлось — повторяем без heading-фильтра.
+ *
+ * Возвращает true если найдено и выделено.
+ */
+export async function jumpToHeading(title: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    Word.run(async (ctx: any) => {
+      const needle = title.trim().toLowerCase();
+      if (needle.length === 0) {
+        resolve(false);
+        return;
+      }
+      const paragraphs = ctx.document.body.paragraphs;
+      paragraphs.load("items/text,items/style");
+      await ctx.sync();
+      const items = paragraphs.items as Array<{ text: string; style: string; select: () => void; font: { highlightColor: string | null } }>;
+
+      // Pass 1: heading style + точное совпадение текста
+      for (const p of items) {
+        const style = (p.style ?? "").toLowerCase();
+        const isHeading = style.includes("heading") || style.includes("заголовок");
+        const pText = (p.text ?? "").trim().toLowerCase();
+        if (isHeading && pText === needle) {
+          p.select();
+          p.font.highlightColor = "yellow";
+          await ctx.sync();
+          resolve(true);
+          return;
+        }
+      }
+
+      // Pass 2: heading style + содержит подстроку (для случаев с номером
+      // раздела внутри текста параграфа, e.g. "5.4 Заключение")
+      for (const p of items) {
+        const style = (p.style ?? "").toLowerCase();
+        const isHeading = style.includes("heading") || style.includes("заголовок");
+        const pText = (p.text ?? "").trim().toLowerCase();
+        if (isHeading && pText.includes(needle)) {
+          p.select();
+          p.font.highlightColor = "yellow";
+          await ctx.sync();
+          resolve(true);
+          return;
+        }
+      }
+
+      resolve(false);
     }).catch(() => resolve(false));
   });
 }

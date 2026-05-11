@@ -16,6 +16,7 @@ import { trpcCall } from "../api";
 import {
   clearHighlights,
   getSelectionContext,
+  jumpToHeading,
   jumpToParagraphByIndex,
   jumpToTextInWord,
 } from "../office-helpers";
@@ -254,35 +255,37 @@ export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
       // ignore — может не быть Word'a (preview-режим)
     }
 
-    // 1) Anchor-based jump через paragraphIndex — самый надёжный путь:
-    //    doc-parser сохранил конкретный индекс параграфа при разборе.
-    const paraIdx = section.sourceAnchor?.paragraphIndex;
-    if (typeof paraIdx === "number" && paraIdx >= 0) {
-      try {
-        const ok = await jumpToParagraphByIndex(paraIdx);
-        if (ok) return;
-      } catch {
-        // fallthrough — попробуем по тексту
-      }
-    }
-
-    // 2) Fallback по textSnippet → contentBlocks[0] → title (text search).
-    const snippet =
-      section.sourceAnchor?.textSnippet ??
-      section.contentBlocks[0]?.content ??
-      section.title;
-    if (!snippet || snippet.trim().length === 0) {
-      setFeedback({ kind: "warning", text: "У раздела нет привязки к тексту документа." });
-      return;
-    }
+    // Стратегии fallback'а (от наиболее надёжной к наименее):
+    //  1) Heading-aware поиск по title (фильтр style="Heading X" / "Заголовок X").
+    //     Точное совпадение текста; не путает с обычными параграфами,
+    //     даже если в документе тот же текст встречается.
+    //  2) Search по textSnippet (если parser сохранил кусок текста раздела).
+    //  3) paragraphIndex — последний resort. Часто рассинхронизирован,
+    //     потому что mammoth и Word.body.paragraphs считают по-разному.
+    //  4) Plain title search (любые параграфы).
     try {
-      const found = await jumpToTextInWord(snippet);
-      if (!found) {
-        setFeedback({
-          kind: "warning",
-          text: "Не удалось найти раздел в документе.",
-        });
+      if (section.title && (await jumpToHeading(section.title))) return;
+
+      const snippet = section.sourceAnchor?.textSnippet;
+      if (snippet && snippet.trim().length > 0) {
+        if (await jumpToTextInWord(snippet)) return;
       }
+
+      const paraIdx = section.sourceAnchor?.paragraphIndex;
+      if (typeof paraIdx === "number" && paraIdx >= 0) {
+        if (await jumpToParagraphByIndex(paraIdx)) return;
+      }
+
+      const fallbackText =
+        section.contentBlocks[0]?.content ?? section.title;
+      if (fallbackText && fallbackText.trim().length > 0) {
+        if (await jumpToTextInWord(fallbackText)) return;
+      }
+
+      setFeedback({
+        kind: "warning",
+        text: "Не удалось найти раздел в документе.",
+      });
     } catch {
       // Игнорируем — пользователь мог открыть add-in вне Word (preview-режим).
     }
