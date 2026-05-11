@@ -241,6 +241,19 @@ export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
   const handleActivateSection = useCallback(async (section: Section) => {
     setActiveSectionId(section.id);
 
+    // isFalseHeading=true — это запись из оглавления (TOC) или ложный
+    // визуальный заголовок. Прыгать на такие нет смысла: одинаковый текст
+    // встречается в TOC и в самом заголовке секции, body.search легко
+    // попадает не туда (на скрине пользователя — выделилось «стр. 1» в
+    // адресе ООО). Показываем подсказку вместо jump'а.
+    if (section.isFalseHeading) {
+      setFeedback({
+        kind: "warning",
+        text: "Это запись оглавления, перемещение по документу не выполнено.",
+      });
+      return;
+    }
+
     // Все стратегии (сброс прошлой жёлтой подсветки + heading-aware +
     // textSnippet + paragraphIndex + fallback) выполняются в одном
     // Word.run с одним ctx.sync — это сокращает задержку клик→jump

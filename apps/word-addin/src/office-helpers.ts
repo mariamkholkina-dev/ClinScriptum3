@@ -144,9 +144,18 @@ export async function selectSection(opts: {
       // 1) Сброс старой подсветки — выполнится в этом же sync с jump'ом.
       body.font.highlightColor = null;
 
-      const needle = opts.title.trim().toLowerCase();
+      // TOC-стиль title'ы из доков часто содержат trailing номер страницы:
+      // "5.4 Заслепление 45", "8.2.5 Последующее наблюдение День 7 58".
+      // body.search(полный title) тогда находит первое совпадение с цифрой
+      // (e.g. "стр. 1" в адресе) — выделяет не туда. Стрипаем trailing number
+      // и пунктуацию перед использованием в search-стратегиях.
+      const cleanTitle = (s: string) =>
+        s.replace(/\s+\d+\.?\s*$/, "").replace(/\s+\.+\s*$/, "").trim();
+
+      const cleanedTitle = cleanTitle(opts.title);
+      const needle = cleanedTitle.toLowerCase();
       const snippet = opts.textSnippet?.slice(0, 80);
-      const fallback = opts.fallbackText?.slice(0, 80);
+      const fallback = cleanTitle(opts.fallbackText ?? opts.title).slice(0, 80);
 
       // Загружаем параграфы и search ranges параллельно (одним sync'ом).
       const paragraphs = body.paragraphs;
@@ -170,6 +179,13 @@ export async function selectSection(opts: {
       const applyHighlight = async (target: any) => {
         target.select();
         target.font.highlightColor = "yellow";
+        // scrollIntoView нужен потому что target.select() позиционирует cursor,
+        // но Word не всегда scroll'ит к видимой области — особенно когда heading
+        // находится первой строкой таблицы на page boundary. Без явного scroll
+        // юзер видит «ничего не произошло» хотя selection переехал.
+        if (typeof target.scrollIntoView === "function") {
+          target.scrollIntoView();
+        }
         await ctx.sync();
       };
 
