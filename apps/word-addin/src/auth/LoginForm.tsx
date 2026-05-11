@@ -24,7 +24,10 @@ const useStyles = makeStyles({
     margin: "0 auto",
   },
   logo: {
-    textAlign: "center" as const,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "4px",
     marginBottom: "8px",
   },
 });
@@ -63,8 +66,8 @@ export function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className={styles.root}>
       <div className={styles.logo}>
-        <Title3>ClinScriptum</Title3>
-        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+        <Title3 block>ClinScriptum</Title3>
+        <Text block size={200} style={{ color: tokens.colorNeutralForeground3 }}>
           Войдите для работы с находками
         </Text>
       </div>
