@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-05-13
+
+### Feat: evaluation для intra-document audit (Sprint 1 из плана улучшения качества)
+
+Цель — научиться объективно мерить качество этапа intra-audit. До этого `run-evaluation.handler.ts` не имел case для stage='intra_audit', `loadActualResults` возвращал пустой объект → f1 был фиктивным (1.0 при пустых множествах).
+
+Что добавлено:
+
+**Типы — `packages/shared/src/types/golden-intra-audit.ts`**
+- `GoldenIntraAuditExpected` — структура `GoldenSampleStageStatus.expectedResults` для intra_audit: `findings[]` (для cascade) + `problems[]` (для document-level coverage) + `coverage` (`complete | partial_by_family`) + `mustDetectFamilies` (для частичной разметки).
+- `ExpectedFinding`, `ExpectedProblem`, `PredictedFinding`.
+
+**Матчинг — `apps/workers/src/lib/intra-audit-match.ts`**
+- `matchLLMJudge(predicted, expected, judge)` — primary метрика. Для каждого predicted находит совместимое expected (тот же family), спрашивает LLM-судью «это одна и та же проблема? yes/no/uncertain», использует первый `yes` как TP. Cost cap: до 3 кандидатов на predicted.
+- `matchCoverage(predicted, problems)` — document-level: для каждой `problem` ищем predicted с тем же `(family, zone)`, считаем покрытие. Дополнительно: `hallucinationCandidateIds` для predicted, не попадающих ни в одну problem.
+- `matchCascade(predicted, expected)` — strict + lenient в одном проходе (greedy 1-к-1 по убыванию score). Strict: family + type + zone + quote ≥ 0.7. Lenient: family + (quote ≥ 0.5 ИЛИ type+zone).
+- `computePerFamily(...)` — разбивка f1/precision/recall по issueFamily (NUMERIC, TEXT_CONTRADICTION, и т.д.).
+- **Вариант A исключения детерминистики:** `isExcludedFromMetric` отфильтровывает findings с `method='deterministic'` или `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` перед всеми тремя матчингами. В pipeline и БД они остаются — только не считаются в f1.
+
+**LLM-as-judge — `apps/workers/src/lib/intra-audit-judge.ts`**
+- `makeIntraAuditJudge(config)` — фабрика судьи, использует `LLMGateway` с JSON response.
+- `resolveJudgeConfigFromEnv()` — берёт `LLM_AUDIT_JUDGE_*` переменные (fallback на общие `LLM_*`). Если API key не задан — возвращает null, primary fallback'нется на cascade.lenient.
+- Промпт-судья на русском, temperature=0, max 200 tokens на пару.
+
+**Интеграция — `apps/workers/src/handlers/run-evaluation.ts`**
+- В `loadActualResults` — новый case `intra_audit`: достаёт `Finding` (типы intra_audit/editorial/semantic), извлекает `method` из `extraAttributes`, маппит в `PredictedFinding[]`.
+- В основном цикле — ветка для stage='intra_audit' вызывает `evaluateIntraAudit(expected, actual)` вместо generic `compareResults`. Возвращает `precision/recall/f1` от LLM-judge (или cascade.lenient если judge не сконфигурирован), а в `diff` пишет:
+  ```
+  {
+    primary:  { method, tp, fp, fn, p, r, f1, uncertainCount? },
+    cascade:  { strict, lenient, decisions[] },
+    coverage: { tp, fp, fn, totalProblems, coveredProblemIds, missedProblemIds, hallucinationCandidateIds },
+    perFamily: { NUMERIC: {...}, TEXT_CONTRADICTION: {...}, ... },
+    llmJudgeAuditTrail: [{ predictedId, expectedId, verdict, rationale }],
+    expectedCounts, predictedCount
+  }
+  ```
+
+**Тесты — `apps/workers/src/lib/__tests__/intra-audit-match.test.ts`**
+- 25+ табличных тестов: normalizeQuote, quoteOverlap (Jaccard), исключение placeholder/editorial, cascade strict/lenient, dup-FP сценарий (5 predicted dupes → 1 TP + 4 FP), coverage 3-из-5, hallucination detection, LLM-judge с моком (yes/no/uncertain/cost cap).
+
+Что ЕЩЁ нужно (планируется в Sprint 2-7):
+- UI для аннотации эталонов (`apps/rule-admin` → `golden-dataset/[id]/intra-audit-viewer/`).
+- Заполнение `expectedResults` для intra_audit в seed / через UI.
+- FindingReview workflow.
+- Failure-mode dashboard.
+
 ## 2026-05-11
 
 ### Fix: word-addin parsing — TOC ложный jump + scrollIntoView заголовков в таблицах

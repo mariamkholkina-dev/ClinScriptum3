@@ -1,5 +1,25 @@
 import { prisma } from "@clinscriptum/db";
+import type {
+  ExpectedFinding,
+  ExpectedProblem,
+  GoldenIntraAuditExpected,
+  PredictedFinding,
+} from "@clinscriptum/shared";
 import { logger } from "../lib/logger.js";
+import {
+  computePerFamily,
+  matchCascade,
+  matchCoverage,
+  matchLLMJudge,
+  type CascadeResult,
+  type CoverageResult,
+  type LLMJudgeResult,
+  type MatchStats,
+} from "../lib/intra-audit-match.js";
+import {
+  makeIntraAuditJudge,
+  resolveJudgeConfigFromEnv,
+} from "../lib/intra-audit-judge.js";
 
 interface StageMetrics {
   total: number;
@@ -83,7 +103,10 @@ export async function handleRunEvaluation(data: { evaluationRunId: string }) {
 
         try {
           const actual = await loadActualResults(docVersionId, stage);
-          const { precision, recall, f1, diff } = compareResults(expected, actual);
+          const { precision, recall, f1, diff } =
+            stage === "intra_audit"
+              ? await evaluateIntraAudit(expected, actual)
+              : compareResults(expected, actual);
           const status = f1 !== null && f1 >= 0.8 ? "pass" : "fail";
 
           const coverageByFactKey =
@@ -315,9 +338,184 @@ async function loadActualResults(
       });
       return { contradictions: facts };
     }
+    case "intra_audit": {
+      const findings = await prisma.finding.findMany({
+        where: {
+          docVersionId,
+          type: { in: ["intra_audit", "editorial", "semantic"] },
+        },
+        select: {
+          id: true,
+          issueFamily: true,
+          issueType: true,
+          severity: true,
+          anchorZone: true,
+          targetZone: true,
+          sourceRef: true,
+          extraAttributes: true,
+          description: true,
+        },
+      });
+      return {
+        findings: findings.map((f): PredictedFinding => {
+          const src = (f.sourceRef ?? {}) as Record<string, unknown>;
+          const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
+          const methodRaw = typeof extra.method === "string" ? extra.method : null;
+          const method =
+            methodRaw === "deterministic" || methodRaw === "llm" ? methodRaw : null;
+          return {
+            id: f.id,
+            issueFamily: f.issueFamily,
+            issueType: f.issueType,
+            severity: f.severity,
+            anchorZone: f.anchorZone,
+            targetZone: f.targetZone,
+            anchorQuote: typeof src.anchorQuote === "string" ? src.anchorQuote : null,
+            targetQuote: typeof src.targetQuote === "string" ? src.targetQuote : null,
+            description: f.description,
+            method,
+          };
+        }),
+      };
+    }
     default:
       return {};
   }
+}
+
+// ─── Intra-audit evaluation (LLM-judge + coverage + cascade) ─
+
+interface IntraAuditMetricsResult {
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
+  diff: Record<string, unknown>;
+}
+
+async function evaluateIntraAudit(
+  expectedRaw: Record<string, unknown>,
+  actual: Record<string, unknown>,
+): Promise<IntraAuditMetricsResult> {
+  const expected = normalizeExpected(expectedRaw);
+  const predicted = Array.isArray(actual.findings)
+    ? (actual.findings as PredictedFinding[])
+    : [];
+
+  // 1. Cascade strict→lenient (диагностика «локализация vs классификация»)
+  const cascade: CascadeResult = matchCascade(predicted, expected.findings);
+
+  // 2. Document-level coverage (one-hot per problem)
+  const coverage: CoverageResult = matchCoverage(predicted, expected.problems);
+
+  // 3. LLM-as-judge (primary, если сконфигурирован)
+  const judgeConfig = resolveJudgeConfigFromEnv();
+  let primary: MatchStats | LLMJudgeResult;
+  let primaryMethod: "llm_judge" | "cascade_lenient";
+  let llmJudgeAuditTrail: LLMJudgeResult["decisions"] | undefined;
+  let uncertainCount: number | undefined;
+
+  if (judgeConfig) {
+    const judge = makeIntraAuditJudge(judgeConfig);
+    const llmRes = await matchLLMJudge(predicted, expected.findings, judge);
+    primary = llmRes;
+    primaryMethod = "llm_judge";
+    llmJudgeAuditTrail = llmRes.decisions;
+    uncertainCount = llmRes.uncertainCount;
+  } else {
+    primary = cascade.lenient;
+    primaryMethod = "cascade_lenient";
+    logger.info(
+      "intra-audit eval: LLM judge not configured, falling back to cascade.lenient",
+    );
+  }
+
+  // 4. Per-family breakdown (lenient-based)
+  const perFamily = computePerFamily(predicted, expected.findings);
+
+  return {
+    precision: primary.precision,
+    recall: primary.recall,
+    f1: primary.f1,
+    diff: {
+      primary: {
+        method: primaryMethod,
+        tp: primary.tp,
+        fp: primary.fp,
+        fn: primary.fn,
+        precision: primary.precision,
+        recall: primary.recall,
+        f1: primary.f1,
+        ...(uncertainCount !== undefined ? { uncertainCount } : {}),
+      },
+      cascade,
+      coverage,
+      perFamily,
+      ...(llmJudgeAuditTrail ? { llmJudgeAuditTrail } : {}),
+      expectedCounts: {
+        findings: expected.findings.length,
+        problems: expected.problems.length,
+      },
+      predictedCount: predicted.length,
+    },
+  };
+}
+
+function normalizeExpected(raw: Record<string, unknown>): GoldenIntraAuditExpected {
+  const findings = Array.isArray(raw.findings)
+    ? (raw.findings as unknown[]).flatMap(toExpectedFinding)
+    : [];
+  const problems = Array.isArray(raw.problems)
+    ? (raw.problems as unknown[]).flatMap(toExpectedProblem)
+    : [];
+  const coverage = raw.coverage === "partial_by_family" ? "partial_by_family" : "complete";
+  const mustDetectFamilies = Array.isArray(raw.mustDetectFamilies)
+    ? (raw.mustDetectFamilies as unknown[]).filter((x): x is string => typeof x === "string")
+    : undefined;
+  return { findings, problems, coverage, mustDetectFamilies };
+}
+
+function toExpectedFinding(x: unknown): ExpectedFinding[] {
+  if (!x || typeof x !== "object") return [];
+  const o = x as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.issueFamily !== "string") return [];
+  return [
+    {
+      id: o.id,
+      issueFamily: o.issueFamily,
+      issueType: typeof o.issueType === "string" ? o.issueType : "",
+      severity:
+        o.severity === "critical" ||
+        o.severity === "high" ||
+        o.severity === "medium" ||
+        o.severity === "low" ||
+        o.severity === "info"
+          ? o.severity
+          : "medium",
+      anchorZone: typeof o.anchorZone === "string" ? o.anchorZone : "",
+      targetZone: typeof o.targetZone === "string" ? o.targetZone : undefined,
+      anchorQuote: typeof o.anchorQuote === "string" ? o.anchorQuote : "",
+      targetQuote: typeof o.targetQuote === "string" ? o.targetQuote : undefined,
+      description: typeof o.description === "string" ? o.description : "",
+      mustDetect: o.mustDetect !== false,
+      notes: typeof o.notes === "string" ? o.notes : undefined,
+    },
+  ];
+}
+
+function toExpectedProblem(x: unknown): ExpectedProblem[] {
+  if (!x || typeof x !== "object") return [];
+  const o = x as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.issueFamily !== "string") return [];
+  return [
+    {
+      id: o.id,
+      problemDescription: typeof o.problemDescription === "string" ? o.problemDescription : "",
+      issueFamily: o.issueFamily,
+      anchorZone: typeof o.anchorZone === "string" ? o.anchorZone : "",
+      exampleQuote: typeof o.exampleQuote === "string" ? o.exampleQuote : undefined,
+      mustDetect: o.mustDetect !== false,
+    },
+  ];
 }
 
 function compareResults(
