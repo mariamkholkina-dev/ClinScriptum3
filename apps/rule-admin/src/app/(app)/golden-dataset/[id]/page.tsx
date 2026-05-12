@@ -25,6 +25,7 @@ import { ParsingTreeViewer } from "./parsing-viewer";
 import { ClassificationTreeViewer } from "./classification-viewer";
 import { ExtractionViewer } from "./extraction-viewer";
 import { SoaStageViewer } from "./soa-viewer";
+import { IntraAuditViewer } from "./intra-audit-viewer";
 
 /* ═══════════════ Constants ═══════════════ */
 
@@ -1069,6 +1070,14 @@ function StageDataViewer({
     case "soa":
       return <SoaStageViewer versionId={vid} expectedResults={expectedResults} />;
     case "intra_audit":
+      return (
+        <IntraAuditViewer
+          versionId={vid}
+          goldenSampleId={goldenSampleId}
+          expectedResults={expectedResults}
+          currentStatus={currentStatus}
+        />
+      );
     case "inter_audit":
       return <FindingsViewer versionId={vid} />;
     default:

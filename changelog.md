@@ -2,50 +2,54 @@
 
 ## 2026-05-13
 
-### Feat: evaluation для intra-document audit (Sprint 1 из плана улучшения качества)
+### Feat: intra-audit-viewer для аннотации эталонов (Sprint 2 из плана улучшения качества)
 
-Цель — научиться объективно мерить качество этапа intra-audit. До этого `run-evaluation.handler.ts` не имел case для stage='intra_audit', `loadActualResults` возвращал пустой объект → f1 был фиктивным (1.0 при пустых множествах).
+В rule-admin золотом эталоне `stage='intra_audit'` теперь не read-only список findings, а полноценный аннотатор кандидатов:
 
-Что добавлено:
+- **Split layout с фильтрами** (severity / issueFamily / annotation decision)
+- **Accept / Reject** на каждом кандидате (UI: зелёный / красный outline, кнопки переключаются)
+- **Auto-save debounced 1.5s** — каждое изменение draft.annotations пишется в `GoldenSampleStageStatus.expectedResults.draft.annotations` через `updateStageStatus` (status='in_review' пока эталон не утверждён)
+- **Кнопка «Утвердить как эталон»** — собирает все `accepted` findings, конвертирует в `ExpectedFinding[]` (`findingToExpected`) и пишет в `expectedResults.findings`, выставляя `status='approved'`
+- **Счётчики в top bar** — accepted / rejected / unreviewed по семантическим (deterministic+placeholder отдельной плашкой «det/placeholder» с tooltip «не учитываются в f1» — вариант A из Sprint 1)
+- **Reset** — очистить все отметки
+- **Кнопки Accept/Reject заблокированы** для findings с `method=deterministic` или `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` (они не входят в f1 — нет смысла размечать)
 
-**Типы — `packages/shared/src/types/golden-intra-audit.ts`**
-- `GoldenIntraAuditExpected` — структура `GoldenSampleStageStatus.expectedResults` для intra_audit: `findings[]` (для cascade) + `problems[]` (для document-level coverage) + `coverage` (`complete | partial_by_family`) + `mustDetectFamilies` (для частичной разметки).
-- `ExpectedFinding`, `ExpectedProblem`, `PredictedFinding`.
+Файлы:
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/IntraAuditViewer.tsx`
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/types.ts` — локальная копия `GoldenIntraAuditExpected` (rule-admin не зависит от `@clinscriptum/shared`)
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/index.ts`
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — case `intra_audit` в `StageDataViewer` теперь рендерит `IntraAuditViewer` (для `inter_audit` сохранён старый read-only `FindingsViewer`)
 
-**Матчинг — `apps/workers/src/lib/intra-audit-match.ts`**
-- `matchLLMJudge(predicted, expected, judge)` — primary метрика. Для каждого predicted находит совместимое expected (тот же family), спрашивает LLM-судью «это одна и та же проблема? yes/no/uncertain», использует первый `yes` как TP. Cost cap: до 3 кандидатов на predicted.
-- `matchCoverage(predicted, problems)` — document-level: для каждой `problem` ищем predicted с тем же `(family, zone)`, считаем покрытие. Дополнительно: `hallucinationCandidateIds` для predicted, не попадающих ни в одну problem.
-- `matchCascade(predicted, expected)` — strict + lenient в одном проходе (greedy 1-к-1 по убыванию score). Strict: family + type + zone + quote ≥ 0.7. Lenient: family + (quote ≥ 0.5 ИЛИ type+zone).
-- `computePerFamily(...)` — разбивка f1/precision/recall по issueFamily (NUMERIC, TEXT_CONTRADICTION, и т.д.).
-- **Вариант A исключения детерминистики:** `isExcludedFromMetric` отфильтровывает findings с `method='deterministic'` или `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` перед всеми тремя матчингами. В pipeline и БД они остаются — только не считаются в f1.
+Что не вошло (Sprint 2b или позже):
+- Подсветка `anchorQuote` в исходной секции (нужен `SectionViewerWithHighlight` компонент)
+- Add-missing-finding режим (для аннотации того, что модель пропустила — будущие FN)
+- Inline-edit overrides (severity / issueType / description)
+- Реальные TP/FP/FN/precision/recall/f1 preview против предыдущего approved expected — Sprint 4 dashboard покажет это side-by-side
 
-**LLM-as-judge — `apps/workers/src/lib/intra-audit-judge.ts`**
-- `makeIntraAuditJudge(config)` — фабрика судьи, использует `LLMGateway` с JSON response.
-- `resolveJudgeConfigFromEnv()` — берёт `LLM_AUDIT_JUDGE_*` переменные (fallback на общие `LLM_*`). Если API key не задан — возвращает null, primary fallback'нется на cascade.lenient.
-- Промпт-судья на русском, temperature=0, max 200 tokens на пару.
 
-**Интеграция — `apps/workers/src/handlers/run-evaluation.ts`**
-- В `loadActualResults` — новый case `intra_audit`: достаёт `Finding` (типы intra_audit/editorial/semantic), извлекает `method` из `extraAttributes`, маппит в `PredictedFinding[]`.
-- В основном цикле — ветка для stage='intra_audit' вызывает `evaluateIntraAudit(expected, actual)` вместо generic `compareResults`. Возвращает `precision/recall/f1` от LLM-judge (или cascade.lenient если judge не сконфигурирован), а в `diff` пишет:
-  ```
-  {
-    primary:  { method, tp, fp, fn, p, r, f1, uncertainCount? },
-    cascade:  { strict, lenient, decisions[] },
-    coverage: { tp, fp, fn, totalProblems, coveredProblemIds, missedProblemIds, hallucinationCandidateIds },
-    perFamily: { NUMERIC: {...}, TEXT_CONTRADICTION: {...}, ... },
-    llmJudgeAuditTrail: [{ predictedId, expectedId, verdict, rationale }],
-    expectedCounts, predictedCount
-  }
-  ```
+### Feat: intra-audit-viewer для аннотации эталонов (Sprint 2 из плана улучшения качества)
 
-**Тесты — `apps/workers/src/lib/__tests__/intra-audit-match.test.ts`**
-- 25+ табличных тестов: normalizeQuote, quoteOverlap (Jaccard), исключение placeholder/editorial, cascade strict/lenient, dup-FP сценарий (5 predicted dupes → 1 TP + 4 FP), coverage 3-из-5, hallucination detection, LLM-judge с моком (yes/no/uncertain/cost cap).
+В rule-admin золотом эталоне `stage='intra_audit'` теперь не read-only список findings, а полноценный аннотатор кандидатов:
 
-Что ЕЩЁ нужно (планируется в Sprint 2-7):
-- UI для аннотации эталонов (`apps/rule-admin` → `golden-dataset/[id]/intra-audit-viewer/`).
-- Заполнение `expectedResults` для intra_audit в seed / через UI.
-- FindingReview workflow.
-- Failure-mode dashboard.
+- **Split layout с фильтрами** (severity / issueFamily / annotation decision)
+- **Accept / Reject** на каждом кандидате (UI: зелёный / красный outline, кнопки переключаются)
+- **Auto-save debounced 1.5s** — каждое изменение draft.annotations пишется в `GoldenSampleStageStatus.expectedResults.draft.annotations` через `updateStageStatus` (status='in_review' пока эталон не утверждён)
+- **Кнопка «Утвердить как эталон»** — собирает все `accepted` findings, конвертирует в `ExpectedFinding[]` (`findingToExpected`) и пишет в `expectedResults.findings`, выставляя `status='approved'`
+- **Счётчики в top bar** — accepted / rejected / unreviewed по семантическим (deterministic+placeholder отдельной плашкой «det/placeholder» с tooltip «не учитываются в f1» — вариант A из Sprint 1)
+- **Reset** — очистить все отметки
+- **Кнопки Accept/Reject заблокированы** для findings с `method=deterministic` или `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` (они не входят в f1 — нет смысла размечать)
+
+Файлы:
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/IntraAuditViewer.tsx`
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/types.ts` — локальная копия `GoldenIntraAuditExpected` (rule-admin не зависит от `@clinscriptum/shared`)
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/index.ts`
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — case `intra_audit` в `StageDataViewer` теперь рендерит `IntraAuditViewer` (для `inter_audit` сохранён старый read-only `FindingsViewer`)
+
+Что не вошло (Sprint 2b или позже):
+- Подсветка `anchorQuote` в исходной секции (нужен `SectionViewerWithHighlight` компонент)
+- Add-missing-finding режим (для аннотации того, что модель пропустила — будущие FN)
+- Inline-edit overrides (severity / issueType / description)
+- Реальные TP/FP/FN/precision/recall/f1 preview против предыдущего approved expected — Sprint 4 dashboard покажет это side-by-side
 
 ## 2026-05-11
 
