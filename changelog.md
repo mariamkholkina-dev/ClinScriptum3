@@ -2,92 +2,70 @@
 
 ## 2026-05-13
 
-### Feat: бейдж count pending в sidebar для finding-review (Sprint 6b)
+### Feat: failure-mode dashboard + дедупликация в intra-audit (Sprint 4)
 
-В `apps/rule-admin/src/app/(app)/layout.tsx` для пункта «Ревью замечаний» в sidebar показывается оранжевый бейдж с количеством pending/in_review review:
+**UI dashboard** — новая страница `/evaluation/[id]/intra-audit-modes` в rule-admin визуализирует структуру `EvaluationResult.diff` для stage='intra_audit', собранную в Sprint 1:
+- **Primary метрика** (LLM-judge или cascade.lenient fallback) с tp/fp/fn и подсветкой f1
+- **Cascade strict vs lenient** — таблица с разрывом lenient−strict (большой разрыв = модель попадает в место, но путает issueType)
+- **Per-family breakdown** — таблица по issueFamily (NUMERIC/TEXT_CONTRADICTION/...) с expected/predicted/tp/fp/fn/f1
+- **Coverage panel** — covered / missed (FN) / hallucination candidates (FP) на уровне уникальных проблем
+- **LLM judge audit trail** — список решений судьи с rationale (collapsed)
 
-- Источник: `trpc.findingReview.dashboard` с polling `refetchInterval=60_000`
-- Скрыт когда роль пользователя не reviewer (`findings_reviewer`/`qc_operator`/`rule_admin`/`tenant_admin`)
-- При свёрнутом sidebar — мини-бейдж в углу иконки (с `9+` если >9)
-- При развёрнутом — pill `{count}` справа от label
+Кнопка «Failure modes» появляется в шапке `/evaluation/[id]` если в прогоне есть результаты со stage='intra_audit' (через `stageMetrics`).
 
+**Дедупликация** — `apps/workers/src/lib/intra-audit-dedup.ts`. Новая функция `deduplicateByFamilyAndAnchor`: группировка findings по `(issueFamily, normalize(anchorQuote))` с выбором максимальной severity. Вызывается на уровне `llm_qa` ПОСЛЕ существующей `deduplicateFindings` (description/textSnippet), убирает кейс «один defect в одном месте, 5 разных формулировок». Отброшенные дубли помечаются `status='false_positive'`, `extraAttributes.qaVerdict='deduplicated'`.
 
-### Feat: UI ревью замечаний для qc_operator (Sprint 6)
+**Контрадикция через rules-engine** — `apps/api/src/lib/intra-audit.ts`: `runConsistencyChecks` теперь использует `detectContradictions` из `@clinscriptum/rules-engine` вместо самопальной группировки по `trim().toLowerCase()`. Преимущество — canonicalize-сравнение из rules-engine: «30 пациентов» / «N=30» / «30 patients» больше не считаются разными. Sample-size cross-check оставлен как был.
 
-Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
+**Тесты** — `apps/workers/src/lib/__tests__/intra-audit-dedup.test.ts`: 9 unit-тестов (single/dupes/cross-family/empty-anchor/case-insensitive/severity-tiebreak).
 
-**`/finding-review` — dashboard**
-- Список pending review (`status='pending'|'in_review'`) и опубликованных
-- Колонки: документ, тип аудита, статус, число замечаний, дата создания
-- Cliquk → детальная страница
-
-**`/finding-review/[id]` — детальный review**
-- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
-- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
-- Список findings с действиями на каждый:
-  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
-  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
-  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
-- Опубликованные review — только просмотр (disabled actions)
-
-**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
-
-Что НЕ вошло (Sprint 6b / 7):
-- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
-- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
-- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
+Что НЕ вошло в Sprint 4 (отложено):
+- Anti-FP few-shot в промптах intra-audit — нужны размеченные FP из Sprint 3 датасета (требует аннотатора)
+- Side-by-side двух прогонов с дельтой — текущий `compareRuns` endpoint уже считает delta по stage, но UI визуализации для intra-audit specifically нет; добавим вместе с Sprint 5/6.
 
 
-### Feat: UI ревью замечаний для qc_operator (Sprint 6)
+### Feat: failure-mode dashboard + дедупликация в intra-audit (Sprint 4)
 
-Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
+**UI dashboard** — новая страница `/evaluation/[id]/intra-audit-modes` в rule-admin визуализирует структуру `EvaluationResult.diff` для stage='intra_audit', собранную в Sprint 1:
+- **Primary метрика** (LLM-judge или cascade.lenient fallback) с tp/fp/fn и подсветкой f1
+- **Cascade strict vs lenient** — таблица с разрывом lenient−strict (большой разрыв = модель попадает в место, но путает issueType)
+- **Per-family breakdown** — таблица по issueFamily (NUMERIC/TEXT_CONTRADICTION/...) с expected/predicted/tp/fp/fn/f1
+- **Coverage panel** — covered / missed (FN) / hallucination candidates (FP) на уровне уникальных проблем
+- **LLM judge audit trail** — список решений судьи с rationale (collapsed)
 
-**`/finding-review` — dashboard**
-- Список pending review (`status='pending'|'in_review'`) и опубликованных
-- Колонки: документ, тип аудита, статус, число замечаний, дата создания
-- Cliquk → детальная страница
+Кнопка «Failure modes» появляется в шапке `/evaluation/[id]` если в прогоне есть результаты со stage='intra_audit' (через `stageMetrics`).
 
-**`/finding-review/[id]` — детальный review**
-- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
-- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
-- Список findings с действиями на каждый:
-  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
-  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
-  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
-- Опубликованные review — только просмотр (disabled actions)
+**Дедупликация** — `apps/workers/src/lib/intra-audit-dedup.ts`. Новая функция `deduplicateByFamilyAndAnchor`: группировка findings по `(issueFamily, normalize(anchorQuote))` с выбором максимальной severity. Вызывается на уровне `llm_qa` ПОСЛЕ существующей `deduplicateFindings` (description/textSnippet), убирает кейс «один defect в одном месте, 5 разных формулировок». Отброшенные дубли помечаются `status='false_positive'`, `extraAttributes.qaVerdict='deduplicated'`.
 
-**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
+**Контрадикция через rules-engine** — `apps/api/src/lib/intra-audit.ts`: `runConsistencyChecks` теперь использует `detectContradictions` из `@clinscriptum/rules-engine` вместо самопальной группировки по `trim().toLowerCase()`. Преимущество — canonicalize-сравнение из rules-engine: «30 пациентов» / «N=30» / «30 patients» больше не считаются разными. Sample-size cross-check оставлен как был.
 
-Что НЕ вошло (Sprint 6b / 7):
-- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
-- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
-- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
+**Тесты** — `apps/workers/src/lib/__tests__/intra-audit-dedup.test.ts`: 9 unit-тестов (single/dupes/cross-family/empty-anchor/case-insensitive/severity-tiebreak).
+
+Что НЕ вошло в Sprint 4 (отложено):
+- Anti-FP few-shot в промптах intra-audit — нужны размеченные FP из Sprint 3 датасета (требует аннотатора)
+- Side-by-side двух прогонов с дельтой — текущий `compareRuns` endpoint уже считает delta по stage, но UI визуализации для intra-audit specifically нет; добавим вместе с Sprint 5/6.
 
 
-### Feat: UI ревью замечаний для qc_operator (Sprint 6)
+### Feat: failure-mode dashboard + дедупликация в intra-audit (Sprint 4)
 
-Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
+**UI dashboard** — новая страница `/evaluation/[id]/intra-audit-modes` в rule-admin визуализирует структуру `EvaluationResult.diff` для stage='intra_audit', собранную в Sprint 1:
+- **Primary метрика** (LLM-judge или cascade.lenient fallback) с tp/fp/fn и подсветкой f1
+- **Cascade strict vs lenient** — таблица с разрывом lenient−strict (большой разрыв = модель попадает в место, но путает issueType)
+- **Per-family breakdown** — таблица по issueFamily (NUMERIC/TEXT_CONTRADICTION/...) с expected/predicted/tp/fp/fn/f1
+- **Coverage panel** — covered / missed (FN) / hallucination candidates (FP) на уровне уникальных проблем
+- **LLM judge audit trail** — список решений судьи с rationale (collapsed)
 
-**`/finding-review` — dashboard**
-- Список pending review (`status='pending'|'in_review'`) и опубликованных
-- Колонки: документ, тип аудита, статус, число замечаний, дата создания
-- Cliquk → детальная страница
+Кнопка «Failure modes» появляется в шапке `/evaluation/[id]` если в прогоне есть результаты со stage='intra_audit' (через `stageMetrics`).
 
-**`/finding-review/[id]` — детальный review**
-- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
-- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
-- Список findings с действиями на каждый:
-  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
-  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
-  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
-- Опубликованные review — только просмотр (disabled actions)
+**Дедупликация** — `apps/workers/src/lib/intra-audit-dedup.ts`. Новая функция `deduplicateByFamilyAndAnchor`: группировка findings по `(issueFamily, normalize(anchorQuote))` с выбором максимальной severity. Вызывается на уровне `llm_qa` ПОСЛЕ существующей `deduplicateFindings` (description/textSnippet), убирает кейс «один defect в одном месте, 5 разных формулировок». Отброшенные дубли помечаются `status='false_positive'`, `extraAttributes.qaVerdict='deduplicated'`.
 
-**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
+**Контрадикция через rules-engine** — `apps/api/src/lib/intra-audit.ts`: `runConsistencyChecks` теперь использует `detectContradictions` из `@clinscriptum/rules-engine` вместо самопальной группировки по `trim().toLowerCase()`. Преимущество — canonicalize-сравнение из rules-engine: «30 пациентов» / «N=30» / «30 patients» больше не считаются разными. Sample-size cross-check оставлен как был.
 
-Что НЕ вошло (Sprint 6b / 7):
-- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
-- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
-- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
+**Тесты** — `apps/workers/src/lib/__tests__/intra-audit-dedup.test.ts`: 9 unit-тестов (single/dupes/cross-family/empty-anchor/case-insensitive/severity-tiebreak).
+
+Что НЕ вошло в Sprint 4 (отложено):
+- Anti-FP few-shot в промптах intra-audit — нужны размеченные FP из Sprint 3 датасета (требует аннотатора)
+- Side-by-side двух прогонов с дельтой — текущий `compareRuns` endpoint уже считает delta по stage, но UI визуализации для intra-audit specifically нет; добавим вместе с Sprint 5/6.
 
 ## 2026-05-11
 
