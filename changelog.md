@@ -2,22 +2,156 @@
 
 ## 2026-05-13
 
-### Feat: anti-pattern фильтр для intra-audit findings (Sprint 4b proxy)
+### Feat: promote-to-golden из FindingReview UI (Sprint 6b)
 
-`apps/workers/src/lib/intra-audit-anti-patterns.ts` — эвристический фильтр для отсева очевидных FP до записи в БД. Proxy prompt-tuning'у, который нельзя сделать без Sprint 3 датасета.
+В production-review qc_operator может в один клик «вынести» finding в эталонный набор:
 
-4 семейства patterns (Cyrillic-safe через `(?<!\p{L})` lookbehinds):
-- **hedging** — «возможно противоречие», «может быть», «предположительно», «вероятно конфликт»
-- **suggestion-like** — «стоит уточнить», «нужно проверить», «хорошо бы»
-- **missingness-without-value** — «не указано», «отсутствует» БЕЗ конкретного значения в тексте
-- **meta-talk** — «в тексте неясно», «трудно определить», «требуется уточнение»
+- На каждой карточке finding в `/finding-review/[id]` — кнопка «★ В эталон»
+- Открывает modal со списком всех golden samples из tenant'а
+- Submit вызывает `findingReview.promoteFindingToGolden(reviewId, findingId, goldenSampleId)`
+- Service: грузит Finding → конвертирует в `ExpectedFinding` → мерджит в `GoldenSampleStageStatus.expectedResults.findings` stage='intra_audit' (создаёт stage в draft если ещё нет)
+- Dedup по `id` — повторный promote того же finding'а возвращает `{promoted: false, reason: 'already_present'}`
+- Audit log: `FindingReviewLog` запись с `action='promoted_to_golden'`, `newValue=goldenSampleId`
 
-API: `detectAntiPattern(finding) → AntiPatternMatch | null`. Pure-функция, no side effects.
+Это **закрывает feedback loop production → датасет**: реальные defect-ы, отмеченные qc_operator, наполняют golden corpus без отдельной аннотации, и в следующих evaluation runs увеличивают recall.
 
-17 unit-тестов. Интеграция в `intra-doc-audit.ts` handler — отдельным PR после merge #124 (избегаем конфликта файлов).
 
+### Feat: UI ревью замечаний для qc_operator (Sprint 6)
+
+Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
+
+**`/finding-review` — dashboard**
+- Список pending review (`status='pending'|'in_review'`) и опубликованных
+- Колонки: документ, тип аудита, статус, число замечаний, дата создания
+- Cliquk → детальная страница
+
+**`/finding-review/[id]` — детальный review**
+- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
+- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
+- Список findings с действиями на каждый:
+  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
+  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
+  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
+- Опубликованные review — только просмотр (disabled actions)
+
+**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
+
+Что НЕ вошло (Sprint 6b / 7):
+- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
+- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
+- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
+
+
+### Feat: UI ревью замечаний для qc_operator (Sprint 6)
+
+Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
+
+**`/finding-review` — dashboard**
+- Список pending review (`status='pending'|'in_review'`) и опубликованных
+- Колонки: документ, тип аудита, статус, число замечаний, дата создания
+- Cliquk → детальная страница
+
+**`/finding-review/[id]` — детальный review**
+- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
+- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
+- Список findings с действиями на каждый:
+  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
+  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
+  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
+- Опубликованные review — только просмотр (disabled actions)
+
+**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
+
+Что НЕ вошло (Sprint 6b / 7):
+- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
+- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
+- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
+
+
+### Feat: UI ревью замечаний для qc_operator (Sprint 6)
+
+Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
+
+**`/finding-review` — dashboard**
+- Список pending review (`status='pending'|'in_review'`) и опубликованных
+- Колонки: документ, тип аудита, статус, число замечаний, дата создания
+- Cliquk → детальная страница
+
+**`/finding-review/[id]` — детальный review**
+- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
+- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
+- Список findings с действиями на каждый:
+  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
+  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
+  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
+- Опубликованные review — только просмотр (disabled actions)
+
+**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
+
+Что НЕ вошло (Sprint 6b / 7):
+- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
+- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
+- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
 
 ## 2026-05-11
+
+### Fix: word-addin parsing — TOC ложный jump + scrollIntoView заголовков в таблицах
+
+Из live-теста:
+1. Клик на запись оглавления (`isFalseHeading=true`) с trailing номером страницы в title («8.2.5 Последующее наблюдение День 7 58») искал полный текст и попадал на случайный фрагмент с цифрой (например «стр. 1» в адресе ООО).
+2. Клик на заголовок-первую-строку-таблицы выделял ячейку, но `select()` не скроллил Word — заголовок оставался на следующей странице, юзер не видел реакции.
+
+Изменения в `apps/word-addin/src/parsing/ParsingPanel.tsx` + `office-helpers.ts`:
+- **Skip jump для `isFalseHeading=true`** — показываем «Это запись оглавления» вместо search.
+- **Strip trailing page number из title** перед body.search (`/\s+\d+\.?\s*$/`) — heading-aware match всё ещё работает по точному совпадению, а fallback search не цепляется за лишние цифры.
+- **`range.scrollIntoView()` после select** — Word теперь явно скроллит к выбранному heading, даже если он на page boundary внутри таблицы.
+
+### Feat: heading-numbers — резолв номеров заголовков из Word
+
+Новое поле `Section.headingNumber` хранит иерархический номер заголовка как его рендерит Word («1», «1.2», «5.4.1»). Источники в приоритете:
+1. **Auto-numbering Word** — резолвится из `word/numbering.xml` (`<w:numPr><w:numId>`/`<w:ilvl>` + format string `%1.%2`). Покрывает случай когда автор использовал стиль Heading 1/2/3 со списком — Word рендерит номер автоматически, в `<w:t>` его нет.
+2. **Manual prefix** — regex `^(\d+(?:\.\d+)*\.?)\s+` по началу `title`. Покрывает случай когда автор сам напечатал «5.4 Заслепление».
+3. `null` если ни один источник не сработал.
+
+**Изменения:**
+- `packages/doc-parser/src/numbering-parser.ts` — новый модуль: парсинг `numbering.xml`, `NumberingState` стейт-машина (per-numId counters с правильным reset deeper levels). 9 unit-тестов.
+- `paragraph-properties.ts` — добавлены поля `numId/ilvl/pStyle` в `ParagraphProperties`.
+- `parser.ts` — загружает `numbering.xml`, прокидывает numId/ilvl, резолвит rendered number → fallback на regex → присваивает `ParsedSection.headingNumber`.
+- Prisma migration `20260511140000_add_section_heading_number` — `ALTER TABLE sections ADD COLUMN heading_number TEXT`.
+- `document.service.ts` — `getVersion` (+ raw-SQL fallback) возвращают `headingNumber`.
+- `parse-document.ts` handler — сохраняет `headingNumber` при создании Section.
+- `word-addin SectionTree.tsx` + `rule-admin ParsingTreeViewer.tsx` — рендерят серую semibold цифру перед заголовком.
+
+Backfill для уже распарсенных документов: новые upload'ы получат поле автоматически. Для существующих — отдельная задача (re-parse скрипт).
+
+### Chore: word-addin SectionTree — чекбоксы скрыты по умолчанию
+
+Чекбоксы мультивыделения занимали место в каждой строке, хотя редко используются. Теперь чекбокс скрыт (`opacity:0`) и появляется только когда:
+- курсор наведён на конкретную строку (CSS `:hover`);
+- или хотя бы одна секция уже выделена (`selectedIds.size > 0` → видны все чекбоксы, чтобы можно было снять/добавить).
+
+Освобождает горизонтальное пространство для заголовка раздела. Сама функциональность multi-select сохранена.
+
+### Chore: word-addin SectionTree — заголовки разделов в 2 строки
+
+В узкой панели Word add-in'а Badge «Не подтв.» + 3 action-иконки занимали много места → заголовки обрезались ellipsis (`14.1 ПРИЛО...`, `Цели клиничес...`). Теперь длинные заголовки переносятся до 2 строк word-wrap. Полный текст по-прежнему доступен через tooltip (`title` attribute).
+
+`row.alignItems` из `center` → `flex-start` (актуально для 2-строчных строк).
+
+
+
+### Fix: word-addin parsing — позиционирование на правильный параграф + сброс жёлтой подсветки
+
+Из live-теста на dev:
+- Клик на раздел подсвечивал не тот параграф (часто далеко от заголовка).
+- Прошлое жёлтое выделение оставалось при клике на следующий раздел.
+
+`apps/word-addin/src/office-helpers.ts`:
+- `clearHighlights()` теперь ставит `null` вместо строки `"None"` — Office.js API для снятия highlight требует именно `null`. Раньше Word игнорировал невалидный color, поэтому подсветка накапливалась.
+- Новая функция `jumpToHeading(title)` — ищет параграф со стилем `Heading X`/`Заголовок X`, текст которого совпадает с title раздела (точное совпадение → fallback на substring). Это надёжнее чем `paragraphIndex` (mammoth и Word.body.paragraphs считают по-разному) и body.search (выделяет первое попавшееся вхождение текста в обычном параграфе).
+
+`apps/word-addin/src/parsing/ParsingPanel.tsx`:
+- Поменял порядок стратегий fallback'а: heading-aware (по title) → textSnippet → paragraphIndex (last resort) → plain title search. Раньше `paragraphIndex` был primary и почти всегда промахивался.
 
 ### Chore: word-addin ParsingPanel header — компактная 2-строчная раскладка
 
