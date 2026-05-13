@@ -313,13 +313,23 @@ export default function EvaluationDetailPage() {
           </div>
           <div className="flex items-center gap-2">
             {("intra_audit" in stageMetrics) && (
-              <Link
-                href={`/evaluation/${data.id}/intra-audit-modes`}
-                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                title="Failure modes intra-audit: cascade strict/lenient, per-family, coverage, hallucinations"
-              >
-                Failure modes
-              </Link>
+              <>
+                <Link
+                  href={`/evaluation/${data.id}/intra-audit-modes`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  title="Failure modes intra-audit: cascade strict/lenient, per-family, coverage, hallucinations"
+                >
+                  Failure modes
+                </Link>
+                <Link
+                  href={`/evaluation/${data.id}/intra-audit-compare`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  title="Per-family delta f1 для stage=intra_audit"
+                >
+                  <GitCompare size={16} />
+                  Сравнить intra-audit
+                </Link>
+              </>
             )}
             <button
               onClick={() => setCompareOpen(true)}

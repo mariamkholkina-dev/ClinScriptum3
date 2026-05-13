@@ -201,6 +201,162 @@ export const evaluationService = {
     });
   },
 
+  /**
+   * Sprint 4b — per-family comparison двух evaluation run-ов для stage='intra_audit'.
+   * Читает diff.perFamily из каждого EvaluationResult, агрегирует по семействам
+   * (макроусреднение поверх golden samples), возвращает delta f1/precision/recall.
+   *
+   * Используется dashboard'ом для тюнинга — какие issueFamilies улучшились
+   * от prompt-/rule-изменений между прогонами.
+   */
+  async compareIntraAuditRuns(runId1: string, runId2: string, tenantId: string) {
+    const [run1, run2] = await Promise.all([
+      prisma.evaluationRun.findUnique({ where: { id: runId1 } }),
+      prisma.evaluationRun.findUnique({ where: { id: runId2 } }),
+    ]);
+    if (!run1 || run1.tenantId !== tenantId)
+      throw new DomainError("NOT_FOUND", "First evaluation run not found");
+    if (!run2 || run2.tenantId !== tenantId)
+      throw new DomainError("NOT_FOUND", "Second evaluation run not found");
+
+    const [results1, results2] = await Promise.all([
+      prisma.evaluationResult.findMany({
+        where: { evaluationRunId: runId1, stage: "intra_audit" },
+        select: { f1: true, precision: true, recall: true, diff: true, goldenSampleId: true },
+      }),
+      prisma.evaluationResult.findMany({
+        where: { evaluationRunId: runId2, stage: "intra_audit" },
+        select: { f1: true, precision: true, recall: true, diff: true, goldenSampleId: true },
+      }),
+    ]);
+
+    type FamilyStats = {
+      precision: number[];
+      recall: number[];
+      f1: number[];
+      expectedCount: number;
+      predictedCount: number;
+    };
+    const aggregate = (
+      results: Array<{ diff: unknown }>,
+    ): { perFamily: Record<string, FamilyStats>; overall: { p: number[]; r: number[]; f: number[] } } => {
+      const perFamily: Record<string, FamilyStats> = {};
+      const overall: { p: number[]; r: number[]; f: number[] } = { p: [], r: [], f: [] };
+      for (const r of results) {
+        const diff = (r.diff ?? {}) as Record<string, unknown>;
+        const primary = diff.primary as
+          | { precision?: number; recall?: number; f1?: number }
+          | undefined;
+        if (primary) {
+          if (typeof primary.precision === "number") overall.p.push(primary.precision);
+          if (typeof primary.recall === "number") overall.r.push(primary.recall);
+          if (typeof primary.f1 === "number") overall.f.push(primary.f1);
+        }
+        const pf = diff.perFamily as
+          | Record<
+              string,
+              { precision?: number; recall?: number; f1?: number; expectedCount?: number; predictedCount?: number }
+            >
+          | undefined;
+        if (pf) {
+          for (const [family, s] of Object.entries(pf)) {
+            const slot = (perFamily[family] ??= {
+              precision: [],
+              recall: [],
+              f1: [],
+              expectedCount: 0,
+              predictedCount: 0,
+            });
+            if (typeof s.precision === "number") slot.precision.push(s.precision);
+            if (typeof s.recall === "number") slot.recall.push(s.recall);
+            if (typeof s.f1 === "number") slot.f1.push(s.f1);
+            slot.expectedCount += s.expectedCount ?? 0;
+            slot.predictedCount += s.predictedCount ?? 0;
+          }
+        }
+      }
+      return { perFamily, overall };
+    };
+
+    const a1 = aggregate(results1);
+    const a2 = aggregate(results2);
+    const mean = (a: number[]): number | null =>
+      a.length === 0 ? null : a.reduce((s, x) => s + x, 0) / a.length;
+    const safeDelta = (a: number | null, b: number | null): number | null =>
+      a == null || b == null ? null : a - b;
+
+    const allFamilies = new Set<string>([
+      ...Object.keys(a1.perFamily),
+      ...Object.keys(a2.perFamily),
+    ]);
+    const perFamily: Record<
+      string,
+      {
+        run1: { p: number | null; r: number | null; f1: number | null; expected: number; predicted: number };
+        run2: { p: number | null; r: number | null; f1: number | null; expected: number; predicted: number };
+        delta: { p: number | null; r: number | null; f1: number | null };
+      }
+    > = {};
+    for (const family of allFamilies) {
+      const s1 = a1.perFamily[family];
+      const s2 = a2.perFamily[family];
+      const m1 = {
+        p: s1 ? mean(s1.precision) : null,
+        r: s1 ? mean(s1.recall) : null,
+        f1: s1 ? mean(s1.f1) : null,
+        expected: s1?.expectedCount ?? 0,
+        predicted: s1?.predictedCount ?? 0,
+      };
+      const m2 = {
+        p: s2 ? mean(s2.precision) : null,
+        r: s2 ? mean(s2.recall) : null,
+        f1: s2 ? mean(s2.f1) : null,
+        expected: s2?.expectedCount ?? 0,
+        predicted: s2?.predictedCount ?? 0,
+      };
+      perFamily[family] = {
+        run1: m1,
+        run2: m2,
+        delta: {
+          p: safeDelta(m2.p, m1.p),
+          r: safeDelta(m2.r, m1.r),
+          f1: safeDelta(m2.f1, m1.f1),
+        },
+      };
+    }
+
+    return {
+      run1: {
+        id: run1.id,
+        name: run1.name,
+        createdAt: run1.createdAt,
+        overall: {
+          p: mean(a1.overall.p),
+          r: mean(a1.overall.r),
+          f1: mean(a1.overall.f),
+          samples: results1.length,
+        },
+      },
+      run2: {
+        id: run2.id,
+        name: run2.name,
+        createdAt: run2.createdAt,
+        overall: {
+          p: mean(a2.overall.p),
+          r: mean(a2.overall.r),
+          f1: mean(a2.overall.f),
+          samples: results2.length,
+        },
+      },
+      overallDelta: {
+        p: safeDelta(mean(a2.overall.p), mean(a1.overall.p)),
+        r: safeDelta(mean(a2.overall.r), mean(a1.overall.r)),
+        f1: safeDelta(mean(a2.overall.f), mean(a1.overall.f)),
+      },
+      perFamily,
+    };
+  },
+
   async compareRuns(runId1: string, runId2: string, tenantId: string) {
     const [run1, run2] = await Promise.all([
       prisma.evaluationRun.findUnique({ where: { id: runId1 } }),

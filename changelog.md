@@ -2,146 +2,25 @@
 
 ## 2026-05-13
 
-### Feat: inline-edit overrides в Sprint 2 viewer (Sprint 2c)
+### Feat: side-by-side двух intra-audit прогонов с per-family delta (Sprint 4b)
 
-Расширение Sprint 2/2b viewer: эксперт может править поля finding'а (severity / issueFamily / issueType / anchorZone / description) прямо в карточке через кнопку «Edit».
+Новая страница `/evaluation/[id]/intra-audit-compare` — сравнивает два EvaluationRun по stage='intra_audit', показывает delta f1/precision/recall по issueFamily.
 
-- Изменённые поля сохраняются в `expectedResults.draft.annotations.{id}.overrides` через auto-save (debounced 1.5s)
-- В UI badge "✎ edited" показывает что overrides применены
-- Кнопка «Очистить» удаляет все overrides у finding'а
-- При approve — `findingToExpected(c, overrides[c.id])` применяет overrides к `ExpectedFinding` (severity / issueFamily / issueType / anchorZone / description)
-- Только реально изменённые поля сохраняются — defaults берутся из исходного finding'а
+Backend: `evaluation.compareIntraAuditRuns(runId1, runId2)` query — читает `diff.perFamily` из каждого `EvaluationResult` (структура из Sprint 1), агрегирует mean per family по golden samples, возвращает Run1/Run2 + delta.
 
-Полезно когда LLM правильно нашла defect, но классифицировала как другое issueType/family — эксперт фиксит без перезапуска intra-audit.
+UI:
+- Селектор второго run из `listRuns`
+- Header cards с overall p/r/f1 каждого run
+- Overall delta панель (3 числа)
+- Per-family таблица, отсортированная по |delta f1| (наибольший impact первым)
+- Цветовая разметка: зелёный/красный для |delta| ≥ 2%
 
+Ссылка с главной `/evaluation/[id]/page.tsx` — кнопка «Сравнить intra-audit» рядом с общей «Сравнить» (legacy stage-level diff остаётся).
 
-### Feat: intra-audit-viewer Sprint 2b — подсветка quote + add-missing finding
+Use case: после изменения промпта/правил запустили eval, теперь видим что NUMERIC f1 вырос +12% но TEXT_CONTRADICTION упал −5% — фокусируемся на втором.
 
-Расширение Sprint 2 viewer'а двумя UX-критичными для аннотатора фичами:
-
-**Подсветка `anchorQuote` в исходной секции** (`SectionContextPanel.tsx`)
-- Кнопка «Контекст» на каждой карточке finding'а — разворачивает inline-панель с текстом секции, найденной по `standardSection == anchorZone` (fallback на title contains)
-- `anchorQuote` подсвечивается через `<mark class="bg-yellow-200">` (case-insensitive)
-- Если у finding'а есть `targetZone` — показывает обе секции (anchor + target) друг под другом
-- Аннотатор больше не открывает Word отдельно, чтобы понять контекст
-
-**Add-missing-finding режим** (`AddMissingForm.tsx`)
-- Кнопка «+ Добавить пропущенное» в top bar — открывает форму
-- Поля: issueFamily (dropdown 10 опций), issueType (text), severity, anchorZone (с datalist подсказками из существующих кандидатов и sections.standardSection), anchorQuote (textarea), description
-- Submit сохраняет в `expectedResults.draft.manualFindings: ExpectedFinding[]`
-- Видны отдельным списком над candidates с кнопкой удаления
-- При approve они добавляются в `findings` вместе с accepted candidates — это **будущие FN модели** (recall-baseline)
-
-Технически: `IntraAuditViewer.tsx` тянет `trpc.audit.getDocumentSections` для подсветки. Файлы вынесены в отдельные модули, чтобы не раздувать главный viewer.
-
-### Feat: intra-audit-viewer для аннотации эталонов (Sprint 2 из плана улучшения качества)
-
-В rule-admin золотом эталоне `stage='intra_audit'` теперь не read-only список findings, а полноценный аннотатор кандидатов:
-
-- **Split layout с фильтрами** (severity / issueFamily / annotation decision)
-- **Accept / Reject** на каждом кандидате (UI: зелёный / красный outline, кнопки переключаются)
-- **Auto-save debounced 1.5s** — каждое изменение draft.annotations пишется в `GoldenSampleStageStatus.expectedResults.draft.annotations` через `updateStageStatus` (status='in_review' пока эталон не утверждён)
-- **Кнопка «Утвердить как эталон»** — собирает все `accepted` findings, конвертирует в `ExpectedFinding[]` (`findingToExpected`) и пишет в `expectedResults.findings`, выставляя `status='approved'`
-- **Счётчики в top bar** — accepted / rejected / unreviewed по семантическим (deterministic+placeholder отдельной плашкой «det/placeholder» с tooltip «не учитываются в f1» — вариант A из Sprint 1)
-- **Reset** — очистить все отметки
-- **Кнопки Accept/Reject заблокированы** для findings с `method=deterministic` или `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` (они не входят в f1 — нет смысла размечать)
-
-Файлы:
-- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/IntraAuditViewer.tsx`
-- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/types.ts` — локальная копия `GoldenIntraAuditExpected` (rule-admin не зависит от `@clinscriptum/shared`)
-- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/index.ts`
-- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — case `intra_audit` в `StageDataViewer` теперь рендерит `IntraAuditViewer` (для `inter_audit` сохранён старый read-only `FindingsViewer`)
-
-Что не вошло (Sprint 2b или позже):
-- Подсветка `anchorQuote` в исходной секции (нужен `SectionViewerWithHighlight` компонент)
-- Add-missing-finding режим (для аннотации того, что модель пропустила — будущие FN)
-- Inline-edit overrides (severity / issueType / description)
-- Реальные TP/FP/FN/precision/recall/f1 preview против предыдущего approved expected — Sprint 4 dashboard покажет это side-by-side
-
-
-### Feat: intra-audit-viewer для аннотации эталонов (Sprint 2 из плана улучшения качества)
-
-В rule-admin золотом эталоне `stage='intra_audit'` теперь не read-only список findings, а полноценный аннотатор кандидатов:
-
-- **Split layout с фильтрами** (severity / issueFamily / annotation decision)
-- **Accept / Reject** на каждом кандидате (UI: зелёный / красный outline, кнопки переключаются)
-- **Auto-save debounced 1.5s** — каждое изменение draft.annotations пишется в `GoldenSampleStageStatus.expectedResults.draft.annotations` через `updateStageStatus` (status='in_review' пока эталон не утверждён)
-- **Кнопка «Утвердить как эталон»** — собирает все `accepted` findings, конвертирует в `ExpectedFinding[]` (`findingToExpected`) и пишет в `expectedResults.findings`, выставляя `status='approved'`
-- **Счётчики в top bar** — accepted / rejected / unreviewed по семантическим (deterministic+placeholder отдельной плашкой «det/placeholder» с tooltip «не учитываются в f1» — вариант A из Sprint 1)
-- **Reset** — очистить все отметки
-- **Кнопки Accept/Reject заблокированы** для findings с `method=deterministic` или `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` (они не входят в f1 — нет смысла размечать)
-
-Файлы:
-- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/IntraAuditViewer.tsx`
-- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/types.ts` — локальная копия `GoldenIntraAuditExpected` (rule-admin не зависит от `@clinscriptum/shared`)
-- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/index.ts`
-- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — case `intra_audit` в `StageDataViewer` теперь рендерит `IntraAuditViewer` (для `inter_audit` сохранён старый read-only `FindingsViewer`)
-
-Что не вошло (Sprint 2b или позже):
-- Подсветка `anchorQuote` в исходной секции (нужен `SectionViewerWithHighlight` компонент)
-- Add-missing-finding режим (для аннотации того, что модель пропустила — будущие FN)
-- Inline-edit overrides (severity / issueType / description)
-- Реальные TP/FP/FN/precision/recall/f1 preview против предыдущего approved expected — Sprint 4 dashboard покажет это side-by-side
 
 ## 2026-05-11
-
-### Fix: word-addin parsing — TOC ложный jump + scrollIntoView заголовков в таблицах
-
-Из live-теста:
-1. Клик на запись оглавления (`isFalseHeading=true`) с trailing номером страницы в title («8.2.5 Последующее наблюдение День 7 58») искал полный текст и попадал на случайный фрагмент с цифрой (например «стр. 1» в адресе ООО).
-2. Клик на заголовок-первую-строку-таблицы выделял ячейку, но `select()` не скроллил Word — заголовок оставался на следующей странице, юзер не видел реакции.
-
-Изменения в `apps/word-addin/src/parsing/ParsingPanel.tsx` + `office-helpers.ts`:
-- **Skip jump для `isFalseHeading=true`** — показываем «Это запись оглавления» вместо search.
-- **Strip trailing page number из title** перед body.search (`/\s+\d+\.?\s*$/`) — heading-aware match всё ещё работает по точному совпадению, а fallback search не цепляется за лишние цифры.
-- **`range.scrollIntoView()` после select** — Word теперь явно скроллит к выбранному heading, даже если он на page boundary внутри таблицы.
-
-### Feat: heading-numbers — резолв номеров заголовков из Word
-
-Новое поле `Section.headingNumber` хранит иерархический номер заголовка как его рендерит Word («1», «1.2», «5.4.1»). Источники в приоритете:
-1. **Auto-numbering Word** — резолвится из `word/numbering.xml` (`<w:numPr><w:numId>`/`<w:ilvl>` + format string `%1.%2`). Покрывает случай когда автор использовал стиль Heading 1/2/3 со списком — Word рендерит номер автоматически, в `<w:t>` его нет.
-2. **Manual prefix** — regex `^(\d+(?:\.\d+)*\.?)\s+` по началу `title`. Покрывает случай когда автор сам напечатал «5.4 Заслепление».
-3. `null` если ни один источник не сработал.
-
-**Изменения:**
-- `packages/doc-parser/src/numbering-parser.ts` — новый модуль: парсинг `numbering.xml`, `NumberingState` стейт-машина (per-numId counters с правильным reset deeper levels). 9 unit-тестов.
-- `paragraph-properties.ts` — добавлены поля `numId/ilvl/pStyle` в `ParagraphProperties`.
-- `parser.ts` — загружает `numbering.xml`, прокидывает numId/ilvl, резолвит rendered number → fallback на regex → присваивает `ParsedSection.headingNumber`.
-- Prisma migration `20260511140000_add_section_heading_number` — `ALTER TABLE sections ADD COLUMN heading_number TEXT`.
-- `document.service.ts` — `getVersion` (+ raw-SQL fallback) возвращают `headingNumber`.
-- `parse-document.ts` handler — сохраняет `headingNumber` при создании Section.
-- `word-addin SectionTree.tsx` + `rule-admin ParsingTreeViewer.tsx` — рендерят серую semibold цифру перед заголовком.
-
-Backfill для уже распарсенных документов: новые upload'ы получат поле автоматически. Для существующих — отдельная задача (re-parse скрипт).
-
-### Chore: word-addin SectionTree — чекбоксы скрыты по умолчанию
-
-Чекбоксы мультивыделения занимали место в каждой строке, хотя редко используются. Теперь чекбокс скрыт (`opacity:0`) и появляется только когда:
-- курсор наведён на конкретную строку (CSS `:hover`);
-- или хотя бы одна секция уже выделена (`selectedIds.size > 0` → видны все чекбоксы, чтобы можно было снять/добавить).
-
-Освобождает горизонтальное пространство для заголовка раздела. Сама функциональность multi-select сохранена.
-
-### Chore: word-addin SectionTree — заголовки разделов в 2 строки
-
-В узкой панели Word add-in'а Badge «Не подтв.» + 3 action-иконки занимали много места → заголовки обрезались ellipsis (`14.1 ПРИЛО...`, `Цели клиничес...`). Теперь длинные заголовки переносятся до 2 строк word-wrap. Полный текст по-прежнему доступен через tooltip (`title` attribute).
-
-`row.alignItems` из `center` → `flex-start` (актуально для 2-строчных строк).
-
-
-
-### Fix: word-addin parsing — позиционирование на правильный параграф + сброс жёлтой подсветки
-
-Из live-теста на dev:
-- Клик на раздел подсвечивал не тот параграф (часто далеко от заголовка).
-- Прошлое жёлтое выделение оставалось при клике на следующий раздел.
-
-`apps/word-addin/src/office-helpers.ts`:
-- `clearHighlights()` теперь ставит `null` вместо строки `"None"` — Office.js API для снятия highlight требует именно `null`. Раньше Word игнорировал невалидный color, поэтому подсветка накапливалась.
-- Новая функция `jumpToHeading(title)` — ищет параграф со стилем `Heading X`/`Заголовок X`, текст которого совпадает с title раздела (точное совпадение → fallback на substring). Это надёжнее чем `paragraphIndex` (mammoth и Word.body.paragraphs считают по-разному) и body.search (выделяет первое попавшееся вхождение текста в обычном параграфе).
-
-`apps/word-addin/src/parsing/ParsingPanel.tsx`:
-- Поменял порядок стратегий fallback'а: heading-aware (по title) → textSnippet → paragraphIndex (last resort) → plain title search. Раньше `paragraphIndex` был primary и почти всегда промахивался.
 
 ### Chore: word-addin ParsingPanel header — компактная 2-строчная раскладка
 
