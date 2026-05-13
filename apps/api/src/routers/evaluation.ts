@@ -89,6 +89,21 @@ export const evaluationRouter = router({
       evaluationService.compareRuns(input.runId1, input.runId2, ctx.user.tenantId),
     ),
 
+  compareIntraAuditRuns: p
+    .input(
+      z.object({
+        runId1: z.string().uuid(),
+        runId2: z.string().uuid(),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      evaluationService.compareIntraAuditRuns(
+        input.runId1,
+        input.runId2,
+        ctx.user.tenantId,
+      ),
+    ),
+
   /**
    * Per-golden-sample SoA detection metrics. Used by the SoA overview
    * page to show precision/recall/F1 over the golden set.
