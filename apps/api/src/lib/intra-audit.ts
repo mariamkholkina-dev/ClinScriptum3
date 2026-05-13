@@ -9,6 +9,7 @@
  */
 
 import { prisma } from "@clinscriptum/db";
+import { detectContradictions, type ExtractedFact } from "@clinscriptum/rules-engine";
 import { llmAsk, llmGetConfig } from "./llm-gateway.js";
 import { getInputBudgetChars } from "../config.js";
 import { logger } from "./logger.js";
@@ -267,33 +268,40 @@ function runPlaceholderChecks(sections: SectionData[]): RawFinding[] {
   return findings;
 }
 
+function toExtractedFact(f: FactData): ExtractedFact {
+  const rawSource = Array.isArray(f.sources) ? f.sources[0] : f.sources;
+  const src = (rawSource ?? {}) as Record<string, unknown>;
+  return {
+    factKey: f.factKey,
+    value: f.value,
+    factClass: "general",
+    source: {
+      sectionTitle: typeof src.sectionTitle === "string" ? src.sectionTitle : undefined,
+      textSnippet: typeof src.textSnippet === "string" ? src.textSnippet : "",
+      method: "llm",
+    },
+  };
+}
+
 function runConsistencyChecks(facts: FactData[]): RawFinding[] {
   const findings: RawFinding[] = [];
-  const byKey = new Map<string, FactData[]>();
 
-  for (const fact of facts) {
-    const existing = byKey.get(fact.factKey) ?? [];
-    existing.push(fact);
-    byKey.set(fact.factKey, existing);
-  }
-
-  for (const [key, group] of byKey) {
-    if (group.length < 2) continue;
-
-    const uniqueValues = [...new Set(group.map((f) => f.value.trim().toLowerCase()))];
-    if (uniqueValues.length < 2) continue;
-
-    const valueList = group.map((f) => f.value).join(" vs ");
+  // Делегируем определение противоречий в rules-engine — там canonicalize
+  // сравнение, которое не даст ложного срабатывания на «30 пациентов»
+  // vs «N=30» vs «30 patients».
+  const contradictions = detectContradictions(facts.map(toExtractedFact));
+  for (const c of contradictions) {
+    const valueList = c.values.map((v) => v.value).join(" vs ");
     findings.push({
       type: "intra_audit",
-      description: `Противоречие: ${key} — обнаружены разные значения в документе: ${valueList}`,
+      description: `Противоречие: ${c.factKey} — обнаружены разные значения в документе: ${valueList}`,
       suggestion: "Проверьте и приведите значения к единому виду во всех разделах",
       severity: "critical",
       auditCategory: "consistency",
       issueType: "multi_value_same_key",
       issueFamily: "NUMERIC",
       sourceRef: {
-        textSnippet: `Факт "${key}": ${valueList}`,
+        textSnippet: `Факт "${c.factKey}": ${valueList}`,
       },
     });
   }

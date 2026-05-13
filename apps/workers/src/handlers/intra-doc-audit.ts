@@ -7,6 +7,7 @@ import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeli
 import { logger } from "../lib/logger.js";
 import { runWithConcurrency } from "../lib/concurrency.js";
 import { loadSections, invalidateSectionsCache } from "../lib/section-cache.js";
+import { deduplicateByFamilyAndAnchor, pickDuplicateIds } from "../lib/intra-audit-dedup.js";
 
 interface AuditFinding {
   type: "editorial" | "semantic";
@@ -441,11 +442,19 @@ export async function handleIntraDocAudit(data: {
         return { data: { message: "No findings to verify", verified: 0 }, needsNextStep: true };
       }
 
-      const allFindings = deduplicateFindings(rawFindings);
+      // First pass: дедупликация по description / textSnippet (legacy).
+      const afterDescDedup = deduplicateFindings(rawFindings);
+      // Second pass: группировка по (issueFamily, normalize(anchorQuote)) —
+      // ловит «один и тот же defect в том же месте, 5 разных формулировок».
+      const allFindings = deduplicateByFamilyAndAnchor(afterDescDedup);
       const dedupedCount = rawFindings.length - allFindings.length;
       if (dedupedCount > 0) {
-        logger.info("[audit:llm_qa] Deduplicated findings", { before: rawFindings.length, after: allFindings.length });
-        const dedupedIds = rawFindings.filter((f) => !allFindings.some((k) => k.id === f.id)).map((f) => f.id);
+        logger.info("[audit:llm_qa] Deduplicated findings", {
+          before: rawFindings.length,
+          afterDescDedup: afterDescDedup.length,
+          afterFamilyAnchor: allFindings.length,
+        });
+        const dedupedIds = pickDuplicateIds(rawFindings, allFindings);
         for (const id of dedupedIds) {
           await prisma.finding.update({ where: { id }, data: { status: "false_positive" as any, extraAttributes: { qaVerdict: "deduplicated" } as any } });
         }
