@@ -2,96 +2,73 @@
 
 ## 2026-05-13
 
-### Feat: promote-to-golden из FindingReview UI (Sprint 6b)
+### Feat: intra-audit-viewer Sprint 2b — подсветка quote + add-missing finding
 
-В production-review qc_operator может в один клик «вынести» finding в эталонный набор:
+Расширение Sprint 2 viewer'а двумя UX-критичными для аннотатора фичами:
 
-- На каждой карточке finding в `/finding-review/[id]` — кнопка «★ В эталон»
-- Открывает modal со списком всех golden samples из tenant'а
-- Submit вызывает `findingReview.promoteFindingToGolden(reviewId, findingId, goldenSampleId)`
-- Service: грузит Finding → конвертирует в `ExpectedFinding` → мерджит в `GoldenSampleStageStatus.expectedResults.findings` stage='intra_audit' (создаёт stage в draft если ещё нет)
-- Dedup по `id` — повторный promote того же finding'а возвращает `{promoted: false, reason: 'already_present'}`
-- Audit log: `FindingReviewLog` запись с `action='promoted_to_golden'`, `newValue=goldenSampleId`
+**Подсветка `anchorQuote` в исходной секции** (`SectionContextPanel.tsx`)
+- Кнопка «Контекст» на каждой карточке finding'а — разворачивает inline-панель с текстом секции, найденной по `standardSection == anchorZone` (fallback на title contains)
+- `anchorQuote` подсвечивается через `<mark class="bg-yellow-200">` (case-insensitive)
+- Если у finding'а есть `targetZone` — показывает обе секции (anchor + target) друг под другом
+- Аннотатор больше не открывает Word отдельно, чтобы понять контекст
 
-Это **закрывает feedback loop production → датасет**: реальные defect-ы, отмеченные qc_operator, наполняют golden corpus без отдельной аннотации, и в следующих evaluation runs увеличивают recall.
+**Add-missing-finding режим** (`AddMissingForm.tsx`)
+- Кнопка «+ Добавить пропущенное» в top bar — открывает форму
+- Поля: issueFamily (dropdown 10 опций), issueType (text), severity, anchorZone (с datalist подсказками из существующих кандидатов и sections.standardSection), anchorQuote (textarea), description
+- Submit сохраняет в `expectedResults.draft.manualFindings: ExpectedFinding[]`
+- Видны отдельным списком над candidates с кнопкой удаления
+- При approve они добавляются в `findings` вместе с accepted candidates — это **будущие FN модели** (recall-baseline)
 
+Технически: `IntraAuditViewer.tsx` тянет `trpc.audit.getDocumentSections` для подсветки. Файлы вынесены в отдельные модули, чтобы не раздувать главный viewer.
 
-### Feat: UI ревью замечаний для qc_operator (Sprint 6)
+### Feat: intra-audit-viewer для аннотации эталонов (Sprint 2 из плана улучшения качества)
 
-Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
+В rule-admin золотом эталоне `stage='intra_audit'` теперь не read-only список findings, а полноценный аннотатор кандидатов:
 
-**`/finding-review` — dashboard**
-- Список pending review (`status='pending'|'in_review'`) и опубликованных
-- Колонки: документ, тип аудита, статус, число замечаний, дата создания
-- Cliquk → детальная страница
+- **Split layout с фильтрами** (severity / issueFamily / annotation decision)
+- **Accept / Reject** на каждом кандидате (UI: зелёный / красный outline, кнопки переключаются)
+- **Auto-save debounced 1.5s** — каждое изменение draft.annotations пишется в `GoldenSampleStageStatus.expectedResults.draft.annotations` через `updateStageStatus` (status='in_review' пока эталон не утверждён)
+- **Кнопка «Утвердить как эталон»** — собирает все `accepted` findings, конвертирует в `ExpectedFinding[]` (`findingToExpected`) и пишет в `expectedResults.findings`, выставляя `status='approved'`
+- **Счётчики в top bar** — accepted / rejected / unreviewed по семантическим (deterministic+placeholder отдельной плашкой «det/placeholder» с tooltip «не учитываются в f1» — вариант A из Sprint 1)
+- **Reset** — очистить все отметки
+- **Кнопки Accept/Reject заблокированы** для findings с `method=deterministic` или `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` (они не входят в f1 — нет смысла размечать)
 
-**`/finding-review/[id]` — детальный review**
-- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
-- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
-- Список findings с действиями на каждый:
-  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
-  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
-  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
-- Опубликованные review — только просмотр (disabled actions)
+Файлы:
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/IntraAuditViewer.tsx`
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/types.ts` — локальная копия `GoldenIntraAuditExpected` (rule-admin не зависит от `@clinscriptum/shared`)
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/index.ts`
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — case `intra_audit` в `StageDataViewer` теперь рендерит `IntraAuditViewer` (для `inter_audit` сохранён старый read-only `FindingsViewer`)
 
-**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
-
-Что НЕ вошло (Sprint 6b / 7):
-- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
-- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
-- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
-
-
-### Feat: UI ревью замечаний для qc_operator (Sprint 6)
-
-Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
-
-**`/finding-review` — dashboard**
-- Список pending review (`status='pending'|'in_review'`) и опубликованных
-- Колонки: документ, тип аудита, статус, число замечаний, дата создания
-- Cliquk → детальная страница
-
-**`/finding-review/[id]` — детальный review**
-- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
-- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
-- Список findings с действиями на каждый:
-  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
-  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
-  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
-- Опубликованные review — только просмотр (disabled actions)
-
-**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
-
-Что НЕ вошло (Sprint 6b / 7):
-- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
-- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
-- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
+Что не вошло (Sprint 2b или позже):
+- Подсветка `anchorQuote` в исходной секции (нужен `SectionViewerWithHighlight` компонент)
+- Add-missing-finding режим (для аннотации того, что модель пропустила — будущие FN)
+- Inline-edit overrides (severity / issueType / description)
+- Реальные TP/FP/FN/precision/recall/f1 preview против предыдущего approved expected — Sprint 4 dashboard покажет это side-by-side
 
 
-### Feat: UI ревью замечаний для qc_operator (Sprint 6)
+### Feat: intra-audit-viewer для аннотации эталонов (Sprint 2 из плана улучшения качества)
 
-Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:
+В rule-admin золотом эталоне `stage='intra_audit'` теперь не read-only список findings, а полноценный аннотатор кандидатов:
 
-**`/finding-review` — dashboard**
-- Список pending review (`status='pending'|'in_review'`) и опубликованных
-- Колонки: документ, тип аудита, статус, число замечаний, дата создания
-- Cliquk → детальная страница
+- **Split layout с фильтрами** (severity / issueFamily / annotation decision)
+- **Accept / Reject** на каждом кандидате (UI: зелёный / красный outline, кнопки переключаются)
+- **Auto-save debounced 1.5s** — каждое изменение draft.annotations пишется в `GoldenSampleStageStatus.expectedResults.draft.annotations` через `updateStageStatus` (status='in_review' пока эталон не утверждён)
+- **Кнопка «Утвердить как эталон»** — собирает все `accepted` findings, конвертирует в `ExpectedFinding[]` (`findingToExpected`) и пишет в `expectedResults.findings`, выставляя `status='approved'`
+- **Счётчики в top bar** — accepted / rejected / unreviewed по семантическим (deterministic+placeholder отдельной плашкой «det/placeholder» с tooltip «не учитываются в f1» — вариант A из Sprint 1)
+- **Reset** — очистить все отметки
+- **Кнопки Accept/Reject заблокированы** для findings с `method=deterministic` или `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` (они не входят в f1 — нет смысла размечать)
 
-**`/finding-review/[id]` — детальный review**
-- Header: документ/версия, статус, счётчики (видно writer'у / скрыто)
-- Кнопки: «Взять в работу» (startReview), «Опубликовать writer'у» (publish — переводит в `status='published'`, делает findings видимыми writer'у)
-- Список findings с действиями на каждый:
-  - **Severity dropdown** — `changeSeverity` (с показом original severity если изменена)
-  - **Eye/EyeOff toggle** — `toggleHidden` (помечает finding `hiddenByReviewer=true`, writer его не увидит)
-  - **Заметка** — `addNote` (textarea, max 2000 chars, сохраняется в `reviewerNote`)
-- Опубликованные review — только просмотр (disabled actions)
+Файлы:
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/IntraAuditViewer.tsx`
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/types.ts` — локальная копия `GoldenIntraAuditExpected` (rule-admin не зависит от `@clinscriptum/shared`)
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/intra-audit-viewer/index.ts`
+- `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx` — case `intra_audit` в `StageDataViewer` теперь рендерит `IntraAuditViewer` (для `inter_audit` сохранён старый read-only `FindingsViewer`)
 
-**Навигация:** в `apps/rule-admin/src/app/(app)/layout.tsx` добавлен пункт «Ревью замечаний» под «Согласования».
-
-Что НЕ вошло (Sprint 6b / 7):
-- Promote-to-golden — кнопка «вынести этот finding в golden expectedResults» (нужна совместно с Sprint 2 viewer)
-- Бейдж с count pending в sidebar (нужен polling/subscription, отдельная задача)
-- Confidence calibration — Sprint 7, требует датасета ≥ 15 размеченных документов
+Что не вошло (Sprint 2b или позже):
+- Подсветка `anchorQuote` в исходной секции (нужен `SectionViewerWithHighlight` компонент)
+- Add-missing-finding режим (для аннотации того, что модель пропустила — будущие FN)
+- Inline-edit overrides (severity / issueType / description)
+- Реальные TP/FP/FN/precision/recall/f1 preview против предыдущего approved expected — Sprint 4 dashboard покажет это side-by-side
 
 ## 2026-05-11
 

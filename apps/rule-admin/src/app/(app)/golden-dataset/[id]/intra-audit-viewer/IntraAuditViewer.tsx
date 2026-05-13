@@ -8,6 +8,10 @@ import {
   AlertCircle,
   ListChecks,
   RotateCcw,
+  Eye,
+  EyeOff,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import type {
@@ -18,6 +22,8 @@ import type {
   ExpectedSeverity,
   IntraAuditDraft,
 } from "./types";
+import { SectionContextPanel, type SectionForContext } from "./SectionContextPanel";
+import { AddMissingForm } from "./AddMissingForm";
 
 /* ═══════════════ Constants ═══════════════ */
 
@@ -112,6 +118,15 @@ export function IntraAuditViewer({
     { docVersionId: versionId },
     { staleTime: 60_000, refetchOnWindowFocus: false },
   );
+  const sectionsQuery = trpc.audit.getDocumentSections.useQuery(
+    { docVersionId: versionId },
+    { staleTime: 5 * 60_000, refetchOnWindowFocus: false },
+  );
+  const sections = (sectionsQuery.data ?? []) as SectionForContext[];
+
+  // Sprint 2b: expand context panel per finding + add-missing form state
+  const [expandedFindingId, setExpandedFindingId] = useState<string | null>(null);
+  const [addMissingOpen, setAddMissingOpen] = useState(false);
 
   const initialExpected = useMemo(() => parseExpected(expectedResults), [expectedResults]);
   const [annotations, setAnnotations] = useState<Record<string, AnnotationDecision>>(
@@ -201,6 +216,54 @@ export function IntraAuditViewer({
     setDirty(true);
   }, []);
 
+  // Sprint 2b: add-missing finding handlers (manualFindings in draft)
+  const addManualFinding = useCallback(
+    (f: ExpectedFinding) => {
+      const existing = initialExpected.draft?.manualFindings ?? [];
+      const nextManual = [...existing, f];
+      const nextExpected: GoldenIntraAuditExpected = {
+        ...initialExpected,
+        draft: {
+          annotations: Object.fromEntries(
+            Object.entries(annotations).map(([id, decision]) => [id, { decision }]),
+          ),
+          manualFindings: nextManual,
+        },
+      };
+      updateStageMutation.mutate({
+        goldenSampleId,
+        stage: "intra_audit",
+        status: currentStatus === "approved" ? "approved" : "in_review",
+        expectedResults: nextExpected as unknown as Record<string, unknown>,
+      });
+      setAddMissingOpen(false);
+    },
+    [initialExpected, annotations, goldenSampleId, currentStatus, updateStageMutation],
+  );
+
+  const removeManualFinding = useCallback(
+    (id: string) => {
+      const existing = initialExpected.draft?.manualFindings ?? [];
+      const nextManual = existing.filter((f) => f.id !== id);
+      const nextExpected: GoldenIntraAuditExpected = {
+        ...initialExpected,
+        draft: {
+          annotations: Object.fromEntries(
+            Object.entries(annotations).map(([id2, decision]) => [id2, { decision }]),
+          ),
+          manualFindings: nextManual,
+        },
+      };
+      updateStageMutation.mutate({
+        goldenSampleId,
+        stage: "intra_audit",
+        status: currentStatus === "approved" ? "approved" : "in_review",
+        expectedResults: nextExpected as unknown as Record<string, unknown>,
+      });
+    },
+    [initialExpected, annotations, goldenSampleId, currentStatus, updateStageMutation],
+  );
+
   /* ─── Loading / Error / Empty ───────────────────────────── */
 
   if (findingsQuery.isLoading) {
@@ -241,6 +304,13 @@ export function IntraAuditViewer({
   const families = Array.from(
     new Set(candidatesAll.map((c) => c.issueFamily).filter((x): x is string => !!x)),
   );
+  const zoneSuggestions = Array.from(
+    new Set([
+      ...candidatesAll.map((c) => c.anchorZone).filter((x): x is string => !!x),
+      ...sections.map((s) => s.standardSection).filter((x): x is string => !!x),
+    ]),
+  ).sort();
+  const manualFindings = initialExpected.draft?.manualFindings ?? [];
 
   const candidates = candidatesAll.filter((c) => {
     if (severityFilter && getSeverity(c) !== severityFilter) return false;
@@ -325,14 +395,81 @@ export function IntraAuditViewer({
           </button>
 
           <button
+            onClick={() => setAddMissingOpen((v) => !v)}
+            disabled={isSaving}
+            className="inline-flex items-center gap-1 rounded border border-purple-300 bg-white px-2 py-1 text-xs text-purple-700 hover:bg-purple-50 disabled:opacity-50"
+            title="Разметить finding, пропущенный моделью (будущий FN)"
+          >
+            <Plus size={12} /> Добавить пропущенное
+          </button>
+
+          <button
             onClick={handleApprove}
-            disabled={acceptedCount === 0 || isSaving}
+            disabled={(acceptedCount + manualFindings.length) === 0 || isSaving}
             className="rounded bg-brand-600 px-3 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
           >
-            Утвердить как эталон ({acceptedCount})
+            Утвердить как эталон ({acceptedCount + manualFindings.length})
           </button>
         </div>
       </div>
+
+      {/* Add-missing form */}
+      {addMissingOpen && (
+        <AddMissingForm
+          zoneSuggestions={zoneSuggestions}
+          onCancel={() => setAddMissingOpen(false)}
+          onSubmit={addManualFinding}
+        />
+      )}
+
+      {/* Manual findings list (those added via "Добавить пропущенное") */}
+      {manualFindings.length > 0 && (
+        <div className="rounded-md border border-purple-200 bg-purple-50/40 p-2">
+          <p className="mb-1 text-xs font-medium text-purple-900">
+            Вручную добавленные ({manualFindings.length}) — пойдут в эталон при approve
+          </p>
+          <div className="space-y-1">
+            {manualFindings.map((f) => (
+              <div
+                key={f.id}
+                className="flex items-start justify-between gap-2 rounded border border-purple-200 bg-white p-1.5 text-xs"
+              >
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-medium text-slate-700">
+                      {f.issueFamily}
+                    </span>
+                    {f.issueType && (
+                      <span className="rounded bg-slate-50 px-1 py-0.5 font-mono text-[10px] text-slate-600">
+                        {f.issueType}
+                      </span>
+                    )}
+                    <span className="rounded bg-blue-50 px-1 py-0.5 text-[10px] text-blue-700">
+                      {f.anchorZone}
+                    </span>
+                    <span
+                      className={`rounded px-1 py-0.5 text-[10px] font-medium ${SEVERITY_BADGES[f.severity]}`}
+                    >
+                      {SEVERITY_LABELS[f.severity]}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-gray-800">{f.description}</p>
+                  <blockquote className="border-l-2 border-purple-300 pl-1 italic text-gray-600">
+                    «{f.anchorQuote}»
+                  </blockquote>
+                </div>
+                <button
+                  onClick={() => removeManualFinding(f.id)}
+                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-600"
+                  title="Удалить из эталона"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -382,6 +519,12 @@ export function IntraAuditViewer({
             decision={annotations[c.id] ?? "unreviewed"}
             onSetDecision={(d) => setDecision(c.id, d)}
             excludedFromMetric={isDeterministicOrPlaceholder(c)}
+            sections={sections}
+            sectionsLoading={sectionsQuery.isLoading}
+            expanded={expandedFindingId === c.id}
+            onToggleExpand={() =>
+              setExpandedFindingId(expandedFindingId === c.id ? null : c.id)
+            }
           />
         ))}
       </div>
@@ -396,11 +539,19 @@ function CandidateCard({
   decision,
   onSetDecision,
   excludedFromMetric,
+  sections,
+  sectionsLoading,
+  expanded,
+  onToggleExpand,
 }: {
   candidate: CandidateFindingRaw;
   decision: AnnotationDecision;
   onSetDecision: (d: AnnotationDecision) => void;
   excludedFromMetric: boolean;
+  sections: SectionForContext[];
+  sectionsLoading: boolean;
+  expanded: boolean;
+  onToggleExpand: () => void;
 }) {
   const severity = getSeverity(candidate);
   const src = (candidate.sourceRef ?? {}) as { anchorQuote?: string; targetQuote?: string };
@@ -452,6 +603,14 @@ function CandidateCard({
 
         <div className="flex shrink-0 gap-1">
           <button
+            onClick={onToggleExpand}
+            className="rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-50"
+            title={expanded ? "Скрыть контекст" : "Показать секцию с подсветкой quote"}
+          >
+            {expanded ? <EyeOff size={12} className="inline" /> : <Eye size={12} className="inline" />}
+            <span className="ml-1">Контекст</span>
+          </button>
+          <button
             onClick={() => onSetDecision(accepted ? "unreviewed" : "accepted")}
             disabled={excludedFromMetric}
             className={`rounded border px-2 py-0.5 text-xs transition-colors ${
@@ -496,6 +655,17 @@ function CandidateCard({
         <p className="mt-1 text-xs text-gray-500">
           <span className="font-medium">Suggestion:</span> {candidate.suggestion}
         </p>
+      )}
+
+      {expanded && (
+        <SectionContextPanel
+          sections={sections}
+          isLoading={sectionsLoading}
+          anchorZone={candidate.anchorZone ?? null}
+          anchorQuote={src.anchorQuote ?? null}
+          targetZone={candidate.targetZone ?? null}
+          targetQuote={src.targetQuote ?? null}
+        />
       )}
     </div>
   );
