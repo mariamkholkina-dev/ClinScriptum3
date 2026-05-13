@@ -2,70 +2,85 @@
 
 ## 2026-05-13
 
-### Feat: failure-mode dashboard + дедупликация в intra-audit (Sprint 4)
+### Feat: pre-labelling скрипт для intra-audit golden samples
 
-**UI dashboard** — новая страница `/evaluation/[id]/intra-audit-modes` в rule-admin визуализирует структуру `EvaluationResult.diff` для stage='intra_audit', собранную в Sprint 1:
-- **Primary метрика** (LLM-judge или cascade.lenient fallback) с tp/fp/fn и подсветкой f1
-- **Cascade strict vs lenient** — таблица с разрывом lenient−strict (большой разрыв = модель попадает в место, но путает issueType)
-- **Per-family breakdown** — таблица по issueFamily (NUMERIC/TEXT_CONTRADICTION/...) с expected/predicted/tp/fp/fn/f1
-- **Coverage panel** — covered / missed (FN) / hallucination candidates (FP) на уровне уникальных проблем
-- **LLM judge audit trail** — список решений судьи с rationale (collapsed)
+CLI-скрипт `scripts/intra-audit-prelabel.ts` — авто-наполнение `expectedResults.draft.annotations` heuristic-решениями, чтобы аннотатор не размечал то, что модель сама в состоянии вывести из метаданных finding'а.
 
-Кнопка «Failure modes» появляется в шапке `/evaluation/[id]` если в прогоне есть результаты со stage='intra_audit' (через `stageMetrics`).
+Эвристики:
+- `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` → пропуск (исключены из метрики варианта A — Sprint 1)
+- `status='false_positive'` ИЛИ `extraAttributes.qaVerdict='deduplicated'` → `rejected` (помечено Sprint 4 дедупликатором)
+- `extraAttributes.qaVerdict='dismissed'` → `rejected` (LLM QA отвергла)
+- `extraAttributes.qaVerdict='confirmed'` + `qaVerified=true` → `accepted` (LLM QA подтвердила)
+- иначе → НЕ пишем (эксперт решает в Sprint 2 viewer'е)
 
-**Дедупликация** — `apps/workers/src/lib/intra-audit-dedup.ts`. Новая функция `deduplicateByFamilyAndAnchor`: группировка findings по `(issueFamily, normalize(anchorQuote))` с выбором максимальной severity. Вызывается на уровне `llm_qa` ПОСЛЕ существующей `deduplicateFindings` (description/textSnippet), убирает кейс «один defect в одном месте, 5 разных формулировок». Отброшенные дубли помечаются `status='false_positive'`, `extraAttributes.qaVerdict='deduplicated'`.
+Usage:
+```bash
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts                # все samples
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --dry-run      # показать что будет
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --sample-id <uuid>
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --tenant-id <uuid>
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --overwrite     # перезаписать annotations
+```
 
-**Контрадикция через rules-engine** — `apps/api/src/lib/intra-audit.ts`: `runConsistencyChecks` теперь использует `detectContradictions` из `@clinscriptum/rules-engine` вместо самопальной группировки по `trim().toLowerCase()`. Преимущество — canonicalize-сравнение из rules-engine: «30 пациентов» / «N=30» / «30 patients» больше не считаются разными. Sample-size cross-check оставлен как был.
+По умолчанию мерджит с существующими annotations (не перетирает решения эксперта). `--overwrite` для clean re-run.
 
-**Тесты** — `apps/workers/src/lib/__tests__/intra-audit-dedup.test.ts`: 9 unit-тестов (single/dupes/cross-family/empty-anchor/case-insensitive/severity-tiebreak).
+10 unit-тестов pure-функции `decidePrelabel` (placeholder/dedup/dismissed/confirmed/uncertain/case-insensitive/priority).
 
-Что НЕ вошло в Sprint 4 (отложено):
-- Anti-FP few-shot в промптах intra-audit — нужны размеченные FP из Sprint 3 датасета (требует аннотатора)
-- Side-by-side двух прогонов с дельтой — текущий `compareRuns` endpoint уже считает delta по stage, но UI визуализации для intra-audit specifically нет; добавим вместе с Sprint 5/6.
-
-
-### Feat: failure-mode dashboard + дедупликация в intra-audit (Sprint 4)
-
-**UI dashboard** — новая страница `/evaluation/[id]/intra-audit-modes` в rule-admin визуализирует структуру `EvaluationResult.diff` для stage='intra_audit', собранную в Sprint 1:
-- **Primary метрика** (LLM-judge или cascade.lenient fallback) с tp/fp/fn и подсветкой f1
-- **Cascade strict vs lenient** — таблица с разрывом lenient−strict (большой разрыв = модель попадает в место, но путает issueType)
-- **Per-family breakdown** — таблица по issueFamily (NUMERIC/TEXT_CONTRADICTION/...) с expected/predicted/tp/fp/fn/f1
-- **Coverage panel** — covered / missed (FN) / hallucination candidates (FP) на уровне уникальных проблем
-- **LLM judge audit trail** — список решений судьи с rationale (collapsed)
-
-Кнопка «Failure modes» появляется в шапке `/evaluation/[id]` если в прогоне есть результаты со stage='intra_audit' (через `stageMetrics`).
-
-**Дедупликация** — `apps/workers/src/lib/intra-audit-dedup.ts`. Новая функция `deduplicateByFamilyAndAnchor`: группировка findings по `(issueFamily, normalize(anchorQuote))` с выбором максимальной severity. Вызывается на уровне `llm_qa` ПОСЛЕ существующей `deduplicateFindings` (description/textSnippet), убирает кейс «один defect в одном месте, 5 разных формулировок». Отброшенные дубли помечаются `status='false_positive'`, `extraAttributes.qaVerdict='deduplicated'`.
-
-**Контрадикция через rules-engine** — `apps/api/src/lib/intra-audit.ts`: `runConsistencyChecks` теперь использует `detectContradictions` из `@clinscriptum/rules-engine` вместо самопальной группировки по `trim().toLowerCase()`. Преимущество — canonicalize-сравнение из rules-engine: «30 пациентов» / «N=30» / «30 patients» больше не считаются разными. Sample-size cross-check оставлен как был.
-
-**Тесты** — `apps/workers/src/lib/__tests__/intra-audit-dedup.test.ts`: 9 unit-тестов (single/dupes/cross-family/empty-anchor/case-insensitive/severity-tiebreak).
-
-Что НЕ вошло в Sprint 4 (отложено):
-- Anti-FP few-shot в промптах intra-audit — нужны размеченные FP из Sprint 3 датасета (требует аннотатора)
-- Side-by-side двух прогонов с дельтой — текущий `compareRuns` endpoint уже считает delta по stage, но UI визуализации для intra-audit specifically нет; добавим вместе с Sprint 5/6.
+Эффект — ожидаемая авто-разметка ~30-50% findings в типичном прогоне (placeholders + dedup + LLM QA verdicts). Остаток (~50-70%) идёт эксперту в Sprint 2 viewer как `unreviewed`.
 
 
-### Feat: failure-mode dashboard + дедупликация в intra-audit (Sprint 4)
+### Feat: pre-labelling скрипт для intra-audit golden samples
 
-**UI dashboard** — новая страница `/evaluation/[id]/intra-audit-modes` в rule-admin визуализирует структуру `EvaluationResult.diff` для stage='intra_audit', собранную в Sprint 1:
-- **Primary метрика** (LLM-judge или cascade.lenient fallback) с tp/fp/fn и подсветкой f1
-- **Cascade strict vs lenient** — таблица с разрывом lenient−strict (большой разрыв = модель попадает в место, но путает issueType)
-- **Per-family breakdown** — таблица по issueFamily (NUMERIC/TEXT_CONTRADICTION/...) с expected/predicted/tp/fp/fn/f1
-- **Coverage panel** — covered / missed (FN) / hallucination candidates (FP) на уровне уникальных проблем
-- **LLM judge audit trail** — список решений судьи с rationale (collapsed)
+CLI-скрипт `scripts/intra-audit-prelabel.ts` — авто-наполнение `expectedResults.draft.annotations` heuristic-решениями, чтобы аннотатор не размечал то, что модель сама в состоянии вывести из метаданных finding'а.
 
-Кнопка «Failure modes» появляется в шапке `/evaluation/[id]` если в прогоне есть результаты со stage='intra_audit' (через `stageMetrics`).
+Эвристики:
+- `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` → пропуск (исключены из метрики варианта A — Sprint 1)
+- `status='false_positive'` ИЛИ `extraAttributes.qaVerdict='deduplicated'` → `rejected` (помечено Sprint 4 дедупликатором)
+- `extraAttributes.qaVerdict='dismissed'` → `rejected` (LLM QA отвергла)
+- `extraAttributes.qaVerdict='confirmed'` + `qaVerified=true` → `accepted` (LLM QA подтвердила)
+- иначе → НЕ пишем (эксперт решает в Sprint 2 viewer'е)
 
-**Дедупликация** — `apps/workers/src/lib/intra-audit-dedup.ts`. Новая функция `deduplicateByFamilyAndAnchor`: группировка findings по `(issueFamily, normalize(anchorQuote))` с выбором максимальной severity. Вызывается на уровне `llm_qa` ПОСЛЕ существующей `deduplicateFindings` (description/textSnippet), убирает кейс «один defect в одном месте, 5 разных формулировок». Отброшенные дубли помечаются `status='false_positive'`, `extraAttributes.qaVerdict='deduplicated'`.
+Usage:
+```bash
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts                # все samples
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --dry-run      # показать что будет
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --sample-id <uuid>
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --tenant-id <uuid>
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --overwrite     # перезаписать annotations
+```
 
-**Контрадикция через rules-engine** — `apps/api/src/lib/intra-audit.ts`: `runConsistencyChecks` теперь использует `detectContradictions` из `@clinscriptum/rules-engine` вместо самопальной группировки по `trim().toLowerCase()`. Преимущество — canonicalize-сравнение из rules-engine: «30 пациентов» / «N=30» / «30 patients» больше не считаются разными. Sample-size cross-check оставлен как был.
+По умолчанию мерджит с существующими annotations (не перетирает решения эксперта). `--overwrite` для clean re-run.
 
-**Тесты** — `apps/workers/src/lib/__tests__/intra-audit-dedup.test.ts`: 9 unit-тестов (single/dupes/cross-family/empty-anchor/case-insensitive/severity-tiebreak).
+10 unit-тестов pure-функции `decidePrelabel` (placeholder/dedup/dismissed/confirmed/uncertain/case-insensitive/priority).
 
-Что НЕ вошло в Sprint 4 (отложено):
-- Anti-FP few-shot в промптах intra-audit — нужны размеченные FP из Sprint 3 датасета (требует аннотатора)
-- Side-by-side двух прогонов с дельтой — текущий `compareRuns` endpoint уже считает delta по stage, но UI визуализации для intra-audit specifically нет; добавим вместе с Sprint 5/6.
+Эффект — ожидаемая авто-разметка ~30-50% findings в типичном прогоне (placeholders + dedup + LLM QA verdicts). Остаток (~50-70%) идёт эксперту в Sprint 2 viewer как `unreviewed`.
+
+
+### Feat: pre-labelling скрипт для intra-audit golden samples
+
+CLI-скрипт `scripts/intra-audit-prelabel.ts` — авто-наполнение `expectedResults.draft.annotations` heuristic-решениями, чтобы аннотатор не размечал то, что модель сама в состоянии вывести из метаданных finding'а.
+
+Эвристики:
+- `issueFamily ∈ {PLACEHOLDER, EDITORIAL}` → пропуск (исключены из метрики варианта A — Sprint 1)
+- `status='false_positive'` ИЛИ `extraAttributes.qaVerdict='deduplicated'` → `rejected` (помечено Sprint 4 дедупликатором)
+- `extraAttributes.qaVerdict='dismissed'` → `rejected` (LLM QA отвергла)
+- `extraAttributes.qaVerdict='confirmed'` + `qaVerified=true` → `accepted` (LLM QA подтвердила)
+- иначе → НЕ пишем (эксперт решает в Sprint 2 viewer'е)
+
+Usage:
+```bash
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts                # все samples
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --dry-run      # показать что будет
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --sample-id <uuid>
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --tenant-id <uuid>
+npx tsx --env-file=.env scripts/intra-audit-prelabel.ts --overwrite     # перезаписать annotations
+```
+
+По умолчанию мерджит с существующими annotations (не перетирает решения эксперта). `--overwrite` для clean re-run.
+
+10 unit-тестов pure-функции `decidePrelabel` (placeholder/dedup/dismissed/confirmed/uncertain/case-insensitive/priority).
+
+Эффект — ожидаемая авто-разметка ~30-50% findings в типичном прогоне (placeholders + dedup + LLM QA verdicts). Остаток (~50-70%) идёт эксперту в Sprint 2 viewer как `unreviewed`.
 
 ## 2026-05-11
 
