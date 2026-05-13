@@ -11,6 +11,8 @@ import {
   MessageSquare,
   Send,
   CheckCircle2,
+  Star,
+  X,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 
@@ -173,6 +175,7 @@ export default function FindingReviewDetailPage() {
             key={f.id}
             f={f}
             disabled={isPublished}
+            reviewId={reviewId}
             onToggleHidden={() => toggleHidden.mutate({ reviewId, findingId: f.id })}
             onChangeSeverity={(severity) =>
               changeSeverity.mutate({ reviewId, findingId: f.id, severity })
@@ -185,21 +188,156 @@ export default function FindingReviewDetailPage() {
   );
 }
 
+/* ═══════════════ Promote-to-golden modal ═══════════════ */
+
+interface GoldenSampleRow {
+  id: string;
+  name?: string | null;
+  sampleType?: string;
+}
+
+function PromoteToGoldenModal({
+  reviewId,
+  findingId,
+  onClose,
+}: {
+  reviewId: string;
+  findingId: string;
+  onClose: () => void;
+}) {
+  const samplesQuery = trpc.goldenDataset.listSamples.useQuery(
+    {},
+    { staleTime: 30_000, refetchOnWindowFocus: false },
+  );
+  const [selected, setSelected] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const mutation = trpc.findingReview.promoteFindingToGolden.useMutation({
+    onSuccess: (data) => {
+      if (data && typeof data === "object" && "promoted" in data) {
+        const d = data as { promoted: boolean; reason?: string };
+        setResult(
+          d.promoted ? "✓ Finding добавлен в эталон" : `Уже присутствует (${d.reason ?? "—"})`,
+        );
+      } else {
+        setResult("✓");
+      }
+    },
+    onError: (err) => {
+      setResult("✗ Ошибка: " + err.message);
+    },
+  });
+
+  const samples = (samplesQuery.data ?? []) as GoldenSampleRow[];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <Star size={14} className="text-yellow-500" />
+            Promote finding в эталонный набор
+          </h3>
+          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:text-gray-600">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="space-y-3 p-4">
+          <p className="text-xs text-gray-600">
+            Выберите golden sample. Finding будет конвертирован в ExpectedFinding и добавлен
+            в <code>expectedResults.findings</code> stage=&apos;intra_audit&apos;. Если такого
+            stage у sample ещё нет — он создаётся как draft.
+          </p>
+
+          {samplesQuery.isLoading ? (
+            <div className="py-4 text-center text-xs text-gray-500">
+              <Loader2 size={14} className="mx-auto animate-spin" />
+            </div>
+          ) : samples.length === 0 ? (
+            <p className="rounded bg-yellow-50 p-2 text-xs text-yellow-700">
+              Нет доступных golden samples. Создайте sample в /golden-dataset и повторите.
+            </p>
+          ) : (
+            <div className="max-h-72 space-y-1 overflow-y-auto">
+              {samples.map((s) => (
+                <label
+                  key={s.id}
+                  className={`flex cursor-pointer items-center gap-2 rounded border px-2 py-1.5 text-xs ${
+                    selected === s.id
+                      ? "border-brand-500 bg-brand-50"
+                      : "border-gray-200 hover:bg-gray-50"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="sample"
+                    checked={selected === s.id}
+                    onChange={() => setSelected(s.id)}
+                  />
+                  <span className="flex-1">
+                    {s.name ?? `Sample ${s.id.slice(0, 8)}`}
+                    {s.sampleType && (
+                      <span className="ml-2 text-[10px] text-gray-500">{s.sampleType}</span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {result && (
+            <div
+              className={`rounded p-2 text-xs ${
+                result.startsWith("✗")
+                  ? "bg-red-50 text-red-700"
+                  : "bg-green-50 text-green-700"
+              }`}
+            >
+              {result}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              onClick={onClose}
+              className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-gray-100"
+            >
+              Закрыть
+            </button>
+            <button
+              onClick={() =>
+                selected && mutation.mutate({ reviewId, findingId, goldenSampleId: selected })
+              }
+              disabled={!selected || mutation.isPending}
+              className="rounded bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-700 disabled:opacity-50"
+            >
+              {mutation.isPending ? "..." : "Promote"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FindingCard({
   f,
   disabled,
+  reviewId,
   onToggleHidden,
   onChangeSeverity,
   onAddNote,
 }: {
   f: ReviewFinding;
   disabled: boolean;
+  reviewId: string;
   onToggleHidden: () => void;
   onChangeSeverity: (s: Severity) => void;
   onAddNote: (note: string) => void;
 }) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState(f.reviewerNote ?? "");
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const sev = (f.severity ?? "medium") as Severity;
   const ref = (f.sourceRef ?? {}) as { anchorQuote?: string; targetQuote?: string };
 
@@ -267,8 +405,23 @@ function FindingCard({
           >
             <MessageSquare size={12} /> {f.reviewerNote ? "✎ заметка" : "+ заметка"}
           </button>
+          <button
+            onClick={() => setPromoteOpen(true)}
+            className="rounded border border-yellow-300 bg-yellow-50 px-2 py-0.5 text-xs text-yellow-800 hover:bg-yellow-100"
+            title="Перенести этот finding в эталонный набор (Promote-to-golden)"
+          >
+            <Star size={12} className="inline" /> В эталон
+          </button>
         </div>
       </div>
+
+      {promoteOpen && (
+        <PromoteToGoldenModal
+          reviewId={reviewId}
+          findingId={f.id}
+          onClose={() => setPromoteOpen(false)}
+        />
+      )}
 
       <p className="text-sm text-gray-800">{f.description}</p>
 

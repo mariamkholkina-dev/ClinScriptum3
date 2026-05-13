@@ -74,6 +74,24 @@ export const findingReviewRouter = router({
       findingReviewService.publish(ctx.user.tenantId, input.reviewId, ctx.user.userId),
     ),
 
+  promoteFindingToGolden: r
+    .input(
+      z.object({
+        reviewId: z.string().uuid(),
+        findingId: z.string().uuid(),
+        goldenSampleId: z.string().uuid(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      findingReviewService.promoteFindingToGolden(
+        ctx.user.tenantId,
+        input.reviewId,
+        input.findingId,
+        input.goldenSampleId,
+        ctx.user.userId,
+      ),
+    ),
+
   getReviewStatus: p
     .input(
       z.object({
