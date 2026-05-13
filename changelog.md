@@ -2,6 +2,16 @@
 
 ## 2026-05-13
 
+### Feat: бейдж count pending в sidebar для finding-review (Sprint 6b)
+
+В `apps/rule-admin/src/app/(app)/layout.tsx` для пункта «Ревью замечаний» в sidebar показывается оранжевый бейдж с количеством pending/in_review review:
+
+- Источник: `trpc.findingReview.dashboard` с polling `refetchInterval=60_000`
+- Скрыт когда роль пользователя не reviewer (`findings_reviewer`/`qc_operator`/`rule_admin`/`tenant_admin`)
+- При свёрнутом sidebar — мини-бейдж в углу иконки (с `9+` если >9)
+- При развёрнутом — pill `{count}` справа от label
+
+
 ### Feat: UI ревью замечаний для qc_operator (Sprint 6)
 
 Бекенд `findingReview` сервис и роутер уже существовали (8 procedures: dashboard / getReview / startReview / toggleHidden / changeSeverity / addNote / publish / getReviewStatus); не было UI. Добавили две страницы в rule-admin:

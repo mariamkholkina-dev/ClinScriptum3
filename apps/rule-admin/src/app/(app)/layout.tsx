@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/lib/auth-store";
+import { trpc } from "@/lib/trpc";
 import {
   LayoutDashboard,
   Database,
@@ -100,6 +101,27 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     (item) => !item.approverOnly || userRole === "rule_approver"
   );
 
+  // Badge count для «Ревью замечаний» — pending+in_review reviews.
+  // Polling раз в минуту, чтобы новые review были видны без перезагрузки.
+  const REVIEWER_ROLES = new Set([
+    "findings_reviewer",
+    "qc_operator",
+    "rule_admin",
+    "tenant_admin",
+  ]);
+  const isReviewer = REVIEWER_ROLES.has(userRole);
+  const dashboardQuery = trpc.findingReview.dashboard.useQuery(undefined, {
+    enabled: isReviewer,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const pendingReviewCount = Array.isArray(dashboardQuery.data)
+    ? dashboardQuery.data.filter(
+        (r: { status?: string }) => r.status === "pending" || r.status === "in_review",
+      ).length
+    : 0;
+
   return (
     <div className="flex h-screen">
       {/* Sidebar */}
@@ -125,6 +147,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 overflow-y-auto py-2">
           {visibleItems.map((item) => {
             const active = pathname === item.href;
+            const showBadge =
+              item.href === "/finding-review" && isReviewer && pendingReviewCount > 0;
             return (
               <a
                 key={item.href}
@@ -134,10 +158,28 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     ? "bg-brand-50 text-brand-700 font-medium"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                 } ${sidebarCollapsed ? "justify-center" : ""}`}
-                title={sidebarCollapsed ? item.label : undefined}
+                title={
+                  sidebarCollapsed
+                    ? showBadge
+                      ? `${item.label} (${pendingReviewCount})`
+                      : item.label
+                    : undefined
+                }
               >
-                {item.icon}
-                {!sidebarCollapsed && <span>{item.label}</span>}
+                <span className="relative">
+                  {item.icon}
+                  {showBadge && sidebarCollapsed && (
+                    <span className="absolute -right-1.5 -top-1.5 rounded-full bg-orange-500 px-1 text-[9px] font-bold leading-tight text-white">
+                      {pendingReviewCount > 9 ? "9+" : pendingReviewCount}
+                    </span>
+                  )}
+                </span>
+                {!sidebarCollapsed && <span className="flex-1">{item.label}</span>}
+                {!sidebarCollapsed && showBadge && (
+                  <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-700">
+                    {pendingReviewCount}
+                  </span>
+                )}
               </a>
             );
           })}
