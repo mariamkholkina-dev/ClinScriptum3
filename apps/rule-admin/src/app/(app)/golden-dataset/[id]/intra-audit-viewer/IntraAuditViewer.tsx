@@ -12,12 +12,16 @@ import {
   EyeOff,
   Plus,
   Trash2,
+  Pencil,
+  Save as SaveIcon,
+  X as XIcon,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import type {
   ExpectedFinding,
   GoldenIntraAuditExpected,
   AnnotationDecision,
+  AnnotationOverrides,
   CandidateFindingRaw,
   ExpectedSeverity,
   IntraAuditDraft,
@@ -47,19 +51,23 @@ const AUTOSAVE_DEBOUNCE_MS = 1500;
 
 /* ═══════════════ Helpers ═══════════════ */
 
-function findingToExpected(f: CandidateFindingRaw): ExpectedFinding {
+function findingToExpected(
+  f: CandidateFindingRaw,
+  overrides?: AnnotationOverrides,
+): ExpectedFinding {
   const src = (f.sourceRef ?? {}) as { anchorQuote?: string; targetQuote?: string };
   return {
     id: f.id,
-    issueFamily: f.issueFamily ?? "UNKNOWN",
-    issueType: f.issueType ?? "",
-    severity: (f.severity ?? "medium") as ExpectedSeverity,
-    anchorZone: f.anchorZone ?? "",
+    issueFamily: overrides?.issueFamily ?? f.issueFamily ?? "UNKNOWN",
+    issueType: overrides?.issueType ?? f.issueType ?? "",
+    severity: overrides?.severity ?? ((f.severity ?? "medium") as ExpectedSeverity),
+    anchorZone: overrides?.anchorZone ?? f.anchorZone ?? "",
     targetZone: f.targetZone ?? undefined,
     anchorQuote: src.anchorQuote ?? "",
     targetQuote: src.targetQuote,
-    description: f.description,
+    description: overrides?.description ?? f.description,
     mustDetect: true,
+    notes: overrides?.notes,
   };
 }
 
@@ -138,14 +146,28 @@ export function IntraAuditViewer({
       return out;
     },
   );
+  // Sprint 2b inline-edit: pickup overrides из draft, отдельный state
+  // (не мерджим со severity, чтобы видеть какие поля были изменены).
+  const [overridesState, setOverridesState] = useState<Record<string, AnnotationOverrides>>(
+    () => {
+      const out: Record<string, AnnotationOverrides> = {};
+      for (const [id, v] of Object.entries(initialExpected.draft?.annotations ?? {})) {
+        if (v.overrides) out[id] = v.overrides;
+      }
+      return out;
+    },
+  );
   // Сбросить локальный state, когда родитель прислал новый expectedResults
   // (после save mutation invalidate'ит query → нам приходит обновлённый объект).
   useEffect(() => {
-    const out: Record<string, AnnotationDecision> = {};
+    const a: Record<string, AnnotationDecision> = {};
+    const o: Record<string, AnnotationOverrides> = {};
     for (const [id, v] of Object.entries(initialExpected.draft?.annotations ?? {})) {
-      out[id] = v.decision;
+      a[id] = v.decision;
+      if (v.overrides) o[id] = v.overrides;
     }
-    setAnnotations(out);
+    setAnnotations(a);
+    setOverridesState(o);
   }, [initialExpected]);
 
   const [severityFilter, setSeverityFilter] = useState("");
@@ -172,12 +194,26 @@ export function IntraAuditViewer({
     },
   });
 
-  // Auto-save debounced: каждое изменение annotations → через 1.5s pushim в expectedResults.draft.
+  // Auto-save debounced: annotations + overrides → через 1.5s pushim в expectedResults.draft.
   const saveDraft = useCallback(
-    (nextAnnotations: Record<string, AnnotationDecision>) => {
+    (
+      nextAnnotations: Record<string, AnnotationDecision>,
+      nextOverrides: Record<string, AnnotationOverrides>,
+    ) => {
+      // Mark id если есть decision ИЛИ overrides (id может быть в одном из state'ов).
+      const allIds = new Set<string>([
+        ...Object.keys(nextAnnotations),
+        ...Object.keys(nextOverrides),
+      ]);
       const draft: IntraAuditDraft = {
         annotations: Object.fromEntries(
-          Object.entries(nextAnnotations).map(([id, decision]) => [id, { decision }]),
+          Array.from(allIds).map((id) => [
+            id,
+            {
+              decision: nextAnnotations[id] ?? "unreviewed",
+              ...(nextOverrides[id] ? { overrides: nextOverrides[id] } : {}),
+            },
+          ]),
         ),
         manualFindings: initialExpected.draft?.manualFindings ?? [],
       };
@@ -200,19 +236,35 @@ export function IntraAuditViewer({
   useEffect(() => {
     if (!dirty) return;
     const handle = setTimeout(() => {
-      saveDraft(annotations);
+      saveDraft(annotations, overridesState);
       setDirty(false);
     }, AUTOSAVE_DEBOUNCE_MS);
     return () => clearTimeout(handle);
-  }, [annotations, dirty, saveDraft]);
+  }, [annotations, overridesState, dirty, saveDraft]);
 
   const setDecision = useCallback((findingId: string, decision: AnnotationDecision) => {
     setAnnotations((prev) => ({ ...prev, [findingId]: decision }));
     setDirty(true);
   }, []);
 
+  const setOverride = useCallback(
+    (findingId: string, partial: AnnotationOverrides | null) => {
+      setOverridesState((prev) => {
+        if (partial === null) {
+          // remove
+          const { [findingId]: _, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [findingId]: { ...prev[findingId], ...partial } };
+      });
+      setDirty(true);
+    },
+    [],
+  );
+
   const resetAllUnreviewed = useCallback(() => {
     setAnnotations({});
+    setOverridesState({});
     setDirty(true);
   }, []);
 
@@ -325,7 +377,7 @@ export function IntraAuditViewer({
   const handleApprove = () => {
     const accepted = candidatesAll
       .filter((c) => annotations[c.id] === "accepted")
-      .map(findingToExpected);
+      .map((c) => findingToExpected(c, overridesState[c.id]));
     const finalExpected: GoldenIntraAuditExpected = {
       ...initialExpected,
       findings: [
@@ -525,6 +577,8 @@ export function IntraAuditViewer({
             onToggleExpand={() =>
               setExpandedFindingId(expandedFindingId === c.id ? null : c.id)
             }
+            overrides={overridesState[c.id]}
+            onSaveOverrides={(o) => setOverride(c.id, o)}
           />
         ))}
       </div>
@@ -543,6 +597,8 @@ function CandidateCard({
   sectionsLoading,
   expanded,
   onToggleExpand,
+  overrides,
+  onSaveOverrides,
 }: {
   candidate: CandidateFindingRaw;
   decision: AnnotationDecision;
@@ -552,11 +608,51 @@ function CandidateCard({
   sectionsLoading: boolean;
   expanded: boolean;
   onToggleExpand: () => void;
+  overrides?: AnnotationOverrides;
+  onSaveOverrides: (o: AnnotationOverrides | null) => void;
 }) {
-  const severity = getSeverity(candidate);
+  // Sprint 2b: inline-edit overrides.
+  // Effective values = overrides ?? candidate value. Severity-badge показывает
+  // effective значение; рядом — индикатор «edited» если есть overrides.
+  const baseSeverity = getSeverity(candidate);
+  const severity: ExpectedSeverity = overrides?.severity ?? baseSeverity;
+  const effectiveFamily = overrides?.issueFamily ?? candidate.issueFamily ?? null;
+  const effectiveType = overrides?.issueType ?? candidate.issueType ?? null;
+  const effectiveZone = overrides?.anchorZone ?? candidate.anchorZone ?? null;
+  const effectiveDescription = overrides?.description ?? candidate.description;
+  const hasOverrides = overrides && Object.values(overrides).some((v) => v != null);
+
   const src = (candidate.sourceRef ?? {}) as { anchorQuote?: string; targetQuote?: string };
   const accepted = decision === "accepted";
   const rejected = decision === "rejected";
+
+  // Edit mode state — local form
+  const [editing, setEditing] = useState(false);
+  const [formFamily, setFormFamily] = useState(effectiveFamily ?? "");
+  const [formType, setFormType] = useState(effectiveType ?? "");
+  const [formSeverity, setFormSeverity] = useState<ExpectedSeverity>(severity);
+  const [formZone, setFormZone] = useState(effectiveZone ?? "");
+  const [formDescription, setFormDescription] = useState(effectiveDescription);
+
+  const openEdit = () => {
+    setFormFamily(effectiveFamily ?? "");
+    setFormType(effectiveType ?? "");
+    setFormSeverity(severity);
+    setFormZone(effectiveZone ?? "");
+    setFormDescription(effectiveDescription);
+    setEditing(true);
+  };
+
+  const saveEdit = () => {
+    const patch: AnnotationOverrides = {};
+    if (formFamily !== (candidate.issueFamily ?? "")) patch.issueFamily = formFamily;
+    if (formType !== (candidate.issueType ?? "")) patch.issueType = formType;
+    if (formSeverity !== baseSeverity) patch.severity = formSeverity;
+    if (formZone !== (candidate.anchorZone ?? "")) patch.anchorZone = formZone;
+    if (formDescription !== candidate.description) patch.description = formDescription;
+    onSaveOverrides(Object.keys(patch).length > 0 ? patch : null);
+    setEditing(false);
+  };
 
   return (
     <div
@@ -575,20 +671,28 @@ function CandidateCard({
           >
             {SEVERITY_LABELS[severity]}
           </span>
-          {candidate.issueFamily && (
+          {effectiveFamily && (
             <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
-              {candidate.issueFamily}
+              {effectiveFamily}
             </span>
           )}
-          {candidate.issueType && (
+          {effectiveType && (
             <span className="rounded bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-600">
-              {candidate.issueType}
+              {effectiveType}
             </span>
           )}
-          {candidate.anchorZone && (
+          {effectiveZone && (
             <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">
-              {candidate.anchorZone}
+              {effectiveZone}
               {candidate.targetZone ? ` → ${candidate.targetZone}` : ""}
+            </span>
+          )}
+          {hasOverrides && (
+            <span
+              className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700"
+              title="Поля изменены экспертом (overrides). При approve уйдёт изменённая версия."
+            >
+              ✎ edited
             </span>
           )}
           {excludedFromMetric && (
@@ -609,6 +713,20 @@ function CandidateCard({
           >
             {expanded ? <EyeOff size={12} className="inline" /> : <Eye size={12} className="inline" />}
             <span className="ml-1">Контекст</span>
+          </button>
+          <button
+            onClick={editing ? () => setEditing(false) : openEdit}
+            className={`rounded border px-2 py-0.5 text-xs ${
+              editing
+                ? "border-purple-500 bg-purple-50 text-purple-800"
+                : hasOverrides
+                  ? "border-purple-300 text-purple-700 hover:bg-purple-50"
+                  : "border-gray-300 text-gray-600 hover:bg-gray-50"
+            }`}
+            title="Редактировать поля finding'а (severity / type / zone / description)"
+          >
+            <Pencil size={12} className="inline" />
+            <span className="ml-1">{editing ? "Закрыть" : "Edit"}</span>
           </button>
           <button
             onClick={() => onSetDecision(accepted ? "unreviewed" : "accepted")}
@@ -637,7 +755,107 @@ function CandidateCard({
         </div>
       </div>
 
-      <p className="mb-1 text-sm text-gray-800">{candidate.description}</p>
+      {!editing && (
+        <p className="mb-1 text-sm text-gray-800">{effectiveDescription}</p>
+      )}
+
+      {editing && (
+        <div className="my-2 space-y-2 rounded-md border border-purple-200 bg-purple-50/40 p-2 text-xs">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="mb-0.5 block text-[10px] uppercase text-gray-500">
+                issueFamily
+              </span>
+              <input
+                value={formFamily}
+                onChange={(e) => setFormFamily(e.target.value.toUpperCase())}
+                className="w-full rounded border border-gray-300 px-2 py-1 font-mono text-xs"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-0.5 block text-[10px] uppercase text-gray-500">
+                issueType
+              </span>
+              <input
+                value={formType}
+                onChange={(e) => setFormType(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1 font-mono text-xs"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-0.5 block text-[10px] uppercase text-gray-500">
+                severity
+              </span>
+              <select
+                value={formSeverity}
+                onChange={(e) => setFormSeverity(e.target.value as ExpectedSeverity)}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+              >
+                {(["critical", "high", "medium", "low", "info"] as ExpectedSeverity[]).map(
+                  (s) => (
+                    <option key={s} value={s}>
+                      {SEVERITY_LABELS[s]}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-0.5 block text-[10px] uppercase text-gray-500">
+                anchorZone
+              </span>
+              <input
+                value={formZone}
+                onChange={(e) => setFormZone(e.target.value.toUpperCase())}
+                className="w-full rounded border border-gray-300 px-2 py-1 font-mono text-xs"
+              />
+            </label>
+          </div>
+          <label className="block">
+            <span className="mb-0.5 block text-[10px] uppercase text-gray-500">
+              description
+            </span>
+            <textarea
+              value={formDescription}
+              onChange={(e) => setFormDescription(e.target.value)}
+              rows={2}
+              className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+            />
+          </label>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] text-gray-500">
+              Только изменённые поля сохраняются в overrides; остальные берутся из исходного
+              finding&apos;а.
+            </span>
+            <div className="flex gap-1">
+              {hasOverrides && (
+                <button
+                  onClick={() => {
+                    onSaveOverrides(null);
+                    setEditing(false);
+                  }}
+                  className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50"
+                  title="Удалить все overrides"
+                >
+                  Очистить
+                </button>
+              )}
+              <button
+                onClick={() => setEditing(false)}
+                className="rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100"
+              >
+                <XIcon size={11} className="inline" /> Отмена
+              </button>
+              <button
+                onClick={saveEdit}
+                className="rounded bg-purple-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-purple-700"
+              >
+                <SaveIcon size={11} className="inline" /> Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {src.anchorQuote && (
         <blockquote className="mt-1 border-l-2 border-gray-300 pl-2 text-xs italic text-gray-600">

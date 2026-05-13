@@ -2,6 +2,19 @@
 
 ## 2026-05-13
 
+### Feat: inline-edit overrides в Sprint 2 viewer (Sprint 2c)
+
+Расширение Sprint 2/2b viewer: эксперт может править поля finding'а (severity / issueFamily / issueType / anchorZone / description) прямо в карточке через кнопку «Edit».
+
+- Изменённые поля сохраняются в `expectedResults.draft.annotations.{id}.overrides` через auto-save (debounced 1.5s)
+- В UI badge "✎ edited" показывает что overrides применены
+- Кнопка «Очистить» удаляет все overrides у finding'а
+- При approve — `findingToExpected(c, overrides[c.id])` применяет overrides к `ExpectedFinding` (severity / issueFamily / issueType / anchorZone / description)
+- Только реально изменённые поля сохраняются — defaults берутся из исходного finding'а
+
+Полезно когда LLM правильно нашла defect, но классифицировала как другое issueType/family — эксперт фиксит без перезапуска intra-audit.
+
+
 ### Feat: intra-audit-viewer Sprint 2b — подсветка quote + add-missing finding
 
 Расширение Sprint 2 viewer'а двумя UX-критичными для аннотатора фичами:
