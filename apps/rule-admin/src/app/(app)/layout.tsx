@@ -45,6 +45,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Бандлы конфигурации", href: "/bundles", icon: <Package size={20} /> },
   { label: "SOA", href: "/soa", icon: <Table2 size={20} /> },
   { label: "Согласования", href: "/approvals", icon: <ShieldCheck size={20} />, approverOnly: true },
+  { label: "Ревью замечаний", href: "/finding-review", icon: <ClipboardList size={20} /> },
   { label: "Пакетное тестирование", href: "/batch-testing", icon: <TestTubes size={20} /> },
   { label: "Настройка LLM", href: "/llm-config", icon: <Settings size={20} /> },
   { label: "Настройки обработки", href: "/study-settings", icon: <Beaker size={20} /> },
