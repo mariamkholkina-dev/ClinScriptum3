@@ -24,6 +24,8 @@ import {
   Delete20Regular,
   Eye20Regular,
   EyeOff20Regular,
+  TextIndentDecrease20Regular,
+  TextIndentIncrease20Regular,
 } from "@fluentui/react-icons";
 import type { Section } from "./types";
 
@@ -53,6 +55,13 @@ interface Props {
   onUpdateComment: (newComment: string) => Promise<void>;
   /** Удалить вручную добавленный раздел (только если section.isManual). */
   onDeleteManual?: () => Promise<void>;
+  /** Indent (level +1) — делает секцию подзаголовком предыдущего раздела. */
+  onIndent: () => void;
+  /** Outdent (level -1) — поднимает уровень секции на ступень выше. */
+  onOutdent: () => void;
+  canIndent: boolean;
+  canOutdent: boolean;
+  levelChangePending: boolean;
 }
 
 /**
@@ -75,6 +84,11 @@ export function SectionRowActions({
   onToggleFalseHeading,
   onUpdateComment,
   onDeleteManual,
+  onIndent,
+  onOutdent,
+  canIndent,
+  canOutdent,
+  levelChangePending,
 }: Props) {
   const styles = useStyles();
   const [editOpen, setEditOpen] = useState(false);
@@ -140,6 +154,28 @@ export function SectionRowActions({
           onClick={() => setEditOpen(true)}
           disabled={pending}
           aria-label="Редактировать комментарий"
+        />
+      </Tooltip>
+
+      <Tooltip content="Поднять уровень выше" relationship="label">
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<TextIndentDecrease20Regular />}
+          onClick={onOutdent}
+          disabled={!canOutdent || levelChangePending || pending}
+          aria-label="Поднять уровень секции"
+        />
+      </Tooltip>
+
+      <Tooltip content="Сделать подзаголовком" relationship="label">
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<TextIndentIncrease20Regular />}
+          onClick={onIndent}
+          disabled={!canIndent || levelChangePending || pending}
+          aria-label="Сделать секцию подзаголовком"
         />
       </Tooltip>
 

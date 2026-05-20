@@ -2,6 +2,19 @@
 
 ## 2026-05-21
 
+### Feat: word-addin parsing — кнопки indent / outdent у каждой секции
+
+`apps/word-addin/src/parsing/SectionRowActions.tsx`:
+- Добавлены две кнопки `TextIndentDecrease20Regular` / `TextIndentIncrease20Regular` (FluentUI) перед toggle false-heading. Расположены в порядке outdent → indent.
+- Новые props: `onIndent`, `onOutdent`, `canIndent`, `canOutdent`, `levelChangePending`. Каждая кнопка disabled когда соответствующее `canX=false` или идёт mutation.
+
+`apps/word-addin/src/parsing/SectionTree.tsx`:
+- Расширены props: `onChangeLevel(section, delta)`, `levelBoundsBySectionId: Map<string, { canIndent, canOutdent }>`, `levelChangePendingId: string | null`.
+
+`apps/word-addin/src/parsing/ParsingPanel.tsx`:
+- `levelBoundsBySectionId` useMemo рассчитывает для каждой секции возможность indent/outdent тем же алгоритмом поддерева что и на бэке (false-heading прозрачны, range [1, 6]).
+- Handler `handleChangeLevel(section, delta)` зовёт `document.changeSectionLevel`, после успеха перезагружает структуру и показывает toast `Сдвинуто секций: N` если N > 1.
+
 ### Feat: rule-admin parsing-viewer — кнопки indent / outdent у каждой секции
 
 `apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx`:

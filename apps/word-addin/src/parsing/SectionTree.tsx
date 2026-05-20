@@ -103,6 +103,12 @@ interface Props {
   /** Подсветка строк по типу diff (см. DiffPanel). Если не передан — без подсветки.
    *  Только `extra` и `wrong_level` имеют реальную секцию для матчинга. */
   diffTypeBySectionId?: Map<string, "extra" | "wrong_level">;
+  /** Изменение уровня заголовка с каскадом на поддерево. delta ∈ {1, -1}. */
+  onChangeLevel: (section: Section, delta: 1 | -1) => void;
+  /** Map sectionId → { canIndent, canOutdent } — рассчитывается родителем
+   *  по тому же алгоритму поддерева что и на бэке. */
+  levelBoundsBySectionId: Map<string, { canIndent: boolean; canOutdent: boolean }>;
+  levelChangePendingId: string | null;
 }
 
 /**
@@ -129,6 +135,9 @@ export function SectionTree({
   onQuickValidate,
   quickValidatingId,
   diffTypeBySectionId,
+  onChangeLevel,
+  levelBoundsBySectionId,
+  levelChangePendingId,
 }: Props) {
   const styles = useStyles();
 
@@ -224,6 +233,11 @@ export function SectionTree({
               onDeleteManual={
                 section.isManual ? () => onDeleteManual(section) : undefined
               }
+              onIndent={() => onChangeLevel(section, 1)}
+              onOutdent={() => onChangeLevel(section, -1)}
+              canIndent={levelBoundsBySectionId.get(section.id)?.canIndent ?? false}
+              canOutdent={levelBoundsBySectionId.get(section.id)?.canOutdent ?? false}
+              levelChangePending={levelChangePendingId === section.id}
             />
           </div>
         );

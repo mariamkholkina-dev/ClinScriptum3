@@ -143,6 +143,7 @@ export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [togglingFalseHeadingId, setTogglingFalseHeadingId] = useState<string | null>(null);
   const [quickValidatingId, setQuickValidatingId] = useState<string | null>(null);
+  const [levelChangePendingId, setLevelChangePendingId] = useState<string | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "success" | "warning" | "error"; text: string } | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -219,6 +220,36 @@ export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
     }
     return m;
   }, [diffEntries]);
+
+  // canIndent / canOutdent per section — рассчитывается single sweep по
+  // order'у с тем же алгоритмом поддерева что и на бэке (false-heading
+  // прозрачны: не двигаются и не служат границей). Range уровней [1, 6].
+  const levelBoundsBySectionId = useMemo(() => {
+    const sorted = [...sections].sort((a, b) => a.order - b.order);
+    const map = new Map<string, { canIndent: boolean; canOutdent: boolean }>();
+    for (let i = 0; i < sorted.length; i++) {
+      const s = sorted[i];
+      if (s.isFalseHeading) {
+        map.set(s.id, { canIndent: false, canOutdent: false });
+        continue;
+      }
+      const canOutdent = s.level > 1;
+      let canIndent = s.level < 6;
+      if (canIndent) {
+        for (let j = i + 1; j < sorted.length; j++) {
+          const t = sorted[j];
+          if (t.isFalseHeading) continue;
+          if (t.level <= s.level) break;
+          if (t.level >= 6) {
+            canIndent = false;
+            break;
+          }
+        }
+      }
+      map.set(s.id, { canIndent, canOutdent });
+    }
+    return map;
+  }, [sections]);
 
   // Tab «Diff» виден только при наличии goldenSampleId. Если эталон ушёл —
   // активный таб переключаем обратно на дерево.
@@ -310,6 +341,31 @@ export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
         setFeedback({ kind: "error", text: (e as Error).message ?? "Не удалось сохранить" });
       } finally {
         setTogglingFalseHeadingId(null);
+      }
+    },
+    [load],
+  );
+
+  const handleChangeLevel = useCallback(
+    async (section: Section, delta: 1 | -1) => {
+      setLevelChangePendingId(section.id);
+      try {
+        const res = await trpcCall<{ affectedCount: number }>(
+          "document.changeSectionLevel",
+          { sectionId: section.id, delta },
+          "mutation",
+        );
+        await load();
+        if (res.affectedCount > 1) {
+          setFeedback({
+            kind: "success",
+            text: `Сдвинуто секций: ${res.affectedCount}`,
+          });
+        }
+      } catch (e) {
+        setFeedback({ kind: "error", text: (e as Error).message ?? "Не удалось сохранить" });
+      } finally {
+        setLevelChangePendingId(null);
       }
     },
     [load],
@@ -745,6 +801,9 @@ export function ParsingPanel({ docVersionId, goldenSampleId, onBack }: Props) {
             onQuickValidate={(s) => void handleQuickValidate(s)}
             quickValidatingId={quickValidatingId}
             diffTypeBySectionId={goldenSampleId ? diffTypeBySectionId : undefined}
+            onChangeLevel={(s, delta) => void handleChangeLevel(s, delta)}
+            levelBoundsBySectionId={levelBoundsBySectionId}
+            levelChangePendingId={levelChangePendingId}
           />
         )}
       </div>
