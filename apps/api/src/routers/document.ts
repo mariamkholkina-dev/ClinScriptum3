@@ -147,5 +147,16 @@ export const documentRouter = router({
       documentService.deleteManualSection(ctx.user.tenantId, input.sectionId),
     ),
 
+  changeSectionLevel: p
+    .input(
+      z.object({
+        sectionId: z.string().uuid(),
+        delta: z.union([z.literal(1), z.literal(-1)]),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      documentService.changeSectionLevel(ctx.user.tenantId, input.sectionId, input.delta),
+    ),
+
   getTaxonomy: p.query(({ ctx }) => documentService.getTaxonomy(ctx.user.tenantId)),
 });

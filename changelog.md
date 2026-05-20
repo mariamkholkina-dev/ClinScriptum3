@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-05-21
+
+### Feat: backend для изменения уровня заголовка секций (indent / outdent)
+
+На этапе парсинга golden dataset эксперт может ошибочно увидеть, что парсер посчитал «1.1.1 Цель исследования» как H1 вместо H2. Раньше единственный способ исправить — отметить false-heading и добавить вручную, что портит anchor и теряет связь. Теперь добавлен прямой механизм изменения уровня с каскадом на поддерево.
+
+`apps/api/src/services/document.service.ts`:
+- Новый метод `documentService.changeSectionLevel(tenantId, sectionId, delta)`. `delta` строго `+1` (indent — делает секцию подзаголовком предыдущего раздела) или `-1` (outdent — поднимает уровень).
+- Поддерево собирается по правилу: все секции с `order > S.order` и `level > S.level`, пока не встретится секция с `level <= S.level`. False-heading секции прозрачны для иерархии — не двигаются и не служат границей (согласовано с правилом `feedback_false_heading_excluded_from_hierarchy`).
+- Диапазон уровней `[1, 6]` (Word H1–H6 convention). Если хоть один член поддерева вышел бы за границы — отклоняем всё атомарно.
+- target=false-heading → `BAD_REQUEST` (у неё нет осмысленного уровня в иерархии).
+- `classificationStatus` / `standardSection` НЕ сбрасываются — зональная классификация title-driven, level не влияет.
+- Sync с `ExpectedSection` намеренно НЕ делается — эталон независимая истина, эксперт правит expected отдельно через DiffPanel `apply_level`.
+
+`apps/api/src/routers/document.ts`:
+- Новый mutation endpoint `document.changeSectionLevel`. Input `{ sectionId: uuid, delta: 1 | -1 }`, output `{ affectedCount: number }`.
+
+`apps/api/src/services/__tests__/document.service.test.ts`:
+- 9 новых тестов: indent одиночной, indent/outdent с поддеревом, прозрачность false-heading (внутри поддерева и в роли «псевдо-границы»), outdent на level=1 → throw, indent при потомке=6 → throw, target=false-heading → throw, отсутствующая секция / cross-tenant.
+
+UI (`apps/rule-admin` ParsingTreeViewer, `apps/word-addin` SectionRowActions / ParsingPanel) — следующими коммитами.
+
 ## 2026-05-11
 
 ### Chore: word-addin ParsingPanel header — компактная 2-строчная раскладка

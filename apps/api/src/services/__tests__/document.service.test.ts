@@ -36,6 +36,7 @@ vi.mock("@clinscriptum/db", () => ({
     },
     section: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
       update: vi.fn(),
     },
     goldenAnnotation: {
@@ -84,6 +85,7 @@ const mockRuleSet = prisma.ruleSet as unknown as {
 };
 const mockSection = prisma.section as unknown as {
   findUnique: ReturnType<typeof vi.fn>;
+  findMany: ReturnType<typeof vi.fn>;
   update: ReturnType<typeof vi.fn>;
 };
 const mockGoldenAnnotation = prisma.goldenAnnotation as unknown as {
@@ -112,6 +114,8 @@ function makeSection(overrides: Partial<{
   llmSection: string | null;
   docVersionId: string;
   tenantId: string;
+  level: number;
+  order: number;
 }> = {}) {
   return {
     id: overrides.id ?? SECTION_ID,
@@ -120,10 +124,26 @@ function makeSection(overrides: Partial<{
     standardSection: overrides.standardSection ?? null,
     algoSection: overrides.algoSection ?? null,
     llmSection: overrides.llmSection ?? null,
+    level: overrides.level ?? 1,
+    order: overrides.order ?? 0,
     docVersionId: overrides.docVersionId ?? DOC_VERSION_ID,
     docVersion: {
       document: { study: { tenantId: overrides.tenantId ?? TENANT_A } },
     },
+  };
+}
+
+function makeFlatSection(overrides: {
+  id: string;
+  level: number;
+  order: number;
+  isFalseHeading?: boolean;
+}) {
+  return {
+    id: overrides.id,
+    level: overrides.level,
+    order: overrides.order,
+    isFalseHeading: overrides.isFalseHeading ?? false,
   };
 }
 
@@ -563,6 +583,193 @@ describe("documentService", () => {
 
       await expect(
         documentService.previewFalseHeadingCleanup(TENANT_B, SECTION_ID),
+      ).rejects.toThrow(DomainError);
+    });
+  });
+
+  describe("changeSectionLevel", () => {
+    beforeEach(() => {
+      txMock.section.update.mockResolvedValue({});
+    });
+
+    it("indent одиночной секции без детей — двигает только её", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 1, order: 0 }),
+      );
+      mockSection.findMany.mockResolvedValue([
+        makeFlatSection({ id: SECTION_ID, level: 1, order: 0 }),
+        makeFlatSection({ id: "next", level: 1, order: 1 }),
+      ]);
+
+      const result = await documentService.changeSectionLevel(
+        TENANT_A,
+        SECTION_ID,
+        1,
+      );
+
+      expect(result.affectedCount).toBe(1);
+      expect(txMock.section.update).toHaveBeenCalledTimes(1);
+      expect(txMock.section.update).toHaveBeenCalledWith({
+        where: { id: SECTION_ID },
+        data: { level: 2 },
+      });
+    });
+
+    it("indent с поддеревом — двигает родителя и всех потомков на +1", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 1, order: 0 }),
+      );
+      mockSection.findMany.mockResolvedValue([
+        makeFlatSection({ id: SECTION_ID, level: 1, order: 0 }),
+        makeFlatSection({ id: "c1", level: 2, order: 1 }),
+        makeFlatSection({ id: "c2", level: 3, order: 2 }),
+        makeFlatSection({ id: "next-root", level: 1, order: 3 }),
+        makeFlatSection({ id: "next-c", level: 2, order: 4 }),
+      ]);
+
+      const result = await documentService.changeSectionLevel(
+        TENANT_A,
+        SECTION_ID,
+        1,
+      );
+
+      expect(result.affectedCount).toBe(3);
+      const calls = txMock.section.update.mock.calls.map((c) => c[0]);
+      expect(calls).toEqual([
+        { where: { id: SECTION_ID }, data: { level: 2 } },
+        { where: { id: "c1" }, data: { level: 3 } },
+        { where: { id: "c2" }, data: { level: 4 } },
+      ]);
+    });
+
+    it("outdent с поддеревом — двигает родителя и потомков на -1", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 2, order: 0 }),
+      );
+      mockSection.findMany.mockResolvedValue([
+        makeFlatSection({ id: SECTION_ID, level: 2, order: 0 }),
+        makeFlatSection({ id: "c1", level: 3, order: 1 }),
+      ]);
+
+      const result = await documentService.changeSectionLevel(
+        TENANT_A,
+        SECTION_ID,
+        -1,
+      );
+
+      expect(result.affectedCount).toBe(2);
+      const calls = txMock.section.update.mock.calls.map((c) => c[0]);
+      expect(calls).toEqual([
+        { where: { id: SECTION_ID }, data: { level: 1 } },
+        { where: { id: "c1" }, data: { level: 2 } },
+      ]);
+    });
+
+    it("false-heading в потенциальном поддереве — пропускается полностью", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 1, order: 0 }),
+      );
+      mockSection.findMany.mockResolvedValue([
+        makeFlatSection({ id: SECTION_ID, level: 1, order: 0 }),
+        makeFlatSection({ id: "fh", level: 2, order: 1, isFalseHeading: true }),
+        makeFlatSection({ id: "real-child", level: 2, order: 2 }),
+        makeFlatSection({ id: "next-root", level: 1, order: 3 }),
+      ]);
+
+      const result = await documentService.changeSectionLevel(
+        TENANT_A,
+        SECTION_ID,
+        1,
+      );
+
+      expect(result.affectedCount).toBe(2);
+      const calls = txMock.section.update.mock.calls.map((c) => c[0]);
+      expect(calls).toEqual([
+        { where: { id: SECTION_ID }, data: { level: 2 } },
+        { where: { id: "real-child" }, data: { level: 3 } },
+      ]);
+    });
+
+    it("false-heading с малым level не разрывает поддерево (прозрачен для границы)", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 1, order: 0 }),
+      );
+      mockSection.findMany.mockResolvedValue([
+        makeFlatSection({ id: SECTION_ID, level: 1, order: 0 }),
+        makeFlatSection({ id: "c1", level: 2, order: 1 }),
+        // false-heading с level=1 — не должна остановить subtree-сбор
+        makeFlatSection({ id: "fh", level: 1, order: 2, isFalseHeading: true }),
+        makeFlatSection({ id: "c2", level: 2, order: 3 }),
+        makeFlatSection({ id: "next-root", level: 1, order: 4 }),
+      ]);
+
+      const result = await documentService.changeSectionLevel(
+        TENANT_A,
+        SECTION_ID,
+        1,
+      );
+
+      expect(result.affectedCount).toBe(3);
+      const ids = txMock.section.update.mock.calls.map((c) => c[0].where.id);
+      expect(ids).toEqual([SECTION_ID, "c1", "c2"]);
+    });
+
+    it("outdent при level=1 — throw BAD_REQUEST", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 1, order: 0 }),
+      );
+      mockSection.findMany.mockResolvedValue([
+        makeFlatSection({ id: SECTION_ID, level: 1, order: 0 }),
+      ]);
+
+      await expect(
+        documentService.changeSectionLevel(TENANT_A, SECTION_ID, -1),
+      ).rejects.toThrow(/out of range/);
+      expect(txMock.section.update).not.toHaveBeenCalled();
+    });
+
+    it("indent когда потомок достиг бы level=7 — throw BAD_REQUEST", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 5, order: 0 }),
+      );
+      mockSection.findMany.mockResolvedValue([
+        makeFlatSection({ id: SECTION_ID, level: 5, order: 0 }),
+        makeFlatSection({ id: "c1", level: 6, order: 1 }),
+      ]);
+
+      await expect(
+        documentService.changeSectionLevel(TENANT_A, SECTION_ID, 1),
+      ).rejects.toThrow(/out of range/);
+      expect(txMock.section.update).not.toHaveBeenCalled();
+    });
+
+    it("target — false-heading → throw BAD_REQUEST", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 2, order: 0, isFalseHeading: true }),
+      );
+
+      await expect(
+        documentService.changeSectionLevel(TENANT_A, SECTION_ID, 1),
+      ).rejects.toThrow(/false-heading/);
+      expect(mockSection.findMany).not.toHaveBeenCalled();
+      expect(txMock.section.update).not.toHaveBeenCalled();
+    });
+
+    it("отсутствующая секция → DomainError", async () => {
+      mockSection.findUnique.mockResolvedValue(null);
+
+      await expect(
+        documentService.changeSectionLevel(TENANT_A, SECTION_ID, 1),
+      ).rejects.toThrow(DomainError);
+    });
+
+    it("cross-tenant → DomainError", async () => {
+      mockSection.findUnique.mockResolvedValue(
+        makeSection({ level: 1, order: 0 }),
+      );
+
+      await expect(
+        documentService.changeSectionLevel(TENANT_B, SECTION_ID, 1),
       ).rejects.toThrow(DomainError);
     });
   });

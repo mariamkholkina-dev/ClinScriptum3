@@ -599,6 +599,85 @@ export const documentService = {
   },
 
   /**
+   * Изменение уровня заголовка (indent / outdent) с каскадом на поддерево.
+   *
+   * Поддерево собирается по правилу: все секции с order > S.order, у которых
+   * level > S.level — пока не встретится секция с level <= S.level. False-heading
+   * секции прозрачны для иерархии (пропускаются — не двигаются и не служат
+   * границей), как и в getParentChain/breadcrumb/numbering.
+   *
+   * Диапазон уровней: [1, 6] (Word H1–H6 convention). Если хоть один член
+   * поддерева вышел бы за границы — отклоняем всё (атомарно).
+   *
+   * False-heading цель — отклоняем: у неё нет осмысленного уровня в иерархии.
+   *
+   * Classification (standardSection и т.п.) не сбрасывается — зональная
+   * классификация title-driven, не level-driven.
+   */
+  async changeSectionLevel(
+    tenantId: string,
+    sectionId: string,
+    delta: 1 | -1,
+  ) {
+    const section = await prisma.section.findUnique({
+      where: { id: sectionId },
+      include: { docVersion: { include: { document: { include: { study: true } } } } },
+    });
+    requireTenantResource(section, tenantId, (s) => s.docVersion.document.study.tenantId);
+
+    if (section!.isFalseHeading) {
+      throw new DomainError(
+        "BAD_REQUEST",
+        "Cannot change level of false-heading section",
+      );
+    }
+
+    const all = await prisma.section.findMany({
+      where: { docVersionId: section!.docVersionId },
+      orderBy: { order: "asc" },
+      select: { id: true, level: true, order: true, isFalseHeading: true },
+    });
+
+    const startIdx = all.findIndex((s) => s.id === sectionId);
+    const subtree: Array<{ id: string; level: number }> = [
+      { id: all[startIdx].id, level: all[startIdx].level },
+    ];
+    for (let i = startIdx + 1; i < all.length; i++) {
+      const t = all[i];
+      if (t.isFalseHeading) continue;
+      if (t.level <= section!.level) break;
+      subtree.push({ id: t.id, level: t.level });
+    }
+
+    for (const s of subtree) {
+      const next = s.level + delta;
+      if (next < 1 || next > 6) {
+        throw new DomainError(
+          "BAD_REQUEST",
+          `Resulting level ${next} is out of range [1,6]`,
+        );
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const s of subtree) {
+        await tx.section.update({
+          where: { id: s.id },
+          data: { level: s.level + delta },
+        });
+      }
+    });
+
+    logger.info("section_level_changed", {
+      sectionId,
+      delta,
+      affectedCount: subtree.length,
+    });
+
+    return { affectedCount: subtree.length };
+  },
+
+  /**
    * Manual section creation — annotator adds a section that auto-parser missed.
    *
    * Anchor — гибрид: paragraphIndex (точная позиция в текущем re-parse'е) +
