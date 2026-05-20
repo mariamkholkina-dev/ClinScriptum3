@@ -26,6 +26,8 @@ import {
   CornerDownRight,
   EyeOff,
   Eye,
+  IndentDecrease,
+  IndentIncrease,
 } from "lucide-react";
 
 import type {
@@ -995,6 +997,11 @@ function SectionTreeRow({
   onToggleSelect,
   onToggleFalseHeading,
   onDeleteManual,
+  onIndent,
+  onOutdent,
+  canIndent,
+  canOutdent,
+  levelChangePending,
   falseHeadingPending,
   rowRef,
 }: {
@@ -1013,6 +1020,11 @@ function SectionTreeRow({
   onToggleFalseHeading: () => void;
   /** Опционально — для manual-секций показывает «удалить вручную добавленный раздел». */
   onDeleteManual?: () => void;
+  onIndent: () => void;
+  onOutdent: () => void;
+  canIndent: boolean;
+  canOutdent: boolean;
+  levelChangePending: boolean;
   falseHeadingPending: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
 }) {
@@ -1118,6 +1130,26 @@ function SectionTreeRow({
             💬
           </span>
         )}
+
+        {/* Outdent (level -1) */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onOutdent(); }}
+          disabled={!canOutdent || levelChangePending}
+          className="shrink-0 text-gray-400 hover:text-brand-600 disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Поднять уровень выше (уменьшить отступ)"
+        >
+          <IndentDecrease size={13} />
+        </button>
+
+        {/* Indent (level +1) */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onIndent(); }}
+          disabled={!canIndent || levelChangePending}
+          className="shrink-0 text-gray-400 hover:text-brand-600 disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Сделать подзаголовком (увеличить отступ)"
+        >
+          <IndentIncrease size={13} />
+        </button>
 
         {/* Toggle false-heading */}
         <button
@@ -1367,6 +1399,72 @@ export default function ParsingTreeViewer({
       }
     },
   });
+
+  // ── Change section level (indent / outdent) ──────────────────────────
+  //
+  // Optimistic update: применяем дельту ко всему поддереву клиенту мгновенно,
+  // server возвращает affectedCount. Алгоритм поддерева идентичен бэкенду —
+  // false-heading прозрачны (не двигаются и не служат границей).
+  const changeLevelMut = trpc.document.changeSectionLevel.useMutation({
+    onMutate: async ({ sectionId, delta }) => {
+      await utils.document.getVersion.cancel({ versionId });
+      const prev = utils.document.getVersion.getData({ versionId });
+      utils.document.getVersion.setData({ versionId }, (old) => {
+        if (!old) return old;
+        const sorted = [...old.sections].sort((a, b) => a.order - b.order);
+        const idx = sorted.findIndex((s) => s.id === sectionId);
+        if (idx < 0) return old;
+        const target = sorted[idx];
+        const ids = new Set<string>([target.id]);
+        for (let j = idx + 1; j < sorted.length; j++) {
+          const t = sorted[j];
+          if (t.isFalseHeading) continue;
+          if (t.level <= target.level) break;
+          ids.add(t.id);
+        }
+        return {
+          ...old,
+          sections: old.sections.map((s) =>
+            ids.has(s.id) ? { ...s, level: s.level + delta } : s,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.document.getVersion.setData({ versionId }, ctx.prev);
+      utils.document.getVersion.invalidate({ versionId });
+    },
+  });
+
+  // canIndent / canOutdent per section — single sweep по order'у с проверкой
+  // что максимум level в поддереве не превысит 6.
+  const levelBounds = useMemo(() => {
+    const sorted = [...rawSections].sort((a, b) => a.order - b.order);
+    const map = new Map<string, { canIndent: boolean; canOutdent: boolean }>();
+    for (let i = 0; i < sorted.length; i++) {
+      const s = sorted[i];
+      if (s.isFalseHeading) {
+        map.set(s.id, { canIndent: false, canOutdent: false });
+        continue;
+      }
+      const canOutdent = s.level > 1;
+      let canIndent = s.level < 6;
+      if (canIndent) {
+        for (let j = i + 1; j < sorted.length; j++) {
+          const t = sorted[j];
+          if (t.isFalseHeading) continue;
+          if (t.level <= s.level) break;
+          if (t.level >= 6) {
+            canIndent = false;
+            break;
+          }
+        }
+      }
+      map.set(s.id, { canIndent, canOutdent });
+    }
+    return map;
+  }, [rawSections]);
 
   // ── Confirm dialog state for destructive false-heading mark ──────────
   //
@@ -1807,6 +1905,15 @@ export default function ParsingTreeViewer({
                         }
                       : undefined
                   }
+                  onIndent={() =>
+                    changeLevelMut.mutate({ sectionId: s.id, delta: 1 })
+                  }
+                  onOutdent={() =>
+                    changeLevelMut.mutate({ sectionId: s.id, delta: -1 })
+                  }
+                  canIndent={levelBounds.get(s.id)?.canIndent ?? false}
+                  canOutdent={levelBounds.get(s.id)?.canOutdent ?? false}
+                  levelChangePending={changeLevelMut.isPending}
                   falseHeadingPending={markFalseHeading.isPending}
                   rowRef={i === focusedIdx ? focusedRowRef : undefined}
                 />

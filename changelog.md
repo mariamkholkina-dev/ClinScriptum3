@@ -2,6 +2,14 @@
 
 ## 2026-05-21
 
+### Feat: rule-admin parsing-viewer — кнопки indent / outdent у каждой секции
+
+`apps/rule-admin/src/app/(app)/golden-dataset/[id]/parsing-viewer/ParsingTreeViewer.tsx`:
+- В row каждой секции рядом с false-heading eye добавлены две кнопки `IndentDecrease` (outdent) и `IndentIncrease` (indent) из `lucide-react`.
+- Disabled-логика рассчитывается client-side по тому же алгоритму поддерева что и на бэке (`levelBounds` useMemo): false-heading → обе off, level=1 → outdent off, level=6 или потомок level=6 → indent off.
+- Mutation `trpc.document.changeSectionLevel.useMutation` с optimistic update: дельта применяется ко всему поддереву в кеше `getVersion` мгновенно, на ошибке откатываемся к предыдущему snapshot'у и инвалидируем.
+- Diff overlay не требует ручной инвалидации — он derived от `sections[]` и пересчитывается автоматически.
+
 ### Feat: backend для изменения уровня заголовка секций (indent / outdent)
 
 На этапе парсинга golden dataset эксперт может ошибочно увидеть, что парсер посчитал «1.1.1 Цель исследования» как H1 вместо H2. Раньше единственный способ исправить — отметить false-heading и добавить вручную, что портит anchor и теряет связь. Теперь добавлен прямой механизм изменения уровня с каскадом на поддерево.
