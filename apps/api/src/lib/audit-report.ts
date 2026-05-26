@@ -61,9 +61,15 @@ export async function generateAuditReport(
     day: "numeric",
   });
 
+  const resolveSeverity = (f: any): string => {
+    const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
+    return (extra.severity as string) ?? f.severity ?? "info";
+  };
+
   const bySeverity: Record<string, number> = {};
   for (const f of findings) {
-    bySeverity[f.severity ?? "info"] = (bySeverity[f.severity ?? "info"] ?? 0) + 1;
+    const sev = resolveSeverity(f);
+    bySeverity[sev] = (bySeverity[sev] ?? 0) + 1;
   }
 
   const children: any[] = [];
@@ -141,7 +147,7 @@ export async function generateAuditReport(
   );
 
   for (const sev of severityOrder) {
-    const sevFindings = findings.filter((f) => (f.severity ?? "info") === sev);
+    const sevFindings = findings.filter((f) => resolveSeverity(f) === sev);
     if (sevFindings.length === 0) continue;
 
     children.push(
@@ -152,8 +158,10 @@ export async function generateAuditReport(
     );
 
     for (const f of sevFindings) {
+      const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
       const status = STATUS_LABELS[f.status] ?? f.status;
       const category = CATEGORY_LABELS[f.auditCategory ?? ""] ?? f.auditCategory ?? "";
+      const issueType = (extra.issueType as string) ?? f.issueType ?? "";
 
       children.push(
         new Paragraph({
@@ -179,8 +187,8 @@ export async function generateAuditReport(
           children: [
             new TextRun({ text: `   Категория: ${category}`, italics: true, size: 20 }),
             new TextRun({ text: `  |  Статус: ${status}`, italics: true, size: 20 }),
-            ...(f.issueType
-              ? [new TextRun({ text: `  |  Тип: ${f.issueType}`, italics: true, size: 20 })]
+            ...(issueType
+              ? [new TextRun({ text: `  |  Тип: ${issueType}`, italics: true, size: 20 })]
               : []),
           ],
         })
