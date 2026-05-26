@@ -230,10 +230,7 @@ app.get("/api/audit-report/:versionId", async (req, res) => {
     const findings = await prisma.finding.findMany({
       where: {
         docVersionId: req.params.versionId,
-        OR: [
-          { type: "intra_audit" },
-          { type: "editorial", issueFamily: "EDITORIAL" },
-        ],
+        type: { in: ["intra_audit", "editorial", "semantic"] },
       },
       orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
     });
