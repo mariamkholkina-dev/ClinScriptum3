@@ -24,6 +24,14 @@ interface UseFindingsOptions {
   protocolVersionId?: string;
 }
 
+function resolveSeverity(f: Finding): string {
+  return (f.extraAttributes?.severity as string) ?? f.severity ?? "info";
+}
+
+function normalizeFindings(raw: Finding[]): Finding[] {
+  return raw.map((f) => ({ ...f, severity: resolveSeverity(f) }));
+}
+
 export function useFindings({ docVersionId, mode, protocolVersionId }: UseFindingsOptions) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(false);
@@ -38,13 +46,13 @@ export function useFindings({ docVersionId, mode, protocolVersionId }: UseFindin
           "audit.getInterAuditFindings",
           { protocolVersionId, checkedVersionId: docVersionId }
         );
-        setFindings(result.findings);
+        setFindings(normalizeFindings(result.findings));
       } else {
         const result = await trpcCall<{ findings: Finding[] }>(
           "audit.getAuditFindings",
           { docVersionId }
         );
-        setFindings(result.findings);
+        setFindings(normalizeFindings(result.findings));
       }
     } catch (e: any) {
       setError(e.message);

@@ -21,7 +21,8 @@ const useStyles = makeStyles({
   root: {
     display: "flex",
     flexDirection: "column",
-    height: "100%",
+    flex: 1,
+    minHeight: 0,
   },
   header: {
     padding: "12px",
@@ -31,12 +32,14 @@ const useStyles = makeStyles({
   },
   list: {
     flex: 1,
+    minHeight: 0,
     overflowY: "auto",
     padding: "0 8px 8px",
   },
   detail: {
     borderTop: `1px solid ${tokens.colorNeutralStroke1}`,
     flex: 1,
+    minHeight: 0,
     overflowY: "auto",
   },
   empty: {
