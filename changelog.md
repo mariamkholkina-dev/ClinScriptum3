@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-05-27
+
+### Feat: intra-audit Variant 1 — гибридный режим (3 фокусированных вызова вместо 1 монолитного)
+
+**Проблема:** Variant 1 (весь документ одним вызовом) использовал один огромный промпт, совмещающий self-check + cross-check + editorial. Модель возвращала ~1 находку на 99K токенов контекста из-за перегруженного промпта и низкого maxTokens.
+
+**Решение:**
+
+`apps/workers/src/handlers/intra-doc-audit.ts`:
+- Variant 1 теперь делает 3 последовательных LLM-вызова: self-check, cross-check, editorial — каждый с фокусированным промптом и полным документом.
+- Добавлены 3 fallback-промпта: `FULL_DOC_SELF_CHECK_PROMPT`, `FULL_DOC_CROSS_CHECK_PROMPT`, `FULL_DOC_EDITORIAL_PROMPT` — короче и фокусированнее зональных аналогов.
+- Промпты загружаются из rule set по ключам `full_doc_self_check_prompt`, `full_doc_cross_check_prompt`, `full_doc_editorial_prompt` — независимо от зональных промптов.
+- Минимальный maxTokens для output: `Math.max(llmConfig.maxTokens, 8192)`.
+- В `sourceRef` и `extraAttributes` находок добавлено поле `phase` для трассировки.
+- `fitsInContext` теперь рассчитывается по самому длинному из 3 промптов, а не по монолитному.
+
+`packages/db/src/llm-config-resolver.ts`:
+- `DEFAULT_MAX_TOKENS.intra_audit`: 4096 → 16384
+- `DEFAULT_MAX_TOKENS.intra_audit_qa`: 2048 → 4096
+- `DEFAULT_TIMEOUT_BY_TASK.intra_audit`: 120s → 180s
+- `DEFAULT_TIMEOUT_BY_TASK.intra_audit_qa`: 90s → 120s
+
+`packages/db/src/seed-prompts.ts`:
+- Добавлены 3 новых rule-слота для full-doc промптов.
+
+`apps/workers/src/handlers/__tests__/intra-doc-audit.test.ts`:
+- 4 новых теста: 3 фокусированных вызова, метаданные phase, minTokens ≥ 8192, кастомные промпты из rule set.
+
 ## 2026-05-21
 
 ### Feat: word-addin parsing — кнопки indent / outdent у каждой секции

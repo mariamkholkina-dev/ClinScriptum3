@@ -33,8 +33,8 @@ const DEFAULT_MAX_TOKENS: Record<string, number> = {
   fact_extraction: 16384,
   fact_extraction_qa: 4096,
   fact_extraction_targeted: 1024,
-  intra_audit: 4096,
-  intra_audit_qa: 2048,
+  intra_audit: 16384,
+  intra_audit_qa: 4096,
   inter_audit: 8192,
   inter_audit_qa: 4096,
   generation: 8192,
@@ -61,8 +61,8 @@ const GLOBAL_DEFAULT_MAX_INPUT_TOKENS = 16000;
 const DEFAULT_TIMEOUT_MS = 50_000;
 
 const DEFAULT_TIMEOUT_BY_TASK: Record<string, number> = {
-  intra_audit: 120_000,
-  intra_audit_qa: 90_000,
+  intra_audit: 180_000,
+  intra_audit_qa: 120_000,
   inter_audit: 120_000,
   generation: 120_000,
 };

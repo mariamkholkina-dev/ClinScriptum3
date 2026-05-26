@@ -41,6 +41,27 @@ const PROMPT_RULE_SETS: {
         subStage: "editorial",
         promptTemplate: "", // populated from handler defaults at runtime
       },
+      {
+        name: "intra_audit:full_doc_self_check",
+        pattern: "full_doc_self_check_prompt",
+        stage: "intra_audit",
+        subStage: "full_doc_self_check",
+        promptTemplate: "", // full-document mode: self-check with complete protocol context
+      },
+      {
+        name: "intra_audit:full_doc_cross_check",
+        pattern: "full_doc_cross_check_prompt",
+        stage: "intra_audit",
+        subStage: "full_doc_cross_check",
+        promptTemplate: "", // full-document mode: cross-check between all sections
+      },
+      {
+        name: "intra_audit:full_doc_editorial",
+        pattern: "full_doc_editorial_prompt",
+        stage: "intra_audit",
+        subStage: "full_doc_editorial",
+        promptTemplate: "", // full-document mode: editorial review of complete protocol
+      },
     ],
   },
   {

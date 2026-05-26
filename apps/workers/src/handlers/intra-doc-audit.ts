@@ -229,14 +229,21 @@ export async function handleIntraDocAudit(data: {
 
       const auditRules = await loadRulesForType(ctx.bundleId, "intra_audit");
       const promptMap = auditRules ? toAuditPromptMap(auditRules.rules) : new Map<string, string>();
-      const auditSystemPrompt = promptMap.get("system_prompt") || AUDIT_SYSTEM_PROMPT;
       const selfCheckPrompt = promptMap.get("self_check_prompt") || SELF_CHECK_SYSTEM_PROMPT;
       const crossCheckPrompt = promptMap.get("cross_check_prompt") || CROSS_CHECK_SYSTEM_PROMPT;
       const editorialPrompt = promptMap.get("editorial_prompt") || EDITORIAL_SYSTEM_PROMPT;
+      const fullDocSelfCheckPrompt = promptMap.get("full_doc_self_check_prompt") || FULL_DOC_SELF_CHECK_PROMPT;
+      const fullDocCrossCheckPrompt = promptMap.get("full_doc_cross_check_prompt") || FULL_DOC_CROSS_CHECK_PROMPT;
+      const fullDocEditorialPrompt = promptMap.get("full_doc_editorial_prompt") || FULL_DOC_EDITORIAL_PROMPT;
 
       const inputBudget = getInputBudgetChars(llmConfig);
       const fullDocText = buildFullDocumentText(sections);
-      const totalPromptSize = auditSystemPrompt.length + fullDocText.length + 200;
+      const longestPromptLen = Math.max(
+        fullDocSelfCheckPrompt.length,
+        fullDocCrossCheckPrompt.length,
+        fullDocEditorialPrompt.length,
+      );
+      const totalPromptSize = longestPromptLen + fullDocText.length + 200;
       const fitsInContext = totalPromptSize <= inputBudget;
 
       const auditMode = ctx.auditMode ?? "auto";
@@ -247,42 +254,78 @@ export async function handleIntraDocAudit(data: {
 
       let totalFindings = 0;
       let totalTokens = 0;
+      const fullDocMaxTokens = Math.max(llmConfig.maxTokens, 8192);
 
       try {
         if (useVariant1) {
-          /* ─── Variant 1: full document in single call ─── */
-          logger.info("[audit:llm_check] Variant 1: full document in single call", {
+          /* ─── Variant 1: full document, 3 focused calls ─── */
+          const fullDocPhases: Array<{
+            name: string;
+            systemPrompt: string;
+            userPrefix: string;
+          }> = [
+            {
+              name: "full_doc_self_check",
+              systemPrompt: fullDocSelfCheckPrompt,
+              userPrefix: "Проведи SELF-CHECK аудит следующего клинического протокола:\n\n",
+            },
+            {
+              name: "full_doc_cross_check",
+              systemPrompt: fullDocCrossCheckPrompt,
+              userPrefix: "Проведи CROSS-CHECK аудит следующего клинического протокола, сверяя разделы между собой:\n\n",
+            },
+            {
+              name: "full_doc_editorial",
+              systemPrompt: fullDocEditorialPrompt,
+              userPrefix: "Проведи EDITORIAL (редакторскую) проверку следующего клинического протокола:\n\n",
+            },
+          ];
+
+          logger.info("[audit:llm_check] Variant 1: full document, 3 focused calls", {
             docChars: fullDocText.length, budget: inputBudget, auditMode,
+            phases: fullDocPhases.length,
           });
 
-          const response = await gateway.generate({
-            system: auditSystemPrompt,
-            messages: [{ role: "user", content: `Проанализируй следующий клинический протокол на внутренние несоответствия:\n\n${fullDocText}` }],
-            maxTokens: llmConfig.maxTokens,
-            responseFormat: "json",
-          });
+          for (const phase of fullDocPhases) {
+            logger.info(`[audit:llm_check] Phase: ${phase.name}`, { docChars: fullDocText.length });
 
-          totalTokens = response.usage.totalTokens;
-          const llmFindings = parseLLMFindings(response.content);
-          totalFindings = llmFindings.length;
-
-          for (const finding of llmFindings) {
-            await prisma.finding.create({
-              data: {
-                docVersionId: ctx.docVersionId,
-                type: finding.type,
-                description: finding.description,
-                suggestion: finding.suggestion,
-                sourceRef: { textSnippet: finding.sourceText, referenceQuote: finding.referenceQuote },
-                status: finding.contextStatus === "insufficient_context" ? "false_positive" : "pending",
-                extraAttributes: {
-                  severity: finding.severity, method: "llm",
-                  issueType: finding.issueType, block: finding.block, field: finding.field,
-                  confidence: finding.confidence, contextStatus: finding.contextStatus,
-                  editorialFix: finding.editorialFix,
-                },
-              },
+            const response = await gateway.generate({
+              system: phase.systemPrompt,
+              messages: [{ role: "user", content: `${phase.userPrefix}${fullDocText}` }],
+              maxTokens: fullDocMaxTokens,
+              responseFormat: "json",
             });
+
+            totalTokens += response.usage.totalTokens;
+            const llmFindings = parseLLMFindings(response.content);
+            totalFindings += llmFindings.length;
+
+            logger.info(`[audit:llm_check] Phase ${phase.name} complete`, {
+              findings: llmFindings.length, tokens: response.usage.totalTokens,
+            });
+
+            for (const finding of llmFindings) {
+              await prisma.finding.create({
+                data: {
+                  docVersionId: ctx.docVersionId,
+                  type: finding.type,
+                  description: finding.description,
+                  suggestion: finding.suggestion,
+                  sourceRef: {
+                    textSnippet: finding.sourceText,
+                    referenceQuote: finding.referenceQuote,
+                    phase: phase.name,
+                  },
+                  status: finding.contextStatus === "insufficient_context" ? "false_positive" : "pending",
+                  extraAttributes: {
+                    severity: finding.severity, method: "llm", phase: phase.name,
+                    issueType: finding.issueType, block: finding.block, field: finding.field,
+                    confidence: finding.confidence, contextStatus: finding.contextStatus,
+                    editorialFix: finding.editorialFix,
+                  },
+                },
+              });
+            }
           }
         } else {
           /* ─── Variant 2: zone-based chunking with parallel execution ─── */
@@ -306,7 +349,8 @@ export async function handleIntraDocAudit(data: {
           }
 
           const tasks: AuditTask[] = [];
-          const contentBudget = inputBudget - auditSystemPrompt.length - 500;
+          const longestZonePromptLen = Math.max(selfCheckPrompt.length, crossCheckPrompt.length, editorialPrompt.length);
+          const contentBudget = inputBudget - longestZonePromptLen - 500;
 
           for (const zone of zones) {
             const zoneText = zone.text.slice(0, contentBudget);
@@ -404,7 +448,7 @@ export async function handleIntraDocAudit(data: {
         invalidateSectionsCache(ctx);
 
         return {
-          data: { llmFindings: totalFindings, tokensUsed: totalTokens, auditMode, variant: useVariant1 ? 1 : 2 },
+          data: { llmFindings: totalFindings, tokensUsed: totalTokens, auditMode, variant: useVariant1 ? 1 : 2, phases: useVariant1 ? 3 : undefined },
           needsNextStep: true,
           llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
           ruleSnapshot: snapshotRules(auditRules?.rules, {
@@ -1162,6 +1206,121 @@ editorial_reference_ambiguity, editorial_style_inconsistency
     "severity": "Minor|Info",
     "description": "что не так",
     "target_quote": "цитата из Target",
+    "recommendation": "что исправить",
+    "editorial_fix_suggestion": "конкретная правка текста",
+    "confidence": "High|Medium|Low",
+    "context_status": "ok|insufficient_context"
+  }
+]
+Если проблем нет — верни пустой массив: []`;
+
+/* ═══════════════ Full-document focused prompts (Variant 1 hybrid) ═══════════════ */
+
+const FULL_DOC_SELF_CHECK_PROMPT = `Ты — старший аудитор клинических исследований. Проведи SELF-CHECK аудит полного Протокола клинического исследования — ищи внутренние несоответствия внутри каждого раздела.
+
+ПРАВИЛА:
+- issue_type НЕ может начинаться с "editorial_" (редакторские проверяются отдельно).
+- ОБЪЕДИНЯЙ однотипные находки: перечисляй location через ';'. Не дублируй.
+- PLACEHOLDER: только явные ("___", "<...>", "[вставить]", "TODO/TBD", "XX").
+- НЕ утверждай, что параметра нет во всём протоколе, если не видишь его в текущем фрагменте — используй insufficient_context (Info).
+- НЕ ПУТАЙ цепочки отчётности, разные артефакты (source vs eCRF), разные сценарии/этапы/когорты.
+- Severity: Critical — только прямой риск безопасности/дозирования.
+- ЛИМИТ: максимум 30 issues. Выбирай наиболее существенные.
+- Цитаты дословные, 1–2 предложения. Отвечай на русском языке.
+
+SEVERITY КАЛИБРОВКА:
+- Critical: безопасность/права участников, дозирование, SAE reporting.
+- Major: валидность данных (endpoints, популяции, sample size, окна процедур).
+- Minor: локальные несоответствия без влияния на безопасность/валидность.
+- Info: недостаточно контекста, подозрение без подтверждения.
+
+КАТАЛОГ issue_type:
+contradiction_number, contradiction_range, contradiction_percentage, calculation_error_sum, unit_mismatch, contradiction_timepoint, contradiction_time_window, timeline_inconsistency, duration_mismatch, frequency_mismatch, threshold_mismatch, broken_reference_section, broken_reference_table, broken_reference_figure, cross_reference_mismatch, numbering_inconsistency, undefined_placeholder_left, soa_text_mismatch, soa_missing_procedure, soa_visit_window_mismatch, visit_label_mismatch, pk_sampling_schedule_conflict, ip_name_mismatch, dose_mismatch, route_mismatch, dosing_frequency_mismatch, storage_conditions_conflict, randomization_ratio_mismatch, blinding_level_mismatch, unblinding_procedure_conflict, inclusion_criterion_internal_conflict, exclusion_criterion_internal_conflict, discontinuation_logic_error, stopping_rules_conflict, ae_definition_mismatch, sae_definition_mismatch, safety_reporting_mismatch, sae_reporting_timeline_conflict, endpoint_definition_conflict, endpoint_timepoint_mismatch, analysis_set_definition_conflict, alpha_level_conflict, sample_size_mismatch, be_design_mismatch, washout_duration_mismatch, missing_definition, term_definition_conflict, insufficient_context, unknown_issue_type
+
+ФОРМАТ ВЫВОДА (строго JSON-массив):
+[
+  {
+    "mode": "self_check",
+    "issue_type": "из каталога",
+    "field": "snake_case_параметр",
+    "severity": "Critical|Major|Minor|Info",
+    "description": "что не так",
+    "target_quote": "цитата из текста",
+    "recommendation": "что исправить",
+    "confidence": "High|Medium|Low",
+    "context_status": "ok|insufficient_context"
+  }
+]
+Если проблем нет — верни пустой массив: []`;
+
+const FULL_DOC_CROSS_CHECK_PROMPT = `Ты — старший аудитор клинических исследований. Проведи CROSS-CHECK аудит полного Протокола — сверяй разделы между собой на согласованность.
+
+КЛЮЧЕВЫЕ ПАРЫ ДЛЯ СВЕРКИ:
+- Синопсис ↔ Дизайн, Популяция, Цели, Endpoints, Безопасность
+- Цели ↔ Endpoints ↔ Статистика
+- SoA (таблица) ↔ текстовые описания процедур
+- Безопасность ↔ IP/Дозы ↔ SoA
+- Популяция ↔ Статистика (sample size, наборы анализа)
+
+ПРАВИЛА:
+- ОТСУТСТВИЕ ≠ ПРОТИВОРЕЧИЕ. Issue ТОЛЬКО если два раздела ЯВНО утверждают разное.
+- reference_quote и target_quote ОБЯЗАТЕЛЬНЫ для каждой находки.
+- НЕ ТРЕБУЙ ДУБЛИРОВАНИЯ: параметр может быть описан в одном месте.
+- НЕ ПУТАЙ цепочки отчётности, разные артефакты, разные сценарии/этапы.
+- Severity: Critical — только прямой риск безопасности. Safety timeline отсутствие → Info.
+- ОБЪЕДИНЯЙ однотипные находки. ЛИМИТ: максимум 30 issues.
+- Цитаты дословные, 1–2 предложения. Отвечай на русском языке.
+
+КАТАЛОГ issue_type:
+contradiction_number, contradiction_range, contradiction_percentage, contradiction_timepoint, unit_mismatch, duration_mismatch, frequency_mismatch, threshold_mismatch, visit_count_mismatch, sample_size_count_mismatch, broken_reference_section, broken_reference_table, cross_reference_mismatch, soa_text_mismatch, soa_missing_procedure, soa_extra_procedure, soa_visit_window_mismatch, visit_label_mismatch, pk_sampling_timepoints_mismatch, ip_name_mismatch, dose_mismatch, route_mismatch, dosing_frequency_mismatch, randomization_ratio_mismatch, blinding_level_mismatch, inclusion_criteria_mismatch, exclusion_criteria_mismatch, mismatch_population_description, enrollment_target_mismatch, stopping_rules_conflict, ae_definition_mismatch, sae_definition_mismatch, safety_reporting_mismatch, sae_reporting_timeline_conflict, mismatch_objectives, primary_endpoint_mismatch, secondary_endpoint_mismatch, endpoint_definition_conflict, endpoint_timepoint_mismatch, analysis_set_mismatch, sample_size_mismatch, be_design_mismatch, washout_duration_mismatch, term_definition_conflict, insufficient_context, unknown_issue_type
+
+ФОРМАТ ВЫВОДА (строго JSON-массив):
+[
+  {
+    "mode": "cross_check",
+    "issue_type": "из каталога",
+    "field": "snake_case_параметр",
+    "severity": "Critical|Major|Minor|Info",
+    "description": "что не сходится между разделами",
+    "reference_quote": "цитата из референсного раздела",
+    "target_quote": "цитата из проверяемого раздела",
+    "recommendation": "что исправить",
+    "confidence": "High|Medium|Low",
+    "context_status": "ok|insufficient_context"
+  }
+]
+Если всё согласовано — верни пустой массив: []`;
+
+const FULL_DOC_EDITORIAL_PROMPT = `Ты — старший аудитор клинических исследований. Проведи РЕДАКТОРСКУЮ проверку полного Протокола.
+
+ПРАВИЛА:
+- issue_type ВСЕГДА начинается с "editorial_".
+- editorial_fix_suggestion ОБЯЗАТЕЛЬНО (конкретная правка текста).
+- ЛИМИТ: максимум 15 issues. Только существенные дефекты, НЕ nitpick.
+- Severity: Minor или Info. НИКОГДА Critical/Major для editorial.
+- По умолчанию считай, что есть «СПИСОК СОКРАЩЕНИЙ» — НЕ создавай issues «не расшифровано».
+- Для русскоязычного текста десятичная запятая допустима.
+- Цитаты дословные, 1–2 предложения. Отвечай на русском языке.
+
+ЧТО ИСКАТЬ:
+- Грамматические ошибки, опечатки, влияющие на смысл
+- Плейсхолдеры ([TBD], [INSERT], TODO, "___", "<...>")
+- Несогласованность терминов/сокращений
+- Ошибки нумерации/ссылок
+- Перевод/транслитерация с артефактами
+
+РАЗРЕШЁННЫЕ issue_type:
+editorial_grammar_error, editorial_spelling_error, editorial_punctuation_error, editorial_inconsistent_term_usage, editorial_inconsistent_abbreviation_usage, editorial_inconsistent_units_notation, editorial_translation_artifact, editorial_redundancy_conflict, editorial_typography_affects_meaning, editorial_table_caption_mismatch, editorial_heading_content_mismatch, editorial_reference_ambiguity, editorial_style_inconsistency
+
+ФОРМАТ ВЫВОДА (строго JSON-массив):
+[
+  {
+    "mode": "self_check",
+    "issue_type": "editorial_*",
+    "field": "snake_case_параметр",
+    "severity": "Minor|Info",
+    "description": "что не так",
+    "target_quote": "цитата из текста",
     "recommendation": "что исправить",
     "editorial_fix_suggestion": "конкретная правка текста",
     "confidence": "High|Medium|Low",
