@@ -13,7 +13,6 @@ import {
   WidthType,
   HeadingLevel,
   AlignmentType,
-  BorderStyle,
   ShadingType,
 } from "docx";
 
@@ -41,17 +40,28 @@ const STATUS_LABELS: Record<string, string> = {
   confirmed: "Подтверждено",
 };
 
-const CATEGORY_LABELS: Record<string, string> = {
-  consistency: "Согласованность",
-  logic: "Логика",
-  terminology: "Терминология",
-  compliance: "Соответствие",
-  grammar: "Редакторское",
+const METHOD_LABELS: Record<string, string> = {
+  deterministic: "Автоматическая проверка",
+  llm: "LLM-анализ",
 };
+
+const PHASE_LABELS: Record<string, string> = {
+  full_doc_self_check: "Self-check (полный документ)",
+  full_doc_cross_check: "Cross-check (полный документ)",
+  full_doc_editorial: "Редакторская проверка (полный документ)",
+  self_check: "Self-check (по зонам)",
+  cross_check: "Cross-check (по зонам)",
+  self_editorial: "Редакторская проверка (по зонам)",
+};
+
+function resolveSeverity(f: any): string {
+  const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
+  return (extra.severity as string) ?? f.severity ?? "info";
+}
 
 export async function generateAuditReport(
   version: any,
-  findings: any[]
+  findings: any[],
 ): Promise<Buffer> {
   const docTitle = version.document.title;
   const versionLabel = version.versionLabel ?? `v${version.versionNumber}`;
@@ -61,90 +71,102 @@ export async function generateAuditReport(
     day: "numeric",
   });
 
-  const resolveSeverity = (f: any): string => {
-    const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
-    return (extra.severity as string) ?? f.severity ?? "info";
-  };
-
   const bySeverity: Record<string, number> = {};
+  const byStatus: Record<string, number> = {};
   for (const f of findings) {
     const sev = resolveSeverity(f);
     bySeverity[sev] = (bySeverity[sev] ?? 0) + 1;
+    byStatus[f.status] = (byStatus[f.status] ?? 0) + 1;
   }
 
   const children: any[] = [];
 
-  // Title
   children.push(
     new Paragraph({
       text: "Отчёт внутридокументного аудита",
       heading: HeadingLevel.TITLE,
       alignment: AlignmentType.CENTER,
-    })
+    }),
   );
 
   children.push(
     new Paragraph({
-      spacing: { after: 200 },
+      spacing: { after: 100 },
       children: [
-        new TextRun({ text: `Документ: `, bold: true }),
+        new TextRun({ text: "Документ: ", bold: true }),
         new TextRun({ text: `${docTitle} (${versionLabel})` }),
       ],
-    })
+    }),
+  );
+
+  children.push(
+    new Paragraph({
+      spacing: { after: 100 },
+      children: [
+        new TextRun({ text: "Дата формирования: ", bold: true }),
+        new TextRun({ text: now }),
+      ],
+    }),
   );
 
   children.push(
     new Paragraph({
       spacing: { after: 400 },
       children: [
-        new TextRun({ text: `Дата: `, bold: true }),
-        new TextRun({ text: now }),
+        new TextRun({ text: "Всего находок: ", bold: true }),
+        new TextRun({ text: String(findings.length) }),
       ],
-    })
+    }),
   );
 
-  // Summary
+  // ── Summary table ──
   children.push(
-    new Paragraph({
-      text: "1. Сводка",
-      heading: HeadingLevel.HEADING_1,
-    })
+    new Paragraph({ text: "1. Сводка по серьёзности", heading: HeadingLevel.HEADING_1 }),
   );
 
-  const summaryRows = [
-    createSummaryRow("Всего находок", String(findings.length)),
-    ...Object.entries(bySeverity).map(([sev, count]) =>
-      createSummaryRow(SEVERITY_LABELS[sev] ?? sev, String(count))
-    ),
-  ];
+  const severityOrder = ["critical", "high", "medium", "low", "info"];
+  const summaryRows = severityOrder
+    .filter((s) => bySeverity[s])
+    .map((s) => createSummaryRow(SEVERITY_LABELS[s], String(bySeverity[s] ?? 0)));
 
   children.push(
     new Table({
       width: { size: 50, type: WidthType.PERCENTAGE },
       rows: [
         new TableRow({
-          children: [
-            createHeaderCell("Метрика"),
-            createHeaderCell("Количество"),
-          ],
+          children: [createHeaderCell("Серьёзность"), createHeaderCell("Количество")],
         }),
         ...summaryRows,
       ],
-    })
+    }),
   );
+
+  // ── Status summary ──
+  if (Object.keys(byStatus).length > 0) {
+    children.push(new Paragraph({ spacing: { after: 200 } }));
+    children.push(
+      new Table({
+        width: { size: 50, type: WidthType.PERCENTAGE },
+        rows: [
+          new TableRow({
+            children: [createHeaderCell("Статус"), createHeaderCell("Количество")],
+          }),
+          ...Object.entries(byStatus).map(([s, c]) =>
+            createSummaryRow(STATUS_LABELS[s] ?? s, String(c)),
+          ),
+        ],
+      }),
+    );
+  }
 
   children.push(new Paragraph({ spacing: { after: 300 } }));
 
-  // Findings by severity
-  const severityOrder = ["critical", "high", "medium", "low", "info"];
-  let findingNum = 1;
-
+  // ── Findings ──
   children.push(
-    new Paragraph({
-      text: "2. Находки",
-      heading: HeadingLevel.HEADING_1,
-    })
+    new Paragraph({ text: "2. Находки", heading: HeadingLevel.HEADING_1 }),
   );
+
+  let findingNum = 1;
 
   for (const sev of severityOrder) {
     const sevFindings = findings.filter((f) => resolveSeverity(f) === sev);
@@ -154,76 +176,164 @@ export async function generateAuditReport(
       new Paragraph({
         text: `${SEVERITY_LABELS[sev]} (${sevFindings.length})`,
         heading: HeadingLevel.HEADING_2,
-      })
+      }),
     );
 
     for (const f of sevFindings) {
       const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
-      const status = STATUS_LABELS[f.status] ?? f.status;
-      const category = CATEGORY_LABELS[f.auditCategory ?? ""] ?? f.auditCategory ?? "";
+      const ref = (f.sourceRef ?? {}) as Record<string, unknown>;
       const issueType = (extra.issueType as string) ?? f.issueType ?? "";
+      const method = METHOD_LABELS[(extra.method as string) ?? ""] ?? "";
+      const phase = PHASE_LABELS[(extra.phase as string) ?? (extra.taskKind as string) ?? ""] ?? "";
+      const sectionTitle = ref.sectionTitle as string | undefined;
+      const zone = (ref.zone as string) ?? (extra.phase as string) ?? "";
+      const anchorZone = ref.anchorZone as string | undefined;
 
+      // ── Finding header ──
       children.push(
         new Paragraph({
-          spacing: { before: 200 },
+          spacing: { before: 300 },
           children: [
-            new TextRun({
-              text: `${findingNum}. `,
-              bold: true,
-            }),
+            new TextRun({ text: `${findingNum}. `, bold: true, size: 22 }),
             new TextRun({
               text: `[${SEVERITY_LABELS[sev]}] `,
               bold: true,
+              size: 22,
               color: SEVERITY_COLORS[sev],
             }),
-            new TextRun({ text: f.description }),
+            new TextRun({ text: f.description, size: 22 }),
           ],
-        })
+        }),
       );
+
+      // ── Location line ──
+      const locationParts: string[] = [];
+      if (sectionTitle) locationParts.push(`Раздел: «${sectionTitle}»`);
+      if (zone && zone !== sectionTitle) locationParts.push(`Зона: ${zone}`);
+      if (anchorZone) locationParts.push(`↔ ${anchorZone}`);
+
+      if (locationParts.length > 0) {
+        children.push(
+          new Paragraph({
+            spacing: { after: 50 },
+            indent: { left: 300 },
+            children: [
+              new TextRun({
+                text: `📍 ${locationParts.join("  |  ")}`,
+                size: 20,
+                color: "0055AA",
+              }),
+            ],
+          }),
+        );
+      }
+
+      // ── Metadata line ──
+      const metaParts: string[] = [];
+      if (issueType) metaParts.push(`Тип: ${issueType}`);
+      if (method) metaParts.push(method);
+      if (phase) metaParts.push(phase);
+      metaParts.push(`Статус: ${STATUS_LABELS[f.status] ?? f.status}`);
 
       children.push(
         new Paragraph({
           spacing: { after: 50 },
+          indent: { left: 300 },
           children: [
-            new TextRun({ text: `   Категория: ${category}`, italics: true, size: 20 }),
-            new TextRun({ text: `  |  Статус: ${status}`, italics: true, size: 20 }),
-            ...(issueType
-              ? [new TextRun({ text: `  |  Тип: ${issueType}`, italics: true, size: 20 })]
-              : []),
+            new TextRun({ text: metaParts.join("  |  "), italics: true, size: 18, color: "666666" }),
           ],
-        })
+        }),
       );
 
+      // ── Target quote (where in document) ──
+      const targetQuote = (ref.textSnippet as string) ?? (ref.targetQuote as string);
+      if (targetQuote) {
+        children.push(
+          new Paragraph({
+            spacing: { after: 30 },
+            indent: { left: 300 },
+            children: [
+              new TextRun({ text: "Фрагмент документа: ", bold: true, size: 19 }),
+            ],
+          }),
+        );
+        children.push(
+          new Paragraph({
+            indent: { left: 500 },
+            spacing: { after: 50 },
+            children: [
+              new TextRun({
+                text: `«${truncate(targetQuote, 500)}»`,
+                italics: true,
+                size: 19,
+                color: "333333",
+              }),
+            ],
+          }),
+        );
+      }
+
+      // ── Reference quote (cross-check: what it contradicts) ──
+      const referenceQuote = ref.referenceQuote as string | undefined;
+      const anchorQuote = ref.anchorQuote as string | undefined;
+      const refText = referenceQuote ?? anchorQuote;
+      if (refText && refText !== targetQuote) {
+        children.push(
+          new Paragraph({
+            spacing: { after: 30 },
+            indent: { left: 300 },
+            children: [
+              new TextRun({ text: "Противоречит (референс): ", bold: true, size: 19 }),
+            ],
+          }),
+        );
+        children.push(
+          new Paragraph({
+            indent: { left: 500 },
+            spacing: { after: 50 },
+            children: [
+              new TextRun({
+                text: `«${truncate(refText, 500)}»`,
+                italics: true,
+                size: 19,
+                color: "8B0000",
+              }),
+            ],
+          }),
+        );
+      }
+
+      // ── Recommendation ──
       if (f.suggestion) {
         children.push(
           new Paragraph({
             spacing: { after: 50 },
+            indent: { left: 300 },
             children: [
-              new TextRun({ text: "   Рекомендация: ", bold: true, size: 20, color: "228B22" }),
+              new TextRun({ text: "Рекомендация: ", bold: true, size: 20, color: "228B22" }),
               new TextRun({ text: f.suggestion, size: 20, color: "228B22" }),
             ],
-          })
+          }),
         );
       }
 
-      const ref = f.sourceRef as any;
-      const quotes = [ref?.anchorQuote, ref?.targetQuote, ref?.textSnippet].filter(Boolean);
-      if (quotes.length > 0) {
+      // ── Editorial fix ──
+      const editorialFix = extra.editorialFix as string | undefined;
+      if (editorialFix) {
         children.push(
           new Paragraph({
-            spacing: { after: 100 },
-            indent: { left: 400 },
+            spacing: { after: 50 },
+            indent: { left: 300 },
             children: [
-              new TextRun({
-                text: `«${quotes.join("» → «")}»`,
-                italics: true,
-                size: 18,
-                color: "666666",
-              }),
+              new TextRun({ text: "Исправить на: ", bold: true, size: 20, color: "006400" }),
+              new TextRun({ text: `«${editorialFix}»`, size: 20, color: "006400" }),
             ],
-          })
+          }),
         );
       }
+
+      // ── Separator ──
+      children.push(new Paragraph({ spacing: { after: 100 } }));
 
       findingNum++;
     }
@@ -234,6 +344,10 @@ export async function generateAuditReport(
   });
 
   return Buffer.from(await Packer.toBuffer(doc));
+}
+
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
 function createHeaderCell(text: string): TableCell {
