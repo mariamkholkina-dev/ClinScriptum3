@@ -141,26 +141,6 @@ export function FindingsPanel({ docVersionId, categoryFilter }: Props) {
         </MessageBar>
       )}
 
-      <FindingsFilter
-        severity={severityFilter}
-        onSeverityChange={setSeverityFilter}
-        status={statusFilter}
-        onStatusChange={setStatusFilter}
-      />
-
-      {findings.length > 0 && (
-        <div className={styles.bulkActions}>
-          <Button size="small" appearance="subtle" onClick={() => handleValidateAll("resolve")}>
-            Всё исправлено
-          </Button>
-          <Button size="small" appearance="subtle" onClick={() => handleValidateAll("reject")}>
-            Всё игнорировать
-          </Button>
-        </div>
-      )}
-
-      <Divider />
-
       {selected ? (
         <div className={styles.detail}>
           <Button
@@ -174,21 +154,43 @@ export function FindingsPanel({ docVersionId, categoryFilter }: Props) {
           <FindingDetail finding={selected} onUpdateStatus={updateStatus} />
         </div>
       ) : (
-        <div className={styles.list}>
-          {filtered.length === 0 && (
-            <div className={styles.empty}>
-              <Text>Нет находок</Text>
+        <>
+          <FindingsFilter
+            severity={severityFilter}
+            onSeverityChange={setSeverityFilter}
+            status={statusFilter}
+            onStatusChange={setStatusFilter}
+          />
+
+          {findings.length > 0 && (
+            <div className={styles.bulkActions}>
+              <Button size="small" appearance="subtle" onClick={() => handleValidateAll("resolve")}>
+                Всё исправлено
+              </Button>
+              <Button size="small" appearance="subtle" onClick={() => handleValidateAll("reject")}>
+                Всё игнорировать
+              </Button>
             </div>
           )}
-          {filtered.map((f) => (
-            <FindingCard
-              key={f.id}
-              finding={f}
-              isSelected={f.id === selectedId}
-              onSelect={() => setSelectedId(f.id)}
-            />
-          ))}
-        </div>
+
+          <Divider />
+
+          <div className={styles.list}>
+            {filtered.length === 0 && (
+              <div className={styles.empty}>
+                <Text>Нет находок</Text>
+              </div>
+            )}
+            {filtered.map((f) => (
+              <FindingCard
+                key={f.id}
+                finding={f}
+                isSelected={f.id === selectedId}
+                onSelect={() => setSelectedId(f.id)}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
