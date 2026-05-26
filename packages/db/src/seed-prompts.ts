@@ -14,13 +14,6 @@ const PROMPT_RULE_SETS: {
     type: "intra_audit",
     rules: [
       {
-        name: "intra_audit:system",
-        pattern: "system_prompt",
-        stage: "intra_audit",
-        subStage: "analysis",
-        promptTemplate: "", // populated from handler defaults at runtime; edit via rule-admin UI
-      },
-      {
         name: "intra_audit:self_check",
         pattern: "self_check_prompt",
         stage: "intra_audit",
