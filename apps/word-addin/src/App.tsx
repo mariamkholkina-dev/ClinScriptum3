@@ -44,6 +44,7 @@ const useStyles = makeStyles({
   },
   content: {
     flex: 1,
+    height: 0,
     overflow: "hidden",
   },
   loading: {
