@@ -2,6 +2,14 @@
 
 ## 2026-05-29
 
+### Feat: интеграция enrichFindingWithCanonical в intra-doc-audit handler (мини-PR между E3 и E4)
+
+Связывает E1 (поля `referenceValue`/`targetValue`/`SectionId` в `parseLLMFindings`) и E3 (canonicalize utility). Перед каждым `prisma.finding.create` handler вызывает `enrichFindingWithCanonical` и сохраняет:
+- `Finding.extraAttributes.referenceValueCanonical` / `targetValueCanonical` — для side-by-side UI и аналитики.
+- `Finding.extraAttributes.dedupKey` — для расширенного dedup в E4 (Приоритет 1).
+
+Изменения в `apps/workers/src/handlers/intra-doc-audit.ts`: import enrichFindingWithCanonical, вызов в Variant 1 и Variant 2 перед finding.create. Backward-compat: если LLM не вернул values → enriched поля = null.
+
 ### Feat: side-by-side value comparison и section_id labels в FindingReview (E5)
 
 UI улучшение для FindingReview detail page. Заменяет длинные quote-блоки на компактный side-by-side view когда у находки есть `reference_value` / `target_value`.

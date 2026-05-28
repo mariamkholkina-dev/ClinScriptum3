@@ -9,6 +9,7 @@ import { runWithConcurrency } from "../lib/concurrency.js";
 import { loadSections, invalidateSectionsCache } from "../lib/section-cache.js";
 import { deduplicateByFamilyAndAnchor, pickDuplicateIds } from "../lib/intra-audit-dedup.js";
 import { buildSectionAnchor } from "../lib/build-section-anchor.js";
+import { enrichFindingWithCanonical } from "../lib/canonicalize-finding-value.js";
 
 interface AuditFinding {
   type: "editorial" | "semantic";
@@ -301,6 +302,13 @@ export async function handleIntraDocAudit(data: {
           totalFindings = llmFindings.length;
 
           for (const finding of llmFindings) {
+            const enriched = enrichFindingWithCanonical({
+              issueType: finding.issueType,
+              referenceSectionId: finding.referenceSectionId,
+              targetSectionId: finding.targetSectionId,
+              referenceValue: finding.referenceValue,
+              targetValue: finding.targetValue,
+            });
             await prisma.finding.create({
               data: {
                 docVersionId: ctx.docVersionId,
@@ -321,6 +329,9 @@ export async function handleIntraDocAudit(data: {
                   issueType: finding.issueType, block: finding.block, field: finding.field,
                   confidence: finding.confidence, contextStatus: finding.contextStatus,
                   editorialFix: finding.editorialFix,
+                  referenceValueCanonical: enriched.referenceValueCanonical,
+                  targetValueCanonical: enriched.targetValueCanonical,
+                  dedupKey: enriched.dedupKey,
                 },
               },
             });
@@ -416,6 +427,13 @@ export async function handleIntraDocAudit(data: {
             totalFindings += llmFindings.length;
 
             for (const finding of llmFindings) {
+              const enriched = enrichFindingWithCanonical({
+                issueType: finding.issueType,
+                referenceSectionId: finding.referenceSectionId,
+                targetSectionId: finding.targetSectionId,
+                referenceValue: finding.referenceValue,
+                targetValue: finding.targetValue,
+              });
               await prisma.finding.create({
                 data: {
                   docVersionId: ctx.docVersionId,
@@ -439,6 +457,9 @@ export async function handleIntraDocAudit(data: {
                     issueType: finding.issueType, block: finding.block, field: finding.field,
                     confidence: finding.confidence, contextStatus: finding.contextStatus,
                     editorialFix: finding.editorialFix,
+                    referenceValueCanonical: enriched.referenceValueCanonical,
+                    targetValueCanonical: enriched.targetValueCanonical,
+                    dedupKey: enriched.dedupKey,
                   },
                 },
               });
