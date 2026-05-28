@@ -20,6 +20,8 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Copy,
+  Check,
 } from "lucide-react";
 import { ParsingTreeViewer } from "./parsing-viewer";
 import { ClassificationTreeViewer } from "./classification-viewer";
@@ -1566,6 +1568,31 @@ export default function GoldenDatasetDetailPage() {
 
   const [activeStage, setActiveStage] = useState<(typeof STAGES)[number]["key"]>(STAGES[0].key);
   const [showAddDoc, setShowAddDoc] = useState(false);
+  // ID последнего скопированного UUID — для visual feedback ("Copy" → "Check" на 1.5s)
+  const [copiedDocVersionId, setCopiedDocVersionId] = useState<string | null>(null);
+
+  const copyDocVersionId = useCallback(async (uuid: string) => {
+    try {
+      await navigator.clipboard.writeText(uuid);
+      setCopiedDocVersionId(uuid);
+      setTimeout(() => {
+        setCopiedDocVersionId((current) => (current === uuid ? null : current));
+      }, 1500);
+    } catch {
+      // clipboard может быть недоступен в небезопасном контексте (http://)
+      // fallback: оборачиваем в input и select+execCommand
+      const input = document.createElement("input");
+      input.value = uuid;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      document.body.removeChild(input);
+      setCopiedDocVersionId(uuid);
+      setTimeout(() => {
+        setCopiedDocVersionId((current) => (current === uuid ? null : current));
+      }, 1500);
+    }
+  }, []);
 
   const sampleQuery = trpc.goldenDataset.getSample.useQuery({ id });
 
@@ -1639,6 +1666,29 @@ export default function GoldenDatasetDetailPage() {
               {new Date(sample.createdAt).toLocaleDateString()}
             </p>
           )}
+          <div className="mt-2 flex items-center gap-2">
+            <span
+              className="select-all font-mono text-[11px] text-gray-400"
+              title="goldenSampleId — UUID эталонного образца (используется в API-ручках и скриптах)"
+            >
+              {sample.id}
+            </span>
+            <button
+              onClick={() => copyDocVersionId(sample.id)}
+              className="text-gray-400 hover:text-brand-600"
+              title={
+                copiedDocVersionId === sample.id
+                  ? "UUID скопирован"
+                  : "Скопировать goldenSampleId"
+              }
+            >
+              {copiedDocVersionId === sample.id ? (
+                <Check size={12} className="text-green-600" />
+              ) : (
+                <Copy size={12} />
+              )}
+            </button>
+          </div>
         </div>
         <button
           onClick={() => {
@@ -1687,11 +1737,19 @@ export default function GoldenDatasetDetailPage() {
               {sample.documents.map((doc) => (
                 <tr key={doc.id} className="group">
                   <td className="py-2.5 pr-4">
-                    <div className="flex items-center gap-2">
-                      <FileText size={14} className="text-gray-400" />
-                      <span className="text-sm text-gray-900">
-                        {doc.documentVersion?.document?.title ?? doc.documentVersionId}
-                      </span>
+                    <div className="flex items-start gap-2">
+                      <FileText size={14} className="mt-0.5 text-gray-400" />
+                      <div className="flex flex-col">
+                        <span className="text-sm text-gray-900">
+                          {doc.documentVersion?.document?.title ?? doc.documentVersionId}
+                        </span>
+                        <span
+                          className="select-all font-mono text-[11px] text-gray-400"
+                          title="docVersionId — UUID версии документа (используется в API-ручках и SQL-запросах)"
+                        >
+                          {doc.documentVersionId}
+                        </span>
+                      </div>
                     </div>
                   </td>
                   <td className="py-2.5 pr-4">
@@ -1708,6 +1766,21 @@ export default function GoldenDatasetDetailPage() {
                   </td>
                   <td className="py-2.5">
                     <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => copyDocVersionId(doc.documentVersionId)}
+                        className="text-gray-400 hover:text-brand-600"
+                        title={
+                          copiedDocVersionId === doc.documentVersionId
+                            ? "UUID скопирован"
+                            : "Скопировать docVersionId"
+                        }
+                      >
+                        {copiedDocVersionId === doc.documentVersionId ? (
+                          <Check size={14} className="text-green-600" />
+                        ) : (
+                          <Copy size={14} />
+                        )}
+                      </button>
                       {doc.documentVersion?.id && (
                         <button
                           onClick={async () => {

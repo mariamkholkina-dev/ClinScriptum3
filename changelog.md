@@ -4,21 +4,30 @@
 
 ### Feat: anchor_id [S<path>:<type>] + section_id/value парсинг в intra-audit (E1)
 
-Подготовительный этап для intra-audit v2. Backward-compatible: если LLM не вернёт новых полей — finding всё равно создаётся.
-
-Backend изменения:
-- Новый `apps/workers/src/lib/build-section-anchor.ts`: `buildSectionAnchor(section)` → `[S2.1:objectives]` или fallback на `[S#42:objectives]`. `parseSectionAnchor(raw)` для post-LLM матчинга.
-- `CachedSection`: добавлено `headingNumber: string | null`.
-- `buildFullDocumentText` и `buildZoneTexts`: рендерят `## [S<path>:<type>] Title`.
-- `AuditFinding`: 4 новых optional поля — `referenceSectionId`, `targetSectionId`, `referenceValue`, `targetValue`.
-- `parseLLMFindings`: извлекает их из ответа LLM.
-- `prisma.finding.create`: сохраняет в `sourceRef`.
-
-Тесты: 15 для `build-section-anchor.ts`.
+Подготовительный этап для intra-audit v2. Backward-compatible: если LLM не вернёт новых полей — finding всё равно создаётся. Новый `build-section-anchor.ts` (anchor builder + parser), `CachedSection.headingNumber`, `AuditFinding` 4 новых поля, `parseLLMFindings` извлекает их. 15 unit-тестов.
 
 ### Feat: seed intra-audit prompts v2 (без активации)
 
-Новый скрипт `scripts/seed-intra-audit-prompts-v2.ts` + 4 промта в `scripts/prompts/intra-audit-v2/` (cross_check, self_check, editorial, qa_system). Включает anchor_id `[S<path>:<type>]`, severity matrix, confidence guide, 13 few-shot примеров, извлечение `reference_value`/`target_value`. Скрипт идемпотентный. По умолчанию `isActive=false` — для A/B на golden corpus. Активация — отдельный шаг E6.
+Новый скрипт + 4 промта в `scripts/prompts/intra-audit-v2/`. anchor_id, severity matrix, confidence guide, 13 few-shot. По умолчанию `isActive=false` — для A/B. Активация — E6.
+
+
+### Feat: видимые UUID документа и эталонного образца в rule-admin
+
+Эксперт работает в Sprint 3 (intra-audit annotation) и регулярно запускает `intra_doc_audit` вручную через API ручки. Чтобы это сделать, нужны два UUID: `docVersionId` версии документа и `goldenSampleId` эталонного образца. Раньше единственный способ получить их — SQL по имени файла. Теперь они показываются прямо на странице эталонного набора:
+
+- **`goldenSampleId`** под заголовком и описанием эталона. Моноширинный шрифт, светло-серый. Рядом — иконка-кнопка копирования.
+- **`docVersionId`** под названием каждого документа в таблице. Аналогично — копирование одним кликом.
+
+UX:
+- Visual feedback: иконка `Copy` → `Check` (зелёная) на 1.5 секунды после клика.
+- Fallback на `document.execCommand("copy")` если `navigator.clipboard` недоступен.
+- `select-all` CSS — двойной клик на UUID выделяет его целиком.
+
+Файл: `apps/rule-admin/src/app/(app)/golden-dataset/[id]/page.tsx`. Один компонент, без новых mutations или API изменений.
+
+### Feat: seed intra-audit prompts v2 (без активации)
+
+Новый скрипт `scripts/seed-intra-audit-prompts-v2.ts` + 4 промта в `scripts/prompts/intra-audit-v2/` (cross_check, self_check, editorial, qa_system). Включает anchor_id `[S<path>:<type>]`, severity matrix, confidence guide, 13 few-shot примеров, извлечение `reference_value`/`target_value`. Скрипт идемпотентный (`version+1`). По умолчанию `isActive=false` — для A/B на golden corpus. Активация — отдельный шаг E6.
 
 
 ## 2026-05-13
