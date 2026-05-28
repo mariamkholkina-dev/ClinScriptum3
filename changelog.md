@@ -2,6 +2,15 @@
 
 ## 2026-05-29
 
+### Feat: canonicalize reference_value / target_value для intra-audit (E3 утилита)
+
+Подготовительная утилита для E4 (dedup) и E5 (UI). Новый файл `apps/workers/src/lib/canonicalize-finding-value.ts`:
+- `canonicalizeIntraAuditValue(issueType, raw)` — dose/числовые/временные/generic. Cyrillic-safe регексы через `(?<![\p{L}])` lookbehind.
+- `buildDedupKey(...)` — детерминистический ключ для дедупликации.
+- `enrichFindingWithCanonical(finding)` — обогащение находки.
+
+Тесты: 34 unit-теста.
+
 ### Feat: anchor_id [S<path>:<type>] + section_id/value парсинг в intra-audit (E1)
 
 Подготовительный этап для intra-audit v2. Backward-compatible: если LLM не вернёт новых полей — finding всё равно создаётся. Новый `build-section-anchor.ts` (anchor builder + parser), `CachedSection.headingNumber`, `AuditFinding` 4 новых поля, `parseLLMFindings` извлекает их. 15 unit-тестов.
