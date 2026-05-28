@@ -15,6 +15,8 @@ import {
   X,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { FindingValuePair } from "@/components/finding-value-pair";
+import { FindingSectionLink } from "@/components/finding-section-link";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"] as const;
 type Severity = (typeof SEVERITY_OPTIONS)[number];
@@ -48,6 +50,7 @@ interface ReviewFinding {
   hiddenByReviewer: boolean;
   reviewerNote?: string | null;
   sourceRef?: unknown;
+  extraAttributes?: unknown;
 }
 
 interface ReviewView {
@@ -339,7 +342,21 @@ function FindingCard({
   const [note, setNote] = useState(f.reviewerNote ?? "");
   const [promoteOpen, setPromoteOpen] = useState(false);
   const sev = (f.severity ?? "medium") as Severity;
-  const ref = (f.sourceRef ?? {}) as { anchorQuote?: string; targetQuote?: string };
+  const ref = (f.sourceRef ?? {}) as {
+    anchorQuote?: string;
+    targetQuote?: string;
+    referenceQuote?: string;
+    referenceSectionId?: string;
+    targetSectionId?: string;
+    referenceValueRaw?: string;
+    targetValueRaw?: string;
+  };
+  const extra = (f.extraAttributes ?? {}) as {
+    referenceValueCanonical?: string;
+    targetValueCanonical?: string;
+  };
+  // v2 — есть ли в этой находке value pair (из intra-audit v2 промтов)?
+  const hasValuePair = Boolean(ref.referenceValueRaw || ref.targetValueRaw);
 
   return (
     <div
@@ -425,13 +442,35 @@ function FindingCard({
 
       <p className="text-sm text-gray-800">{f.description}</p>
 
-      {ref.anchorQuote && (
+      {hasValuePair && (
+        <FindingValuePair
+          data={{
+            referenceSectionId: ref.referenceSectionId,
+            targetSectionId: ref.targetSectionId,
+            referenceValueRaw: ref.referenceValueRaw,
+            targetValueRaw: ref.targetValueRaw,
+            referenceValueCanonical: extra.referenceValueCanonical,
+            targetValueCanonical: extra.targetValueCanonical,
+          }}
+        />
+      )}
+
+      {(ref.anchorQuote || ref.referenceQuote || ref.targetQuote) && (
         <blockquote className="mt-1 border-l-2 border-gray-300 pl-2 text-xs italic text-gray-600">
-          «{ref.anchorQuote}»
+          {(ref.referenceQuote || ref.anchorQuote) && (
+            <>
+              {ref.referenceSectionId && (
+                <FindingSectionLink sectionId={ref.referenceSectionId} />
+              )}{" "}
+              «{ref.referenceQuote ?? ref.anchorQuote}»
+            </>
+          )}
           {ref.targetQuote && (
             <>
               <br />
-              <span className="text-gray-400">→</span> «{ref.targetQuote}»
+              <span className="text-gray-400">→</span>{" "}
+              {ref.targetSectionId && <FindingSectionLink sectionId={ref.targetSectionId} />}{" "}
+              «{ref.targetQuote}»
             </>
           )}
         </blockquote>
