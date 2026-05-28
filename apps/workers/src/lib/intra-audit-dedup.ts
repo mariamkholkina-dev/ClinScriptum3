@@ -1,18 +1,34 @@
 /**
  * Дополнительная дедупликация findings, выходящая за рамки `deduplicateFindings`
- * (которая работает по description/textSnippet). Здесь группируем по
- * `(issueFamily, normalize(anchorQuote))` и оставляем одного с максимальной
- * severity. Покрывает кейс, когда LLM выдала 5 разных формулировок одной
- * проблемы в одном и том же месте.
+ * (которая работает по description/textSnippet). Группируем по одному из трёх
+ * приоритетов (в порядке предпочтения):
  *
- * Sprint 4 плана улучшения качества intra-audit (failure-mode dashboard).
+ *   1. `extraAttributes.dedupKey` — детерминистический ключ от backend
+ *      enrichFindingWithCanonical (E3). Включает canonical-значения и
+ *      section_id, что покрывает кейсы где LLM описала одну причину разными
+ *      словами с разными цитатами (e.g. "60 мг/кг" в одном vs "60 mg/kg"
+ *      в другом — после canonicalize дают тот же canonical).
+ *
+ *   2. Computed key из `sourceRef` (referenceSectionId, targetSectionId)
+ *      + `extraAttributes.referenceValueCanonical/targetValueCanonical`.
+ *      Используется когда `dedupKey` не записан, но canonical-значения есть.
+ *
+ *   3. Legacy: `(issueFamily, normalize(anchorQuote))` — для findings
+ *      без новых полей (v1 промты).
+ *
+ * Survivor — finding с максимальной severity. При равной severity — стабильно
+ * по id (asc).
+ *
+ * Sprint 4 + E4 плана улучшения качества intra-audit.
  */
 
 interface MinimalFinding {
   id: string;
   issueFamily?: string | null;
+  issueType?: string | null;
   severity?: string | null;
   sourceRef: unknown;
+  extraAttributes?: unknown;
 }
 
 const SEVERITY_RANK: Record<string, number> = {
@@ -32,19 +48,42 @@ function normalizeText(s: string): string {
   return s.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function resolveGroupKey(f: MinimalFinding): string {
+  const family = (f.issueFamily ?? "UNKNOWN").toUpperCase();
+  const ref = (f.sourceRef ?? {}) as Record<string, unknown>;
+  const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
+
+  // Приоритет 1: явный dedupKey от backend enrichFindingWithCanonical (E3).
+  if (typeof extra.dedupKey === "string" && extra.dedupKey.length > 0) {
+    return `${family}|DK|${extra.dedupKey}`;
+  }
+
+  // Приоритет 2: computed из (section_ids, canonical values) если есть.
+  // Эквивалент buildDedupKey, но локально (без import-зависимости от E3).
+  const refSection = typeof ref.referenceSectionId === "string" ? ref.referenceSectionId : null;
+  const tgtSection = typeof ref.targetSectionId === "string" ? ref.targetSectionId : null;
+  const refCanonical = typeof extra.referenceValueCanonical === "string" ? extra.referenceValueCanonical : null;
+  const tgtCanonical = typeof extra.targetValueCanonical === "string" ? extra.targetValueCanonical : null;
+  if (refCanonical || tgtCanonical) {
+    const issueType = typeof f.issueType === "string" ? f.issueType : "unknown";
+    const computed = `${issueType}|${refSection ?? "?"}|${tgtSection ?? "?"}|${refCanonical ?? "?"}|${tgtCanonical ?? "?"}`;
+    return `${family}|CV|${computed}`;
+  }
+
+  // Приоритет 3: legacy — anchor quote.
+  const anchorRaw = typeof ref.anchorQuote === "string" ? ref.anchorQuote : "";
+  const anchor = normalizeText(anchorRaw);
+  if (!anchor) {
+    // Без anchor и без canonical — финдинг уникален, не группируется.
+    return `__no_anchor__${f.id}`;
+  }
+  return `${family}|${anchor}`;
+}
+
 export function deduplicateByFamilyAndAnchor<T extends MinimalFinding>(findings: T[]): T[] {
   const groups = new Map<string, T[]>();
   for (const f of findings) {
-    const family = (f.issueFamily ?? "UNKNOWN").toUpperCase();
-    const ref = (f.sourceRef ?? {}) as Record<string, unknown>;
-    const anchorRaw = typeof ref.anchorQuote === "string" ? ref.anchorQuote : "";
-    const anchor = normalizeText(anchorRaw);
-    if (!anchor) {
-      // Без anchorQuote — не группируем, оставляем как уникальный.
-      groups.set(`__no_anchor__${f.id}`, [f]);
-      continue;
-    }
-    const key = `${family}|${anchor}`;
+    const key = resolveGroupKey(f);
     const existing = groups.get(key);
     if (existing) {
       existing.push(f);

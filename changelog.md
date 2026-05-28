@@ -2,6 +2,16 @@
 
 ## 2026-05-29
 
+### Feat: расширенный dedup intra-audit по canonical values + section_ids (E4)
+
+Расширяет `deduplicateByFamilyAndAnchor` (Sprint 4) — теперь группирует findings по трём приоритетам:
+
+1. `extraAttributes.dedupKey` от `enrichFindingWithCanonical` — самый точный ключ.
+2. Computed из `(section_ids, canonical values)` — если dedupKey не записан, но canonical есть.
+3. Legacy `(family, normalize(anchorQuote))` — для v1 findings.
+
+`MinimalFinding` расширен: `issueType?`, `extraAttributes?`. `"60 мг/кг"` и `"60 mg/kg"` после canonicalize дают одинаковый dedupKey → объединяются. Backward-compat: v1 finding идёт по legacy path. 8 новых unit-тестов (всего 17).
+
 ### Feat: интеграция enrichFindingWithCanonical в intra-doc-audit handler (мини-PR между E3 и E4)
 
 Связывает E1 (поля `referenceValue`/`targetValue`/`SectionId` в `parseLLMFindings`) и E3 (canonicalize utility). Перед каждым `prisma.finding.create` handler вызывает `enrichFindingWithCanonical` и сохраняет:
