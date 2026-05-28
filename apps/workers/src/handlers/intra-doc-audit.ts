@@ -8,6 +8,7 @@ import { logger } from "../lib/logger.js";
 import { runWithConcurrency } from "../lib/concurrency.js";
 import { loadSections, invalidateSectionsCache } from "../lib/section-cache.js";
 import { deduplicateByFamilyAndAnchor, pickDuplicateIds } from "../lib/intra-audit-dedup.js";
+import { buildSectionAnchor } from "../lib/build-section-anchor.js";
 
 interface AuditFinding {
   type: "editorial" | "semantic";
@@ -23,6 +24,12 @@ interface AuditFinding {
   confidence?: string;
   contextStatus?: string;
   editorialFix?: string;
+  // v2 — для post-LLM матчинга, side-by-side UI, и расширенного dedup.
+  // Заполняются только если LLM вернул их (новый формат промтов).
+  referenceSectionId?: string;
+  targetSectionId?: string;
+  referenceValue?: string;
+  targetValue?: string;
 }
 
 interface ZoneText {
@@ -123,7 +130,13 @@ function overlapRatio(a: string, b: string): number {
 /* ═══════════════ Zone builder ═══════════════ */
 
 function buildZoneTexts(
-  sections: Array<{ title: string; standardSection: string | null; contentBlocks: Array<{ content: string }> }>,
+  sections: Array<{
+    title: string;
+    standardSection: string | null;
+    headingNumber?: string | null;
+    order?: number | null;
+    contentBlocks: Array<{ content: string }>;
+  }>,
 ): ZoneText[] {
   const zoneMap = new Map<string, { titles: string[]; parts: string[] }>();
 
@@ -135,7 +148,14 @@ function buildZoneTexts(
     }
     const entry = zoneMap.get(rootZone)!;
     entry.titles.push(s.title);
-    entry.parts.push(`## ${s.title}\n${s.contentBlocks.map((b) => b.content).join("\n")}`);
+    const anchor = buildSectionAnchor({
+      id: "",
+      title: s.title,
+      standardSection: s.standardSection ?? null,
+      headingNumber: s.headingNumber ?? null,
+      order: s.order ?? null,
+    });
+    entry.parts.push(`## ${anchor} ${s.title}\n${s.contentBlocks.map((b) => b.content).join("\n")}`);
   }
 
   return Array.from(zoneMap.entries()).map(([zone, data]) => ({
@@ -146,11 +166,24 @@ function buildZoneTexts(
 }
 
 function buildFullDocumentText(
-  sections: Array<{ title: string; contentBlocks: Array<{ content: string }> }>,
+  sections: Array<{
+    title: string;
+    standardSection?: string | null;
+    headingNumber?: string | null;
+    order?: number | null;
+    contentBlocks: Array<{ content: string }>;
+  }>,
 ): string {
   const parts: string[] = [];
   for (const section of sections) {
-    parts.push(`\n## ${section.title}\n`);
+    const anchor = buildSectionAnchor({
+      id: "",
+      title: section.title,
+      standardSection: section.standardSection ?? null,
+      headingNumber: section.headingNumber ?? null,
+      order: section.order ?? null,
+    });
+    parts.push(`\n## ${anchor} ${section.title}\n`);
     for (const block of section.contentBlocks) {
       parts.push(block.content);
     }
@@ -274,7 +307,14 @@ export async function handleIntraDocAudit(data: {
                 type: finding.type,
                 description: finding.description,
                 suggestion: finding.suggestion,
-                sourceRef: { textSnippet: finding.sourceText, referenceQuote: finding.referenceQuote },
+                sourceRef: {
+                  textSnippet: finding.sourceText,
+                  referenceQuote: finding.referenceQuote,
+                  referenceSectionId: finding.referenceSectionId,
+                  targetSectionId: finding.targetSectionId,
+                  referenceValueRaw: finding.referenceValue,
+                  targetValueRaw: finding.targetValue,
+                },
                 status: finding.contextStatus === "insufficient_context" ? "false_positive" : "pending",
                 extraAttributes: {
                   severity: finding.severity, method: "llm",
@@ -388,6 +428,10 @@ export async function handleIntraDocAudit(data: {
                     zone: task.targetZone,
                     anchorZone: task.anchorZone,
                     taskKind: task.kind,
+                    referenceSectionId: finding.referenceSectionId,
+                    targetSectionId: finding.targetSectionId,
+                    referenceValueRaw: finding.referenceValue,
+                    targetValueRaw: finding.targetValue,
                   },
                   status: finding.contextStatus === "insufficient_context" ? "false_positive" : "pending",
                   extraAttributes: {
@@ -803,6 +847,10 @@ function parseLLMFindings(llmOutput: string): AuditFinding[] {
           confidence: item.confidence ? String(item.confidence) : undefined,
           contextStatus: item.context_status ? String(item.context_status) : undefined,
           editorialFix: item.editorial_fix_suggestion ? String(item.editorial_fix_suggestion) : undefined,
+          referenceSectionId: item.reference_section_id ? String(item.reference_section_id) : item.section_id ? String(item.section_id) : undefined,
+          targetSectionId: item.target_section_id ? String(item.target_section_id) : item.section_id ? String(item.section_id) : undefined,
+          referenceValue: item.reference_value != null ? String(item.reference_value) : undefined,
+          targetValue: item.target_value != null ? String(item.target_value) : undefined,
         });
       }
       if (findings.length > 0) return findings;
@@ -832,6 +880,10 @@ function parseLLMFindings(llmOutput: string): AuditFinding[] {
           confidence: item.confidence ? String(item.confidence) : undefined,
           contextStatus: item.context_status ? String(item.context_status) : undefined,
           editorialFix: item.editorial_fix_suggestion ? String(item.editorial_fix_suggestion) : undefined,
+          referenceSectionId: item.reference_section_id ? String(item.reference_section_id) : item.section_id ? String(item.section_id) : undefined,
+          targetSectionId: item.target_section_id ? String(item.target_section_id) : item.section_id ? String(item.section_id) : undefined,
+          referenceValue: item.reference_value != null ? String(item.reference_value) : undefined,
+          targetValue: item.target_value != null ? String(item.target_value) : undefined,
         });
       } catch { /* skip unparseable object */ }
     }
