@@ -2,6 +2,16 @@
 
 ## 2026-05-29
 
+### Feat: side-by-side value comparison и section_id labels в FindingReview (E5)
+
+UI улучшение для FindingReview detail page. Заменяет длинные quote-блоки на компактный side-by-side view когда у находки есть `reference_value` / `target_value`.
+
+Новые компоненты:
+- `apps/rule-admin/src/components/finding-value-pair.tsx`: compact card `[refSectionId] refValue ↔ [tgtSectionId] tgtValue`.
+- `apps/rule-admin/src/components/finding-section-link.tsx`: моноширинный chip с `select-all` CSS.
+
+Интеграция в `finding-review/[id]/page.tsx`. Backward-compat: v1 finding без новых полей → quote показывается как раньше.
+
 ### Feat: canonicalize reference_value / target_value для intra-audit (E3 утилита)
 
 Подготовительная утилита для E4 (dedup) и E5 (UI). Новый файл `apps/workers/src/lib/canonicalize-finding-value.ts`:
