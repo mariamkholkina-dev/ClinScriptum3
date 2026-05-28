@@ -2,19 +2,23 @@
 
 ## 2026-05-29
 
+### Feat: anchor_id [S<path>:<type>] + section_id/value парсинг в intra-audit (E1)
+
+Подготовительный этап для intra-audit v2. Backward-compatible: если LLM не вернёт новых полей — finding всё равно создаётся.
+
+Backend изменения:
+- Новый `apps/workers/src/lib/build-section-anchor.ts`: `buildSectionAnchor(section)` → `[S2.1:objectives]` или fallback на `[S#42:objectives]`. `parseSectionAnchor(raw)` для post-LLM матчинга.
+- `CachedSection`: добавлено `headingNumber: string | null`.
+- `buildFullDocumentText` и `buildZoneTexts`: рендерят `## [S<path>:<type>] Title`.
+- `AuditFinding`: 4 новых optional поля — `referenceSectionId`, `targetSectionId`, `referenceValue`, `targetValue`.
+- `parseLLMFindings`: извлекает их из ответа LLM.
+- `prisma.finding.create`: сохраняет в `sourceRef`.
+
+Тесты: 15 для `build-section-anchor.ts`.
+
 ### Feat: seed intra-audit prompts v2 (без активации)
 
-Новый скрипт `scripts/seed-intra-audit-prompts-v2.ts` + 4 промта в `scripts/prompts/intra-audit-v2/`:
-- `full_doc_cross_check.md` — основной cross-check промт. Включает: anchor_id `[S<path>:<type>]`, 8 ключевых пар сверки, 3-шаговый алгоритм, расширенный negative list ("не путай", 11 пар), 4-уровневую severity calibration с явными сценариями, confidence calibration matrix (`Critical → только High`, `Major → High|Medium`, ...), 13 few-shot примеров (включая Critical SAE timeline, Major sample size, Minor abbreviation, Info suspected, 6 FP-сценариев), извлечение `reference_value`/`target_value` для post-LLM канонизации.
-- `full_doc_self_check.md` — аналогично для внутрисекционных противоречий (один section_id для обеих цитат). Включает специфичные для self-check блоки 12-15 каталога (этика, DM/EDC, лаборатории, общая логика).
-- `full_doc_editorial.md` — компактный редакторский промт. Только Minor/Info severity. Запрет на nitpick. Список разрешённых `editorial_*` типов.
-- `qa_system.md` — обновлённый QA-арбитр. Новый verdict `deduplicated` для дублей. Использует `reference_value`/`target_value` для группировки.
-
-Скрипт идемпотентный (каждый запуск = `version+1`). По умолчанию создаёт неактивную версию — для A/B на golden corpus через `evaluation/[id]/intra-audit-compare`. Флаг `--activate` сразу переключает (деактивируя предыдущие). Создаёт записи для `intra_audit` (3 промта: cross_check / self_check / editorial) + `intra_audit_qa` (1 промт: system).
-
-Promt-маппинг через существующий `toAuditPromptMap` (`rules-engine/rule-adapter.ts`) — handler `intra-doc-audit.ts` берёт текущую активную версию через `loadRulesForType`. Промты загружаются из БД, hard-coded constants в handler-е остаются как fallback на случай если seed не выполнялся.
-
-Активация — отдельный шаг (E6) после прогона evaluation с baseline и сравнения метрик. Откат через UI rule-admin (переключение `isActive`) или SQL update.
+Новый скрипт `scripts/seed-intra-audit-prompts-v2.ts` + 4 промта в `scripts/prompts/intra-audit-v2/` (cross_check, self_check, editorial, qa_system). Включает anchor_id `[S<path>:<type>]`, severity matrix, confidence guide, 13 few-shot примеров, извлечение `reference_value`/`target_value`. Скрипт идемпотентный. По умолчанию `isActive=false` — для A/B на golden corpus. Активация — отдельный шаг E6.
 
 
 ## 2026-05-13

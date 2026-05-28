@@ -13,6 +13,7 @@ export interface CachedSection {
   llmConfidence: number | null;
   level: number | null;
   order: number | null;
+  headingNumber: string | null;
   contentBlocks: Array<{ id: string; type: string | null; content: string; rawHtml: string | null; order: number | null }>;
 }
 
