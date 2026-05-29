@@ -2,6 +2,24 @@
 
 ## 2026-05-29
 
+### Feat: intra-audit Variant 1 — 3 фокусных вызова на полный документ + 6 промтов v2
+
+Примирение с целевой логикой (была на ветке `feat/parsing-change-section-level`, не в master): для документа, влезающего в контекст, intra-audit делает **3 фокусных вызова** (self-check / cross-check / editorial) на ПОЛНЫЙ документ — вместо одного комбинированного. Это даёт более качественный аудит.
+
+**shared `buildIntraAuditCheckCalls`:** Variant 1 → 3 вызова (full_doc self/cross/editorial) с userPrefix-ами и `meta.phase`; budget-проверка по самому длинному из 3 full-doc промтов. Variant 2 (zone-based) без изменений. `IntraAuditCheckPrompts` теперь 6 полей: `fullDocSelfCheck/CrossCheck/Editorial` + `selfCheck/crossCheck/editorial`.
+
+**handler `intra-doc-audit.ts`:** резолвит 6 промтов (`full_doc_*_prompt` для Variant 1, `*_prompt` для Variant 2); Variant 1 итерирует 3 вызова последовательно; `persistFindings` пишет `phase` (Variant 1) либо `zone/taskKind` (Variant 2). Поведение 1:1 — 237 workers-тестов проходят.
+
+**Промты (6):** `scripts/prompts/intra-audit-v2/`:
+- full_doc_self_check / full_doc_cross_check / full_doc_editorial — богатые, на полный документ (anchor_id, severity matrix, confidence, 13 few-shot, value extraction).
+- zone_self_check / zone_cross_check / zone_editorial — **новые** zone-версии (те же улучшения, но ввод = одна зона / пара зон reference-target для cross). Закрывают пробел: в v2 не было промтов для случая «документ не влезает целиком».
+
+**seed `seed-intra-audit-prompts-v2.ts`:** сидит все 6 под правильные ключи (`full_doc_*_prompt` + `*_prompt`).
+
+**preview-сервис:** резолвит 6 промтов → выгрузка .txt для Variant 1 теперь содержит 3 файла (self/cross/editorial), не заглушку.
+
+Эффект на прод: intra-audit полного документа делает 3 вызова вместо 1 (после ре-сида v2). Требует деплой workers+api+rule-admin + повторный `seed --activate`.
+
 ### Feat: выгрузка реальных промтов в .txt для документа эталона — каркас + intra_audit (PR1)
 
 Эксперт может скачать .zip с реальными промтами, уходящими в LLM, для primary-документа эталонного набора — для дебага/тюнинга. PR1: каркас + этап intra_audit (llm_check).

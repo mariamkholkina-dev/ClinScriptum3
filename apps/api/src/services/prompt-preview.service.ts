@@ -68,7 +68,9 @@ async function buildIntraAuditPreview(opts: {
   const plan = buildIntraAuditCheckCalls({
     sections,
     prompts: {
-      audit: promptMap.get("system_prompt") || MISSING("system_prompt"),
+      fullDocSelfCheck: promptMap.get("full_doc_self_check_prompt") || MISSING("full_doc_self_check_prompt"),
+      fullDocCrossCheck: promptMap.get("full_doc_cross_check_prompt") || MISSING("full_doc_cross_check_prompt"),
+      fullDocEditorial: promptMap.get("full_doc_editorial_prompt") || MISSING("full_doc_editorial_prompt"),
       selfCheck: promptMap.get("self_check_prompt") || MISSING("self_check_prompt"),
       crossCheck: promptMap.get("cross_check_prompt") || MISSING("cross_check_prompt"),
       editorial: promptMap.get("editorial_prompt") || MISSING("editorial_prompt"),
