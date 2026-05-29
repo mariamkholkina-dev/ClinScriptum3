@@ -12,7 +12,7 @@ import { prisma, loadRulesForType, snapshotRules, getEffectiveLlmConfig, toConfi
 import { RulesEngine, detectContradictions, toFactExtractionRules, extractRawFromTable, aggregateByCanonical, canonicalize } from "@clinscriptum/rules-engine";
 import type { ExtractedFact, AggregatedFact, TableAst } from "@clinscriptum/rules-engine";
 import { LLMGateway } from "@clinscriptum/llm-gateway";
-import type { LLMProvider } from "@clinscriptum/llm-gateway";
+import type { LLMProvider, LlmCallRecord } from "@clinscriptum/llm-gateway";
 import {
   parseLlmJson,
   parseLlmJsonWithRetry,
@@ -31,6 +31,8 @@ export interface FactExtractionContext {
   bundleId: string | null;
   llmThinkingEnabled?: boolean;
   excludedSectionPrefixes?: string[];
+  /** Хук истории ответов LLM (см. LlmResponseLog). Проставляется handler'ом. */
+  onLlmResponse?: (entry: LlmCallRecord) => void | Promise<void>;
 }
 
 export interface FactExtractionResult {
@@ -489,6 +491,7 @@ export async function runLlmCheckTargeted(
     thinkingEnabled: ctx.llmThinkingEnabled,
     reasoningMode: llmConfig.reasoningMode,
     timeoutMs: llmConfig.timeoutMs,
+    onResponse: ctx.onLlmResponse,
   });
 
   let totalTokens = 0;
@@ -855,6 +858,7 @@ ${registryList}
     thinkingEnabled: ctx.llmThinkingEnabled,
     reasoningMode: llmConfig.reasoningMode,
     timeoutMs: llmConfig.timeoutMs,
+    onResponse: ctx.onLlmResponse,
   });
 
   const existingFacts = await prisma.fact.findMany({ where: { docVersionId: ctx.docVersionId } });
@@ -1148,6 +1152,7 @@ export async function runLlmQa(
     thinkingEnabled: ctx.llmThinkingEnabled,
     reasoningMode: llmConfig.reasoningMode,
     timeoutMs: llmConfig.timeoutMs,
+    onResponse: ctx.onLlmResponse,
   });
 
   let correctedCount = 0;

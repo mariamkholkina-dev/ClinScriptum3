@@ -297,6 +297,35 @@ function ExpandedRow({ runId }: { runId: string }) {
           </td>
         </tr>
       )}
+      {(run._count?.llmResponses ?? 0) > 0 && (
+        <tr className="bg-gray-50">
+          <td />
+          <td colSpan={8} className="px-4 py-2">
+            <button
+              onClick={async () => {
+                const { useAuthStore } = await import("@/lib/auth-store");
+                const token = useAuthStore.getState().accessToken;
+                const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/trpc").replace("/trpc", "");
+                const res = await fetch(`${apiUrl}/api/processing/${run.id}/llm-responses.zip`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!res.ok) { alert("Не удалось скачать ответы LLM: " + res.status); return; }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `llm_responses_${run.type}_${run.id.slice(0, 8)}.zip`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:border-brand-400 hover:text-brand-600"
+              title="Скачать промт + ответ каждого вызова LLM в .zip"
+            >
+              ⬇ Ответы LLM ({run._count?.llmResponses})
+            </button>
+          </td>
+        </tr>
+      )}
       {steps.length === 0 ? (
         <tr><td colSpan={9} className="px-4 py-3 text-sm text-gray-400">Нет этапов</td></tr>
       ) : (

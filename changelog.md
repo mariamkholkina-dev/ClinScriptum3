@@ -2,6 +2,18 @@
 
 ## 2026-05-29
 
+### Feat: история ответов LLM + скачивание в «Аудит обработок»
+
+Сохраняем КАЖДЫЙ ответ LLM (промт → ответ парой) в историю и даём скачивать .zip в разделе «Аудит обработок».
+
+- **schema**: новая модель `LlmResponseLog` (processingRunId, docVersionId, level, label, systemPrompt, userPrompt, responseContent, токены, provider, model) + миграция `20260529160000_add_llm_response_log`. Cascade-delete с ProcessingRun.
+- **gateway** (`llm-gateway`): `LLMConfig.onResponse?` хук + `LLMRequest.label?`. `generate()` после ответа вызывает хук (ошибки хука глушатся — не ломают генерацию). Тип `LlmCallRecord` экспортирован.
+- **workers**: `lib/llm-response-logger.ts` — фабрика `makeLlmResponseLogger(runId, docVersionId, level)`. Подключена во всех LLM-этапах: intra-audit (check+qa, с label-ами фаз), classification (check+qa), generation icf/csr. fact-extraction-core принимает `onLlmResponse` через `FactExtractionContext` (handler передаёт логгер с нужным level). SOA не использует LLM — нечего логировать. parse-document пропущен (его LLM-fallback вне ProcessingRun-контекста).
+- **api**: REST `GET /api/processing/:runId/llm-responses.zip` (jszip) — по .txt на вызов (`### PROMPT (system/user) ### / ### RESPONSE ###`) + `_manifest.txt`. Tenant-guard через run→study. `processing.getRun` отдаёт `_count.llmResponses`.
+- **rule-admin**: в раскрытой строке прогона на странице «Аудит обработок» — кнопка «⬇ Ответы LLM (N)».
+
+Retention: хранится всё (MVP, без автоочистки). Промты дублируют prompt-preview, но здесь они в паре с реальным ответом — удобно для дебага. Требует деплой api+workers+rule-admin + миграцию.
+
 ### Feat: intra-audit Variant 1 — 3 фокусных вызова на полный документ + 6 промтов v2
 
 Примирение с целевой логикой (была на ветке `feat/parsing-change-section-level`, не в master): для документа, влезающего в контекст, intra-audit делает **3 фокусных вызова** (self-check / cross-check / editorial) на ПОЛНЫЙ документ — вместо одного комбинированного. Это даёт более качественный аудит.

@@ -110,7 +110,10 @@ describe("handleExtractFacts", () => {
     const ctx = makeMockContext();
     const result = await llmCheckHandler.execute(ctx);
 
-    expect(mockRunLlmCheck).toHaveBeenCalledWith(ctx, logger);
+    expect(mockRunLlmCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ ...ctx, onLlmResponse: expect.any(Function) }),
+      logger,
+    );
     expect(result).toEqual({ ...llmCheckResult, needsNextStep: true });
   });
 
@@ -126,7 +129,10 @@ describe("handleExtractFacts", () => {
     const ctx = makeMockContext();
     const result = await llmQaHandler.execute(ctx);
 
-    expect(mockRunLlmQa).toHaveBeenCalledWith(ctx, logger);
+    expect(mockRunLlmQa).toHaveBeenCalledWith(
+      expect.objectContaining({ ...ctx, onLlmResponse: expect.any(Function) }),
+      logger,
+    );
     expect(result).toEqual({ ...llmQaResult, needsNextStep: true });
   });
 

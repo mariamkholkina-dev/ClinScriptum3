@@ -8,6 +8,7 @@ import { logger } from "../lib/logger.js";
 import { runWithConcurrency } from "../lib/concurrency.js";
 import { loadSections, invalidateSectionsCache } from "../lib/section-cache.js";
 import type { CachedSection } from "../lib/section-cache.js";
+import { makeLlmResponseLogger } from "../lib/llm-response-logger.js";
 
 interface SectionClassifyRow {
   sectionId: string;
@@ -501,6 +502,7 @@ export async function handleClassifySections(data: {
         thinkingEnabled: ctx.llmThinkingEnabled,
         reasoningMode: llmConfig.reasoningMode,
         timeoutMs: llmConfig.timeoutMs,
+        onResponse: makeLlmResponseLogger(ctx.processingRunId, ctx.docVersionId, "llm_check"),
       });
 
       let updated = 0;
@@ -744,6 +746,7 @@ ${inputLines.join("\n")}`;
         thinkingEnabled: ctx.llmThinkingEnabled,
         reasoningMode: llmConfig.reasoningMode,
         timeoutMs: llmConfig.timeoutMs,
+        onResponse: makeLlmResponseLogger(ctx.processingRunId, ctx.docVersionId, "llm_qa"),
       });
 
       let corrections = 0;

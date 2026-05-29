@@ -393,10 +393,37 @@ model ProcessingRun {
   ruleSetVersion RuleSetVersion?  @relation(fields: [ruleSetVersionId], references: [id])
   ruleSetBundle  RuleSetBundle?   @relation(fields: [ruleSetBundleId], references: [id])
   steps          ProcessingStep[]
+  llmResponses   LlmResponseLog[]
 
   @@index([studyId])
   @@index([docVersionId])
   @@map("processing_runs")
+}
+
+// История «промт → ответ LLM»: одна строка на каждый вызов gateway.generate().
+// Заполняется через LLMConfig.onResponse хук (см. packages/llm-gateway).
+// Доступна для просмотра/скачивания в разделе «Аудит обработок».
+model LlmResponseLog {
+  id              String        @id @default(uuid()) @db.Uuid
+  processingRunId String        @map("processing_run_id") @db.Uuid
+  docVersionId    String        @map("doc_version_id") @db.Uuid
+  level           PipelineLevel
+  label           String?
+  systemPrompt    String?       @map("system_prompt")
+  userPrompt      String?       @map("user_prompt")
+  responseContent String        @map("response_content")
+  promptTokens     Int          @default(0) @map("prompt_tokens")
+  completionTokens Int          @default(0) @map("completion_tokens")
+  totalTokens      Int          @default(0) @map("total_tokens")
+  provider        String?
+  model           String?
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  processingRun ProcessingRun @relation(fields: [processingRunId], references: [id], onDelete: Cascade)
+
+  @@index([processingRunId])
+  @@index([docVersionId])
+  @@map("llm_response_logs")
 }
 
 enum ProcessingRunType {

@@ -11,6 +11,26 @@ export class LLMGateway {
   }
 
   async generate(request: LLMRequest): Promise<LLMResponse> {
+    const response = await this.generateInternal(request);
+    if (this.config.onResponse) {
+      try {
+        await this.config.onResponse({
+          label: request.label,
+          system: request.system,
+          messages: request.messages,
+          content: response.content,
+          usage: response.usage,
+          provider: response.provider,
+          model: response.model,
+        });
+      } catch {
+        // История ответов не должна ломать генерацию.
+      }
+    }
+    return response;
+  }
+
+  private async generateInternal(request: LLMRequest): Promise<LLMResponse> {
     if (this.config.provider === "yandexgpt") {
       return this.generateYandex(request);
     }

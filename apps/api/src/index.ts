@@ -257,6 +257,83 @@ app.get("/api/golden/:goldenSampleId/prompts.zip", async (req, res) => {
   }
 });
 
+app.get("/api/processing/:runId/llm-responses.zip", async (req, res) => {
+  try {
+    const { verifyAccessToken } = await import("./lib/auth.js");
+    const { prisma } = await import("@clinscriptum/db");
+    const JSZip = (await import("jszip")).default;
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const user = verifyAccessToken(authHeader.slice(7));
+
+    const run = await prisma.processingRun.findUnique({
+      where: { id: req.params.runId },
+      include: { study: { select: { tenantId: true } } },
+    });
+    if (!run || run.study.tenantId !== user.tenantId) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    const responses = await prisma.llmResponseLog.findMany({
+      where: { processingRunId: run.id },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const zip = new JSZip();
+    zip.file(
+      "_manifest.txt",
+      [
+        "# История ответов LLM для прогона обработки",
+        `runId: ${run.id}`,
+        `type: ${run.type}`,
+        `вызовов LLM: ${responses.length}`,
+        "",
+        ...responses.map((r, i) =>
+          `[${i + 1}] level=${r.level} label=${r.label ?? "—"} model=${r.model ?? "?"} tokens=${r.totalTokens}`,
+        ),
+      ].join("\n"),
+    );
+
+    responses.forEach((r, i) => {
+      const num = String(i + 1).padStart(2, "0");
+      const safeLabel = (r.label ?? r.level).replace(/[^\p{L}\p{N}_→-]+/gu, "_");
+      const name = `${num}_${r.level}__${safeLabel}.txt`;
+      zip.file(
+        name,
+        [
+          "### PROMPT (system) ###",
+          r.systemPrompt ?? "(нет)",
+          "",
+          "### PROMPT (user) ###",
+          r.userPrompt ?? "(нет)",
+          "",
+          "### RESPONSE ###",
+          r.responseContent,
+        ].join("\n"),
+      );
+    });
+
+    const buffer = await zip.generateAsync({ type: "nodebuffer" });
+    const filename = `llm_responses_${run.type}_${run.id.slice(0, 8)}.zip`;
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.setHeader("Content-Length", buffer.length);
+    res.send(buffer);
+  } catch (err) {
+    const { logger } = await import("./lib/logger.js");
+    logger.error("llm-responses.zip failed", {
+      runId: req.params.runId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    res.status(500).json({ error: "Failed" });
+  }
+});
+
 app.get("/api/audit-report/:versionId", async (req, res) => {
   try {
     const { verifyAccessToken } = await import("./lib/auth.js");
