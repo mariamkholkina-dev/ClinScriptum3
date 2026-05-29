@@ -2,6 +2,11 @@
 
 ## 2026-05-30
 
+### Fix: cross_check в zone-режиме почти не работал — устаревшая ZONE_AFFINITY_MAP
+
+Диагностировано по реальному прогону (`b3b8e905`, 29 LLM-вызовов: 14 self_check + 14 editorial + **всего 1 cross_check** `synopsis→statistics`). Причина: `ZONE_AFFINITY_MAP` в `packages/shared/src/prompt-builders/intra-audit.ts` (21 пара зон для авто-cross-check) использовала **старые** ключи таксономии — `study_design`, `study_objectives`, `study_population`, `treatments`, `efficacy_assessments`, `safety_assessments`, `visit_schedule`, `appendices`. Актуальная таксономия (`taxonomy.yaml`) давно мигрировала на `design`, `population`, `ip`, `endpoints`, `safety`, `procedures`, `appendix`, `overview`. `resolveCrossCheckPairs` оставляет пару только если обе зоны присутствуют в документе → совпадали лишь `synopsis`/`statistics`/`ethics`, выживала единственная пара `synopsis↔statistics`. Кросс-сверка секций (половина смысла intra-audit) в zone-режиме была фактически выключена.
+
+Фикс: `ZONE_AFFINITY_MAP` переписана на актуальные ключи (22 пары): `study_objectives→endpoints`, `treatments→ip`, `visit_schedule→procedures` и т.д. + задействованы новые зоны (`overview`, `data_management`). Теперь для типового протокола в zone-режиме формируется ~12-15 cross_check вызовов вместо одного. 9 shared-тестов проходят. Требует деплой workers + api (используется и в prompt-preview).
 ### Fix: скрыть от медписателя этап ревью оператором (баннер на экране аудита)
 
 Баннер «Результаты аудита на проверке у специалиста. Findings будут доступны после публикации» раскрывал медицинскому писателю внутренний этап ревью оператором (`operator_review`). Этот этап скрытый — пользователю не нужно знать о нём. Заменён на нейтральный статус «Обработка документа ещё не завершена. Результаты появятся автоматически.» (тот же стиль, что и баннер «идёт анализ»). Убраны неиспользуемые импорт `Clock` и переменная `reviewStatus`.
