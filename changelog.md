@@ -6,6 +6,19 @@
 
 К обновлённой карте авто-cross-check (PR #152) добавлены 9 обязательных пар, без которых пропускались важные кросс-секционные ошибки: `design↔statistics` (размер выборки/аналитические популяции), `design↔ip` (дозовые группы/схема лечения), `safety↔statistics` (правила остановки/анализ безопасности), `population↔procedures` (критерии включения/контрацепция), `ip↔population` (дозирование по подгруппам), `overview↔design`, `overview↔population`, `ethics↔population` (уязвимые группы/согласие), `ethics↔procedures` (согласие/контрацепция). Итого 31 пара. Требует деплой workers + api.
 
+### Feat: стоимость токенов в «Аудит обработок»
+
+В разделе «Аудит обработок» (rule-admin) добавлен расчёт денежной стоимости LLM-вызовов — по каждой операции и суммарно по этапу/прогону. Цены — из Yandex AI Studio (₽ за 1000 токенов).
+
+- **schema**: новая модель `LlmModelPricing` (`modelPattern`, `costPerInputKTokens`, `costPerOutputKTokens`, `currency`, `note`, `isActive`) + миграция `20260530120000_add_llm_model_pricing`.
+- **seed** (`scripts/seed-llm-pricing.ts`): идемпотентный upsert дефолтов Yandex — qwen3-235b (0.5/0.5), deepseek-v32 (0.5/0.8), deepseek-v4-flash (0.3/0.5) ₽/1k.
+- **service** (`apps/api/src/services/cost.service.ts`): `resolveModelCost` (матчинг по самому длинному `modelPattern`, содержащемуся в `LlmResponseLog.model`) + `computeRunCost` — считает per-call/per-level/total стоимость НА ЛЕТУ из `LlmResponseLog` × `LlmModelPricing` (стоимость не хранится — цены меняются). Tenant-guard через run→study. Возвращает `unpricedModels` для моделей без цены.
+- **router**: `processing.getRunCost`.
+- **UI** (`audit/page.tsx`): раскрываемый блок «💰 Стоимость» в строке прогона — итог по прогону, разбивка по этапам и по каждому вызову (label · этап · модель · токены · ₽), пометка «н/д» для моделей без цены.
+- **tests**: `cost.service.test.ts` (longest-pattern матчинг, расчёт ₽, unpriced, tenant-guard) — 7 тестов.
+
+Требует деплой api + rule-admin + миграцию + `seed-llm-pricing.ts`. Цены редактируются через таблицу `llm_model_pricing` (CRUD-UI — follow-up).
+
 ### Fix: cross_check в zone-режиме почти не работал — устаревшая ZONE_AFFINITY_MAP
 
 Диагностировано по реальному прогону (`b3b8e905`, 29 LLM-вызовов: 14 self_check + 14 editorial + **всего 1 cross_check** `synopsis→statistics`). Причина: `ZONE_AFFINITY_MAP` в `packages/shared/src/prompt-builders/intra-audit.ts` (21 пара зон для авто-cross-check) использовала **старые** ключи таксономии — `study_design`, `study_objectives`, `study_population`, `treatments`, `efficacy_assessments`, `safety_assessments`, `visit_schedule`, `appendices`. Актуальная таксономия (`taxonomy.yaml`) давно мигрировала на `design`, `population`, `ip`, `endpoints`, `safety`, `procedures`, `appendix`, `overview`. `resolveCrossCheckPairs` оставляет пару только если обе зоны присутствуют в документе → совпадали лишь `synopsis`/`statistics`/`ethics`, выживала единственная пара `synopsis↔statistics`. Кросс-сверка секций (половина смысла intra-audit) в zone-режиме была фактически выключена.
