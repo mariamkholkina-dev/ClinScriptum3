@@ -108,28 +108,46 @@ export function buildZoneTexts(sections: AnchorableSectionInput[]): ZoneText[] {
 
 /* ═══════════════ Cross-check pair detection ═══════════════ */
 
+// Пары зон для авто-cross-check (когда study.crossCheckPairs не задан вручную).
+// ВАЖНО: ключи ДОЛЖНЫ совпадать с актуальной таксономией standardSection
+// (см. taxonomy.yaml top-level зоны: overview, synopsis, design, ip, population,
+// procedures, endpoints, safety, statistics, data_management, ethics, admin,
+// appendix). Старые ключи (study_design/study_objectives/study_population/
+// treatments/efficacy_assessments/safety_assessments/visit_schedule/appendices)
+// устарели после миграции таксономии — из-за них resolveCrossCheckPairs
+// отбрасывал почти все пары (выживала только synopsis↔statistics), и cross_check
+// в zone-режиме фактически не работал.
 export const ZONE_AFFINITY_MAP: [string, string][] = [
-  ["synopsis", "study_design"],
-  ["synopsis", "study_objectives"],
-  ["synopsis", "study_population"],
-  ["synopsis", "treatments"],
-  ["synopsis", "efficacy_assessments"],
-  ["synopsis", "safety_assessments"],
+  // Синопсис резюмирует весь протокол — сверяется со всеми ключевыми зонами.
+  ["synopsis", "overview"],
+  ["synopsis", "design"],
+  ["synopsis", "endpoints"],
+  ["synopsis", "population"],
+  ["synopsis", "ip"],
+  ["synopsis", "safety"],
   ["synopsis", "statistics"],
-  ["synopsis", "visit_schedule"],
-  ["study_objectives", "efficacy_assessments"],
-  ["study_objectives", "statistics"],
-  ["efficacy_assessments", "statistics"],
-  ["efficacy_assessments", "visit_schedule"],
-  ["study_design", "visit_schedule"],
-  ["study_design", "study_population"],
-  ["study_design", "appendices"],
-  ["safety_assessments", "treatments"],
-  ["safety_assessments", "visit_schedule"],
-  ["safety_assessments", "study_population"],
-  ["safety_assessments", "ethics"],
-  ["study_population", "statistics"],
-  ["treatments", "visit_schedule"],
+  ["synopsis", "procedures"],
+  // Цели/обзор ↔ конечные точки.
+  ["overview", "endpoints"],
+  // Конечные точки ↔ как измеряются (статистика, процедуры).
+  ["endpoints", "statistics"],
+  ["endpoints", "procedures"],
+  // Дизайн ↔ процедуры / популяция / приложения.
+  ["design", "procedures"],
+  ["design", "population"],
+  ["design", "appendix"],
+  // Безопасность ↔ препарат / процедуры / популяция / этика.
+  ["safety", "ip"],
+  ["safety", "procedures"],
+  ["safety", "population"],
+  ["safety", "ethics"],
+  // Популяция ↔ статистика (размер выборки).
+  ["population", "statistics"],
+  // Исследуемый препарат ↔ процедуры (введение/график).
+  ["ip", "procedures"],
+  // Управление данными ↔ статистика / процедуры.
+  ["data_management", "statistics"],
+  ["data_management", "procedures"],
 ];
 
 export function detectCrossCheckPairs(availableZones: Set<string>): [string, string][] {
