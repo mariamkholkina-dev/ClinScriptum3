@@ -19,3 +19,4 @@ export { approvalService } from "./approval.service.js";
 export { fewShotService } from "./few-shot.service.js";
 export { annotationService } from "./annotation.service.js";
 export { expectedSectionService, relinkExpectedSections } from "./expectedSection.service.js";
+export { promptPreviewService, type PromptPreviewResult } from "./prompt-preview.service.js";

@@ -22,6 +22,7 @@ import {
   Download,
   Copy,
   Check,
+  FileCode2,
 } from "lucide-react";
 import { ParsingTreeViewer } from "./parsing-viewer";
 import { ClassificationTreeViewer } from "./classification-viewer";
@@ -1805,6 +1806,31 @@ export default function GoldenDatasetDetailPage() {
                           <Download size={14} />
                         </button>
                       )}
+                      <button
+                        onClick={async () => {
+                          const { useAuthStore } = await import("@/lib/auth-store");
+                          const token = useAuthStore.getState().accessToken;
+                          const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/trpc").replace("/trpc", "");
+                          const res = await fetch(`${apiUrl}/api/golden/${sample.id}/prompts.zip`, {
+                            headers: { Authorization: `Bearer ${token}` },
+                          });
+                          if (!res.ok) {
+                            alert("Не удалось сгенерировать промты: " + res.status);
+                            return;
+                          }
+                          const blob = await res.blob();
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `prompts_${doc.documentVersion?.document?.title ?? "document"}.zip`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="invisible text-gray-400 hover:text-brand-600 group-hover:visible"
+                        title="Скачать реальные промты, уходящие в LLM (.zip с .txt по каждому вызову)"
+                      >
+                        <FileCode2 size={14} />
+                      </button>
                       <button
                         onClick={() => {
                           if (confirm("Удалить этот документ из образца?")) {

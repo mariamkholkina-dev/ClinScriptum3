@@ -23,3 +23,19 @@ export {
   type FactExtractionItem,
   type TargetedFact,
 } from "./utils/llm-json.js";
+export type { PromptCall, AnchorableSectionInput } from "./prompt-builders/types.js";
+export {
+  buildSectionAnchor,
+  parseSectionAnchor,
+  buildFullDocumentText,
+  buildZoneTexts,
+  ZONE_AFFINITY_MAP,
+  detectCrossCheckPairs,
+  resolveCrossCheckPairs,
+  buildIntraAuditCheckCalls,
+  type AnchorableSection,
+  type ZoneText,
+  type IntraAuditCheckPrompts,
+  type BuildIntraAuditCheckOptions,
+  type IntraAuditCheckPlan,
+} from "./prompt-builders/intra-audit.js";

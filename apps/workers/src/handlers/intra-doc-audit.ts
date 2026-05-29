@@ -8,8 +8,13 @@ import { logger } from "../lib/logger.js";
 import { runWithConcurrency } from "../lib/concurrency.js";
 import { loadSections, invalidateSectionsCache } from "../lib/section-cache.js";
 import { deduplicateByFamilyAndAnchor, pickDuplicateIds } from "../lib/intra-audit-dedup.js";
-import { buildSectionAnchor } from "../lib/build-section-anchor.js";
 import { enrichFindingWithCanonical } from "../lib/canonicalize-finding-value.js";
+import {
+  buildFullDocumentText,
+  buildZoneTexts,
+  resolveCrossCheckPairs,
+  buildIntraAuditCheckCalls,
+} from "@clinscriptum/shared";
 
 interface AuditFinding {
   type: "editorial" | "semantic";
@@ -31,65 +36,6 @@ interface AuditFinding {
   targetSectionId?: string;
   referenceValue?: string;
   targetValue?: string;
-}
-
-interface ZoneText {
-  zone: string;
-  titles: string[];
-  text: string;
-}
-
-/* ═══════════════ Cross-check pair detection ═══════════════ */
-
-const ZONE_AFFINITY_MAP: [string, string][] = [
-  // Synopsis → detail sections (synopsis is a summary, must match all key sections)
-  ["synopsis", "study_design"],
-  ["synopsis", "study_objectives"],
-  ["synopsis", "study_population"],
-  ["synopsis", "treatments"],
-  ["synopsis", "efficacy_assessments"],
-  ["synopsis", "safety_assessments"],
-  ["synopsis", "statistics"],
-  ["synopsis", "visit_schedule"],
-  // Objectives ↔ endpoints / statistics
-  ["study_objectives", "efficacy_assessments"],
-  ["study_objectives", "statistics"],
-  // Endpoints ↔ statistics / SoA
-  ["efficacy_assessments", "statistics"],
-  ["efficacy_assessments", "visit_schedule"],
-  // Design ↔ SoA / population
-  ["study_design", "visit_schedule"],
-  ["study_design", "study_population"],
-  ["study_design", "appendices"],
-  // Safety ↔ treatments / SoA / population / ethics
-  ["safety_assessments", "treatments"],
-  ["safety_assessments", "visit_schedule"],
-  ["safety_assessments", "study_population"],
-  ["safety_assessments", "ethics"],
-  // Population ↔ statistics
-  ["study_population", "statistics"],
-  // Treatments ↔ SoA
-  ["treatments", "visit_schedule"],
-];
-
-function detectCrossCheckPairs(
-  availableZones: Set<string>,
-): [string, string][] {
-  return ZONE_AFFINITY_MAP.filter(
-    ([a, b]) => availableZones.has(a) && availableZones.has(b),
-  );
-}
-
-function resolveCrossCheckPairs(
-  configuredPairs: [string, string][] | null | undefined,
-  availableZones: Set<string>,
-): [string, string][] {
-  if (configuredPairs && configuredPairs.length > 0) {
-    return configuredPairs.filter(
-      ([a, b]) => availableZones.has(a) && availableZones.has(b),
-    );
-  }
-  return detectCrossCheckPairs(availableZones);
 }
 
 const LLM_CONCURRENCY = 3;
@@ -128,69 +74,9 @@ function overlapRatio(a: string, b: string): number {
   return longer.includes(sample) ? 1 : 0;
 }
 
-/* ═══════════════ Zone builder ═══════════════ */
-
-function buildZoneTexts(
-  sections: Array<{
-    title: string;
-    standardSection: string | null;
-    headingNumber?: string | null;
-    order?: number | null;
-    contentBlocks: Array<{ content: string }>;
-  }>,
-): ZoneText[] {
-  const zoneMap = new Map<string, { titles: string[]; parts: string[] }>();
-
-  for (const s of sections) {
-    const zone = s.standardSection ?? "__unclassified__";
-    const rootZone = zone.split(".")[0];
-    if (!zoneMap.has(rootZone)) {
-      zoneMap.set(rootZone, { titles: [], parts: [] });
-    }
-    const entry = zoneMap.get(rootZone)!;
-    entry.titles.push(s.title);
-    const anchor = buildSectionAnchor({
-      id: "",
-      title: s.title,
-      standardSection: s.standardSection ?? null,
-      headingNumber: s.headingNumber ?? null,
-      order: s.order ?? null,
-    });
-    entry.parts.push(`## ${anchor} ${s.title}\n${s.contentBlocks.map((b) => b.content).join("\n")}`);
-  }
-
-  return Array.from(zoneMap.entries()).map(([zone, data]) => ({
-    zone,
-    titles: data.titles,
-    text: data.parts.join("\n\n"),
-  }));
-}
-
-function buildFullDocumentText(
-  sections: Array<{
-    title: string;
-    standardSection?: string | null;
-    headingNumber?: string | null;
-    order?: number | null;
-    contentBlocks: Array<{ content: string }>;
-  }>,
-): string {
-  const parts: string[] = [];
-  for (const section of sections) {
-    const anchor = buildSectionAnchor({
-      id: "",
-      title: section.title,
-      standardSection: section.standardSection ?? null,
-      headingNumber: section.headingNumber ?? null,
-      order: section.order ?? null,
-    });
-    parts.push(`\n## ${anchor} ${section.title}\n`);
-    for (const block of section.contentBlocks) {
-      parts.push(block.content);
-    }
-  }
-  return parts.join("\n");
-}
+/* buildZoneTexts / buildFullDocumentText / resolveCrossCheckPairs вынесены в
+   @clinscriptum/shared (prompt-builders/intra-audit) — единый источник правды
+   с preview-сервисом выгрузки промтов. */
 
 /* ═══════════════ Handler ═══════════════ */
 
@@ -279,28 +165,85 @@ export async function handleIntraDocAudit(data: {
 
       const inputBudget = getInputBudgetChars(llmConfig);
       const fullDocText = buildFullDocumentText(sections);
-      const totalPromptSize = auditSystemPrompt.length + fullDocText.length + 200;
-      const fitsInContext = totalPromptSize <= inputBudget;
-
       const auditMode = ctx.auditMode ?? "auto";
-      const useVariant1 =
-        auditMode === "single_call" ? fitsInContext :
-        auditMode === "zone_based" ? false :
-        fitsInContext; // "auto" — original behavior
+
+      // Сборка реальных LLM-вызовов — единый источник правды с preview-сервисом
+      // (packages/shared/prompt-builders/intra-audit). Variant 1 (single call) vs
+      // Variant 2 (zone-based) и нарезка по бюджету решаются внутри builder.
+      const plan = buildIntraAuditCheckCalls({
+        sections,
+        prompts: {
+          audit: auditSystemPrompt,
+          selfCheck: selfCheckPrompt,
+          crossCheck: crossCheckPrompt,
+          editorial: editorialPrompt,
+        },
+        inputBudget,
+        auditMode,
+        crossCheckPairs: ctx.crossCheckPairs,
+      });
 
       let totalFindings = 0;
       let totalTokens = 0;
 
+      // Персист находок одного вызова. meta?.kind присутствует только для
+      // Variant 2 (zone-based) — тогда в sourceRef/extraAttributes добавляются
+      // zone/anchorZone/taskKind (поведение 1:1 с прежним кодом).
+      const persistFindings = async (
+        llmFindings: AuditFinding[],
+        meta: Record<string, unknown> | undefined,
+      ) => {
+        const kind = meta?.kind as string | undefined;
+        for (const finding of llmFindings) {
+          const enriched = enrichFindingWithCanonical({
+            issueType: finding.issueType,
+            referenceSectionId: finding.referenceSectionId,
+            targetSectionId: finding.targetSectionId,
+            referenceValue: finding.referenceValue,
+            targetValue: finding.targetValue,
+          });
+          await prisma.finding.create({
+            data: {
+              docVersionId: ctx.docVersionId,
+              type: finding.type,
+              description: finding.description,
+              suggestion: finding.suggestion,
+              sourceRef: {
+                textSnippet: finding.sourceText,
+                referenceQuote: finding.referenceQuote,
+                ...(kind ? { zone: meta!.targetZone as string, anchorZone: meta!.anchorZone as string | undefined, taskKind: kind } : {}),
+                referenceSectionId: finding.referenceSectionId,
+                targetSectionId: finding.targetSectionId,
+                referenceValueRaw: finding.referenceValue,
+                targetValueRaw: finding.targetValue,
+              },
+              status: finding.contextStatus === "insufficient_context" ? "false_positive" : "pending",
+              extraAttributes: {
+                severity: finding.severity, method: "llm",
+                ...(kind ? { taskKind: kind } : {}),
+                issueType: finding.issueType, block: finding.block, field: finding.field,
+                confidence: finding.confidence, contextStatus: finding.contextStatus,
+                editorialFix: finding.editorialFix,
+                referenceValueCanonical: enriched.referenceValueCanonical,
+                targetValueCanonical: enriched.targetValueCanonical,
+                dedupKey: enriched.dedupKey,
+              },
+            },
+          });
+        }
+      };
+
       try {
-        if (useVariant1) {
+        if (plan.variant === 1) {
           /* ─── Variant 1: full document in single call ─── */
           logger.info("[audit:llm_check] Variant 1: full document in single call", {
             docChars: fullDocText.length, budget: inputBudget, auditMode,
           });
 
+          const call = plan.calls[0]!;
           const response = await gateway.generate({
-            system: auditSystemPrompt,
-            messages: [{ role: "user", content: `Проанализируй следующий клинический протокол на внутренние несоответствия:\n\n${fullDocText}` }],
+            system: call.system,
+            messages: [{ role: "user", content: call.user }],
             maxTokens: llmConfig.maxTokens,
             responseFormat: "json",
           });
@@ -308,177 +251,40 @@ export async function handleIntraDocAudit(data: {
           totalTokens = response.usage.totalTokens;
           const llmFindings = parseLLMFindings(response.content);
           totalFindings = llmFindings.length;
-
-          for (const finding of llmFindings) {
-            const enriched = enrichFindingWithCanonical({
-              issueType: finding.issueType,
-              referenceSectionId: finding.referenceSectionId,
-              targetSectionId: finding.targetSectionId,
-              referenceValue: finding.referenceValue,
-              targetValue: finding.targetValue,
-            });
-            await prisma.finding.create({
-              data: {
-                docVersionId: ctx.docVersionId,
-                type: finding.type,
-                description: finding.description,
-                suggestion: finding.suggestion,
-                sourceRef: {
-                  textSnippet: finding.sourceText,
-                  referenceQuote: finding.referenceQuote,
-                  referenceSectionId: finding.referenceSectionId,
-                  targetSectionId: finding.targetSectionId,
-                  referenceValueRaw: finding.referenceValue,
-                  targetValueRaw: finding.targetValue,
-                },
-                status: finding.contextStatus === "insufficient_context" ? "false_positive" : "pending",
-                extraAttributes: {
-                  severity: finding.severity, method: "llm",
-                  issueType: finding.issueType, block: finding.block, field: finding.field,
-                  confidence: finding.confidence, contextStatus: finding.contextStatus,
-                  editorialFix: finding.editorialFix,
-                  referenceValueCanonical: enriched.referenceValueCanonical,
-                  targetValueCanonical: enriched.targetValueCanonical,
-                  dedupKey: enriched.dedupKey,
-                },
-              },
-            });
-          }
+          await persistFindings(llmFindings, undefined);
         } else {
           /* ─── Variant 2: zone-based chunking with parallel execution ─── */
-          const zones = buildZoneTexts(sections);
-          const zoneMap = new Map(zones.map((z) => [z.zone, z]));
-          const availableZones = new Set(zones.map((z) => z.zone));
-          const crossPairs = resolveCrossCheckPairs(ctx.crossCheckPairs, availableZones);
-
           logger.info("[audit:llm_check] Variant 2: zone-based chunking", {
-            zones: zones.length, docChars: fullDocText.length, budget: inputBudget,
-            auditMode, crossPairsCount: crossPairs.length,
-            crossPairsSource: ctx.crossCheckPairs?.length ? "manual" : "auto",
-          });
-
-          interface AuditTask {
-            kind: "self_check" | "cross_check" | "self_editorial";
-            targetZone: string;
-            anchorZone?: string;
-            systemPrompt: string;
-            userContent: string;
-          }
-
-          const tasks: AuditTask[] = [];
-          const contentBudget = inputBudget - auditSystemPrompt.length - 500;
-
-          for (const zone of zones) {
-            const zoneText = zone.text.slice(0, contentBudget);
-
-            tasks.push({
-              kind: "self_check",
-              targetZone: zone.zone,
-              systemPrompt: selfCheckPrompt,
-              userContent: `ЗОНА: ${zone.zone} (секции: ${zone.titles.join(", ")})\n\n${zoneText}`,
-            });
-
-            tasks.push({
-              kind: "self_editorial",
-              targetZone: zone.zone,
-              systemPrompt: editorialPrompt,
-              userContent: `ЗОНА: ${zone.zone}\n\n${zoneText}`,
-            });
-          }
-
-          for (const [anchorKey, targetKey] of crossPairs) {
-            const anchor = zoneMap.get(anchorKey);
-            const target = zoneMap.get(targetKey);
-            if (!anchor || !target) continue;
-
-            const halfBudget = Math.floor(contentBudget / 2);
-            const anchorText = anchor.text.slice(0, halfBudget);
-            const targetText = target.text.slice(0, halfBudget);
-
-            tasks.push({
-              kind: "cross_check",
-              targetZone: targetKey,
-              anchorZone: anchorKey,
-              systemPrompt: crossCheckPrompt,
-              userContent: `РЕФЕРЕНСНАЯ ЗОНА (${anchorKey}):\n${anchorText}\n\n---\n\nПРОВЕРЯЕМАЯ ЗОНА (${targetKey}):\n${targetText}`,
-            });
-          }
-
-          logger.info("[audit:llm_check] Generated audit tasks", {
-            selfCheck: tasks.filter((t) => t.kind === "self_check").length,
-            crossCheck: tasks.filter((t) => t.kind === "cross_check").length,
-            editorial: tasks.filter((t) => t.kind === "self_editorial").length,
+            calls: plan.calls.length, docChars: fullDocText.length, budget: inputBudget,
+            auditMode, crossPairsSource: ctx.crossCheckPairs?.length ? "manual" : "auto",
           });
 
           const taskResults = await runWithConcurrency(
-            tasks.map((task, i) => async () => {
-              logger.info(`[audit:llm_check] Task ${i + 1}/${tasks.length}: ${task.kind}`, {
-                target: task.targetZone,
-                anchor: task.anchorZone,
-              });
-
+            plan.calls.map((call, i) => async () => {
+              logger.info(`[audit:llm_check] Task ${i + 1}/${plan.calls.length}: ${call.label}`);
               const response = await gateway.generate({
-                system: task.systemPrompt,
-                messages: [{ role: "user", content: task.userContent }],
+                system: call.system,
+                messages: [{ role: "user", content: call.user }],
                 maxTokens: llmConfig.maxTokens,
                 responseFormat: "json",
               });
-
-              return { task, response };
+              return { call, response };
             }),
             LLM_CONCURRENCY,
           );
 
-          for (const { task, response } of taskResults) {
+          for (const { call, response } of taskResults) {
             totalTokens += response.usage.totalTokens;
             const llmFindings = parseLLMFindings(response.content);
             totalFindings += llmFindings.length;
-
-            for (const finding of llmFindings) {
-              const enriched = enrichFindingWithCanonical({
-                issueType: finding.issueType,
-                referenceSectionId: finding.referenceSectionId,
-                targetSectionId: finding.targetSectionId,
-                referenceValue: finding.referenceValue,
-                targetValue: finding.targetValue,
-              });
-              await prisma.finding.create({
-                data: {
-                  docVersionId: ctx.docVersionId,
-                  type: finding.type,
-                  description: finding.description,
-                  suggestion: finding.suggestion,
-                  sourceRef: {
-                    textSnippet: finding.sourceText,
-                    referenceQuote: finding.referenceQuote,
-                    zone: task.targetZone,
-                    anchorZone: task.anchorZone,
-                    taskKind: task.kind,
-                    referenceSectionId: finding.referenceSectionId,
-                    targetSectionId: finding.targetSectionId,
-                    referenceValueRaw: finding.referenceValue,
-                    targetValueRaw: finding.targetValue,
-                  },
-                  status: finding.contextStatus === "insufficient_context" ? "false_positive" : "pending",
-                  extraAttributes: {
-                    severity: finding.severity, method: "llm", taskKind: task.kind,
-                    issueType: finding.issueType, block: finding.block, field: finding.field,
-                    confidence: finding.confidence, contextStatus: finding.contextStatus,
-                    editorialFix: finding.editorialFix,
-                    referenceValueCanonical: enriched.referenceValueCanonical,
-                    targetValueCanonical: enriched.targetValueCanonical,
-                    dedupKey: enriched.dedupKey,
-                  },
-                },
-              });
-            }
+            await persistFindings(llmFindings, call.meta);
           }
         }
 
         invalidateSectionsCache(ctx);
 
         return {
-          data: { llmFindings: totalFindings, tokensUsed: totalTokens, auditMode, variant: useVariant1 ? 1 : 2 },
+          data: { llmFindings: totalFindings, tokensUsed: totalTokens, auditMode, variant: plan.variant },
           needsNextStep: true,
           llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
           ruleSnapshot: snapshotRules(auditRules?.rules, {

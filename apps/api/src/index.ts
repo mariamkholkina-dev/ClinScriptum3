@@ -203,6 +203,60 @@ app.get("/api/download/:versionId", async (req, res) => {
   }
 });
 
+app.get("/api/golden/:goldenSampleId/prompts.zip", async (req, res) => {
+  try {
+    const { verifyAccessToken } = await import("./lib/auth.js");
+    const { promptPreviewService } = await import("./services/index.js");
+    const JSZip = (await import("jszip")).default;
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const user = verifyAccessToken(authHeader.slice(7));
+
+    const preview = await promptPreviewService.getForGoldenSample(
+      user.tenantId,
+      req.params.goldenSampleId,
+    );
+
+    const zip = new JSZip();
+    zip.file(
+      "_manifest.txt",
+      [
+        "# Реальные промты, уходящие в LLM (реконструкция из текущего состояния документа)",
+        "# Каждый .txt = один вызов gateway.generate({system, messages}).",
+        "",
+        ...Object.entries(preview.manifest).map(([k, v]) => `${k}: ${JSON.stringify(v)}`),
+      ].join("\n"),
+    );
+
+    preview.calls.forEach((call, i) => {
+      const num = String(i + 1).padStart(2, "0");
+      const safeLabel = call.label.replace(/[^\p{L}\p{N}_→-]+/gu, "_");
+      const name = `${num}_${call.stage}__${call.level}__${safeLabel}.txt`;
+      zip.file(name, `### SYSTEM ###\n${call.system}\n\n### USER ###\n${call.user}\n`);
+    });
+
+    const buffer = await zip.generateAsync({ type: "nodebuffer" });
+    const filename = `prompts_${preview.documentTitle}.zip`;
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.setHeader("Content-Length", buffer.length);
+    res.send(buffer);
+  } catch (err) {
+    const { logger } = await import("./lib/logger.js");
+    const code = (err as { code?: string })?.code;
+    const status = code === "NOT_FOUND" ? 404 : code === "BAD_REQUEST" ? 400 : 500;
+    logger.error("prompts.zip failed", {
+      goldenSampleId: req.params.goldenSampleId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    res.status(status).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
 app.get("/api/audit-report/:versionId", async (req, res) => {
   try {
     const { verifyAccessToken } = await import("./lib/auth.js");
