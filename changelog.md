@@ -2,6 +2,23 @@
 
 ## 2026-05-29
 
+### Fix: seed-intra-audit-prompts-v2 — bundle-aware активация + правильные pattern-ключи (E6)
+
+Два бага в seed-скрипте v2, из-за которых активация была no-op:
+
+1. **Не bundle-aware.** Pipeline всегда резолвит активный bundle (`resolveActiveBundle`) и берёт версию правил через `RuleSetBundleEntry` (см. `bundle-rule-loader.ts`). Старый скрипт только флипал `RuleSetVersion.isActive`, но bundle продолжал указывать на v1. Теперь скрипт при `--activate` обновляет entry активного bundle на новую версию (и флипает isActive для fallback-пути). Также скрипт теперь находит **существующий** глобальный ruleset (через bundle entry или по type), а не создаёт новый по своему имени.
+
+2. **Неверные pattern-ключи.** Скрипт сидил `full_doc_self_check_prompt` / `full_doc_cross_check_prompt` / `full_doc_editorial_prompt`, но handler читает `self_check_prompt` / `cross_check_prompt` / `editorial_prompt` (см. `intra-doc-audit.ts` `promptMap.get(...)`). Несовпадение → handler падал на hard-coded v1 constants. Исправлено на правильные ключи.
+
+Применение (production):
+```bash
+npx tsx --env-file=.env scripts/seed-intra-audit-prompts-v2.ts            # создать v2 inactive
+npx tsx --env-file=.env scripts/seed-intra-audit-prompts-v2.ts --activate # активировать (bundle → v2)
+```
+Откат: вернуть `RuleSetBundleEntry.ruleSetVersionId` на v1 + `is_active` на v1.
+
+**Покрытие:** v2 применяется в Variant 2 (zone-based, крупные протоколы — основной кейс). Variant 1 (single-call для документов, влезающих в контекст) остаётся на hard-coded `AUDIT_SYSTEM_PROMPT`, т.к. v2 не задаёт `system_prompt` для intra_audit — full-coverage Variant 1 это отдельная задача.
+
 ### Feat: расширенный dedup intra-audit по canonical values + section_ids (E4)
 
 Расширяет `deduplicateByFamilyAndAnchor` (Sprint 4) — теперь группирует findings по трём приоритетам:
