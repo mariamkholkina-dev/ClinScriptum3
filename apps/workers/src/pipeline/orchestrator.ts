@@ -22,6 +22,7 @@ export interface PipelineContext {
   excludedSectionPrefixes?: string[];
   auditMode?: string;
   crossCheckPairs?: [string, string][] | null;
+  intraAuditDeterministicEnabled?: boolean;
   previousResults: Map<PipelineLevel, StepResult>;
   sectionsCache: Map<string, unknown>;
 }
@@ -53,7 +54,7 @@ export async function runPipeline(
 ): Promise<void> {
   const run = await prisma.processingRun.findUnique({
     where: { id: processingRunId },
-    include: { steps: true, study: { select: { tenantId: true, llmThinkingEnabled: true, excludedSectionPrefixes: true, auditMode: true, crossCheckPairs: true } } },
+    include: { steps: true, study: { select: { tenantId: true, llmThinkingEnabled: true, excludedSectionPrefixes: true, auditMode: true, crossCheckPairs: true, intraAuditDeterministicEnabled: true } } },
   });
   if (!run) throw new Error(`Processing run ${processingRunId} not found`);
 
@@ -95,6 +96,7 @@ export async function runPipeline(
     excludedSectionPrefixes: excludedPrefixes,
     auditMode: run.study.auditMode,
     crossCheckPairs: run.study.crossCheckPairs as [string, string][] | null,
+    intraAuditDeterministicEnabled: run.study.intraAuditDeterministicEnabled,
     previousResults: new Map(),
     sectionsCache: new Map(),
   };
