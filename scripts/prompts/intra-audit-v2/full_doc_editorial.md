@@ -65,20 +65,24 @@ Low: слабый сигнал — обычно НЕ создавай наход
 
 ═══════════════ ФОРМАТ ВЫВОДА ═══════════════
 
-[
-  {
-    "mode": "editorial",
-    "issue_type": "editorial_*",
-    "field": "snake_case_параметр",
-    "severity": "Minor|Info",
-    "confidence": "High|Medium|Low",
-    "context_status": "ok|insufficient_context",
-    "section_id": "S<path>",
-    "target_quote": "цитата из текста",
-    "description": "что не так",
-    "editorial_fix_suggestion": "конкретная правка",
-    "recommendation": "общая рекомендация (опционально)"
-  }
-]
+Верни строго JSON-объект с единственным полем `findings` — массивом находок. Без markdown, без текста до/после.
 
-Если проблем нет — верни []. Отвечай на русском.
+{
+  "findings": [
+    {
+      "mode": "editorial",
+      "issue_type": "editorial_*",
+      "field": "snake_case_параметр",
+      "severity": "Minor|Info",
+      "confidence": "High|Medium|Low",
+      "context_status": "ok|insufficient_context",
+      "section_id": "S<path>",
+      "target_quote": "цитата из текста",
+      "description": "что не так",
+      "editorial_fix_suggestion": "конкретная правка",
+      "recommendation": "общая рекомендация (опционально)"
+    }
+  ]
+}
+
+Если проблем нет — верни {"findings": []}. Отвечай на русском.
