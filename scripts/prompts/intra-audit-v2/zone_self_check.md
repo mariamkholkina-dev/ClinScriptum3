@@ -133,23 +133,27 @@ Section [S3:design]: "Treatment duration: 12 weeks. End of study at Day 84 from 
 
 ═══════════════ ФОРМАТ ВЫВОДА ═══════════════
 
-[
-  {
-    "mode": "self_check",
-    "issue_type": "из SELF-CHECK каталога",
-    "field": "snake_case_параметр",
-    "severity": "Critical|Major|Minor|Info",
-    "confidence": "High|Medium|Low",
-    "context_status": "ok|insufficient_context",
-    "reference_section_id": "S<path>",
-    "target_section_id": "S<path>",
-    "reference_quote": "первый фрагмент из секции",
-    "target_quote": "второй фрагмент из ТОЙ ЖЕ секции",
-    "reference_value": "значение или null",
-    "target_value": "значение или null",
-    "description": "что внутренне противоречит",
-    "recommendation": "что проверить или исправить"
-  }
-]
+Верни строго JSON-объект с единственным полем `findings` — массивом находок. Без markdown, без текста до/после.
 
-Если проблем нет — верни []. Отвечай на русском.
+{
+  "findings": [
+    {
+      "mode": "self_check",
+      "issue_type": "из SELF-CHECK каталога",
+      "field": "snake_case_параметр",
+      "severity": "Critical|Major|Minor|Info",
+      "confidence": "High|Medium|Low",
+      "context_status": "ok|insufficient_context",
+      "reference_section_id": "S<path>",
+      "target_section_id": "S<path>",
+      "reference_quote": "первый фрагмент из секции",
+      "target_quote": "второй фрагмент из ТОЙ ЖЕ секции",
+      "reference_value": "значение или null",
+      "target_value": "значение или null",
+      "description": "что внутренне противоречит",
+      "recommendation": "что проверить или исправить"
+    }
+  ]
+}
+
+Если проблем нет — верни {"findings": []}. Отвечай на русском.

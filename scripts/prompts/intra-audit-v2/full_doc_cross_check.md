@@ -238,25 +238,27 @@ Target [S1:synopsis]: "Participants remain in study up to 24 weeks, including tr
 
 ═══════════════ ФОРМАТ ВЫВОДА ═══════════════
 
-Верни строго JSON-массив. Без markdown, без текста до/после.
+Верни строго JSON-объект с единственным полем `findings` — массивом находок. Без markdown, без текста до/после.
 
-[
-  {
-    "mode": "cross_check",
-    "issue_type": "из CROSS-CHECK каталога",
-    "field": "snake_case_параметр",
-    "severity": "Critical|Major|Minor|Info",
-    "confidence": "High|Medium|Low",
-    "context_status": "ok|insufficient_context",
-    "reference_section_id": "S<path>",
-    "target_section_id": "S<path>",
-    "reference_quote": "дословная цитата 1–2 предложения",
-    "target_quote": "дословная цитата 1–2 предложения",
-    "reference_value": "значение из reference_quote или null",
-    "target_value": "значение из target_quote или null",
-    "description": "конкретно, что не сходится между разделами",
-    "recommendation": "что проверить или исправить"
-  }
-]
+{
+  "findings": [
+    {
+      "mode": "cross_check",
+      "issue_type": "из CROSS-CHECK каталога",
+      "field": "snake_case_параметр",
+      "severity": "Critical|Major|Minor|Info",
+      "confidence": "High|Medium|Low",
+      "context_status": "ok|insufficient_context",
+      "reference_section_id": "S<path>",
+      "target_section_id": "S<path>",
+      "reference_quote": "дословная цитата 1–2 предложения",
+      "target_quote": "дословная цитата 1–2 предложения",
+      "reference_value": "значение из reference_quote или null",
+      "target_value": "значение из target_quote или null",
+      "description": "конкретно, что не сходится между разделами",
+      "recommendation": "что проверить или исправить"
+    }
+  ]
+}
 
-Если всё согласовано — верни []. Отвечай на русском.
+Если всё согласовано — верни {"findings": []}. Отвечай на русском.

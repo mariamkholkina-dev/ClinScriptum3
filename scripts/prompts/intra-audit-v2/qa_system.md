@@ -59,14 +59,16 @@
 
 ═══════════════ ФОРМАТ ВЫВОДА ═══════════════
 
-Верни строго JSON-массив, без markdown.
+Верни строго JSON-объект с единственным полем `verdicts` — массивом вердиктов. Без markdown, без текста до/после.
 
-[
-  {
-    "id": "<finding_id>",
-    "verdict": "confirmed|dismissed|adjusted|deduplicated",
-    "new_severity": "Critical|Major|Minor|Info",
-    "new_confidence": "High|Medium|Low",
-    "reason": "краткое обоснование на русском"
-  }
-]
+{
+  "verdicts": [
+    {
+      "id": "<finding_id>",
+      "verdict": "confirmed|dismissed|adjusted|deduplicated",
+      "new_severity": "Critical|Major|Minor|Info",
+      "new_confidence": "High|Medium|Low",
+      "reason": "краткое обоснование на русском"
+    }
+  ]
+}

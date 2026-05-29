@@ -41,6 +41,54 @@ interface AuditFinding {
 
 const LLM_CONCURRENCY = 3;
 
+/**
+ * Модель-агностичный разбор JSON-ответа LLM.
+ *
+ * Промты v2 просят объект-обёртку `{"<wrapperKey>": [...]}` (например
+ * `{"findings": [...]}` / `{"verdicts": [...]}`), что позволяет всегда слать
+ * `response_format: json_object` независимо от провайдера/модели: одни модели
+ * (qwen3) под json_object НЕ умеют вернуть голый массив, но обёртку-объект
+ * отдают корректно; другие (deepseek-v32) требуют json_object, иначе reasoning
+ * `<think>` переполняет maxTokens и обрезает JSON.
+ *
+ * Возвращает массив элементов из обёртки. Fallback'и (на случай, если модель
+ * проигнорировала формат): голый массив верхнего уровня, затем жадный
+ * `[...]`-регекс (вытащит внутренний массив даже из неожиданной обёртки).
+ */
+function unwrapJsonArray(cleaned: string, wrapperKey: string): Array<Record<string, unknown>> | null {
+  const tryParse = (s: string): unknown => {
+    try { return JSON.parse(s); } catch { return undefined; }
+  };
+  const pickArray = (val: unknown): Array<Record<string, unknown>> | null => {
+    if (Array.isArray(val)) return val as Array<Record<string, unknown>>;
+    if (val && typeof val === "object") {
+      const wrapped = (val as Record<string, unknown>)[wrapperKey];
+      if (Array.isArray(wrapped)) return wrapped as Array<Record<string, unknown>>;
+    }
+    return null;
+  };
+
+  // 1. Чистый JSON (ожидаемый путь под json_object): объект-обёртка или массив.
+  const whole = pickArray(tryParse(cleaned));
+  if (whole) return whole;
+
+  // 2. Объект-обёртка с мусором вокруг (модель добавила текст).
+  const objMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    const wrapped = pickArray(tryParse(objMatch[0]));
+    if (wrapped) return wrapped;
+  }
+
+  // 3. Голый массив (модель проигнорировала обёртку).
+  const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (arrMatch) {
+    const arr = tryParse(arrMatch[0]);
+    if (Array.isArray(arr)) return arr as Array<Record<string, unknown>>;
+  }
+
+  return null;
+}
+
 /* ═══════════════ Deduplication ═══════════════ */
 
 function deduplicateFindings<T extends { id: string; type: string; description: string; sourceRef: unknown; extraAttributes: unknown }>(
@@ -270,10 +318,10 @@ export async function handleIntraDocAudit(data: {
               system: call.system,
               messages: [{ role: "user", content: call.user }],
               maxTokens: llmConfig.maxTokens,
-              // НЕ json_object: промт требует JSON-МАССИВ, а response_format
-              // json_object на части моделей (qwen3 на YandexGPT) запрещает
-              // массив и заставляет вернуть один объект → терялись находки.
-              // parseLLMFindings толерантно извлекает [...] из текста.
+              // json_object безопасен: промты v2 просят объект-обёртку
+              // {"findings":[...]}, а не голый массив. Это работает на любой
+              // модели (qwen3/deepseek/...), parseLLMFindings читает .findings.
+              responseFormat: "json",
               label: call.label,
             });
             totalTokens += response.usage.totalTokens;
@@ -295,7 +343,8 @@ export async function handleIntraDocAudit(data: {
                 system: call.system,
                 messages: [{ role: "user", content: call.user }],
                 maxTokens: llmConfig.maxTokens,
-                // НЕ json_object — см. комментарий в Variant 1 (массив vs объект).
+                // json_object безопасен — промт просит объект-обёртку (см. V1).
+                responseFormat: "json",
                 label: call.label,
               });
               return { call, response };
@@ -510,8 +559,12 @@ async function runQaBatch(
       content: `НАХОДКИ ДЛЯ ПРОВЕРКИ:\n${findingsText}\n\nДОКУМЕНТ:\n${docContext}`,
     }],
     maxTokens,
-    // НЕ json_object: QA-промт требует JSON-массив вердиктов; json_object на
-    // части моделей (qwen3) ломает массив. Парсер ниже толерантно берёт [...].
+    // Всегда json_object: модель-агностично. Промт QA просит объект-обёртку
+    // {"verdicts": [...]}, parseLLMFindings/unwrapJsonArray её разбирают. Это
+    // нужно reasoning-моделям (deepseek-v32): без json_object `<think>` попадает
+    // в content и переполняет maxTokens → JSON обрезается, 0 вердиктов. А под
+    // json_object qwen3 не умеет вернуть голый массив, но обёртку-объект — да.
+    responseFormat: "json",
   });
 
   let dismissed = 0;
@@ -520,15 +573,13 @@ async function runQaBatch(
 
   try {
     const cleaned = response.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
-    const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      const verdicts = JSON.parse(jsonMatch[0]) as Array<{
-        id: string;
-        verdict: "confirmed" | "dismissed" | "adjusted";
-        new_severity?: string;
-        reason: string;
-      }>;
-
+    const verdicts = unwrapJsonArray(cleaned, "verdicts") as Array<{
+      id: string;
+      verdict: "confirmed" | "dismissed" | "adjusted";
+      new_severity?: string;
+      reason: string;
+    }> | null;
+    if (verdicts) {
       for (const v of verdicts) {
         const finding = findings.find((f) => f.id === v.id);
         if (!finding) continue;
@@ -689,9 +740,8 @@ function parseLLMFindings(llmOutput: string): AuditFinding[] {
   const cleaned = llmOutput.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<analysis>[\s\S]*?<\/analysis>/g, "").trim();
 
   try {
-    const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as Array<Record<string, unknown>>;
+    const parsed = unwrapJsonArray(cleaned, "findings");
+    if (parsed) {
       for (const item of parsed) {
         const rawDesc = typeof item.description === "object" && item.description !== null
           ? (item.description as Record<string, unknown>).description ?? JSON.stringify(item.description)
@@ -961,22 +1011,24 @@ ambiguous_time_reference, ambiguous_role_reference, ambiguous_procedure_referenc
 insufficient_context, suspected_issue_needs_confirmation, unknown_issue_type
 
 ФОРМАТ ВЫВОДА (СТРОГО):
-JSON-массив (может быть пустым []):
-[
-  {
-    "mode": "self_check",
-    "issue_type": "из каталога выше",
-    "field": "snake_case_параметр",
-    "severity": "Critical|Major|Minor|Info",
-    "description": "что не так",
-    "target_quote": "цитата из Target",
-    "source_quote": "доп. цитата (второй фрагмент) или null",
-    "recommendation": "что исправить",
-    "confidence": "High|Medium|Low",
-    "context_status": "ok|insufficient_context"
-  }
-]
-Если проблем нет — верни пустой массив: []`;
+JSON-объект с единственным полем "findings" — массивом находок (может быть пустым):
+{
+  "findings": [
+    {
+      "mode": "self_check",
+      "issue_type": "из каталога выше",
+      "field": "snake_case_параметр",
+      "severity": "Critical|Major|Minor|Info",
+      "description": "что не так",
+      "target_quote": "цитата из Target",
+      "source_quote": "доп. цитата (второй фрагмент) или null",
+      "recommendation": "что исправить",
+      "confidence": "High|Medium|Low",
+      "context_status": "ok|insufficient_context"
+    }
+  ]
+}
+Если проблем нет — верни {"findings": []}`;
 
 const CROSS_CHECK_SYSTEM_PROMPT = `Ты — старший аудитор клинических исследований (Senior QC Auditor). Проведи аудит CROSS-CHECK: сверка РЕФЕРЕНСНОЙ зоны (Reference) с ПРОВЕРЯЕМОЙ (Target). Reference имеет приоритет.
 
@@ -1028,22 +1080,24 @@ term_definition_conflict, missing_definition, abbreviation_first_use_missing_exp
 insufficient_context, suspected_issue_needs_confirmation, unknown_issue_type
 
 ФОРМАТ ВЫВОДА (СТРОГО):
-JSON-массив (может быть пустым []):
-[
-  {
-    "mode": "cross_check",
-    "issue_type": "из каталога выше",
-    "field": "snake_case_параметр",
-    "severity": "Critical|Major|Minor|Info",
-    "description": "что не сходится",
-    "reference_quote": "цитата из Reference",
-    "target_quote": "цитата из Target",
-    "recommendation": "что исправить",
-    "confidence": "High|Medium|Low",
-    "context_status": "ok|insufficient_context"
-  }
-]
-Если всё согласовано — верни пустой массив: []`;
+JSON-объект с единственным полем "findings" — массивом находок (может быть пустым):
+{
+  "findings": [
+    {
+      "mode": "cross_check",
+      "issue_type": "из каталога выше",
+      "field": "snake_case_параметр",
+      "severity": "Critical|Major|Minor|Info",
+      "description": "что не сходится",
+      "reference_quote": "цитата из Reference",
+      "target_quote": "цитата из Target",
+      "recommendation": "что исправить",
+      "confidence": "High|Medium|Low",
+      "context_status": "ok|insufficient_context"
+    }
+  ]
+}
+Если всё согласовано — верни {"findings": []}`;
 
 const EDITORIAL_SYSTEM_PROMPT = `Ты — старший аудитор клинических исследований (Senior QC Auditor). Проведи РЕДАКТОРСКУЮ проверку фрагмента Протокола.
 
@@ -1081,22 +1135,24 @@ editorial_redundancy_conflict, editorial_typography_affects_meaning,
 editorial_table_caption_mismatch, editorial_heading_content_mismatch,
 editorial_reference_ambiguity, editorial_style_inconsistency
 
-Выведи JSON-массив (может быть пустым []):
-[
-  {
-    "mode": "self_check",
-    "issue_type": "editorial_*",
-    "field": "snake_case_параметр",
-    "severity": "Minor|Info",
-    "description": "что не так",
-    "target_quote": "цитата из Target",
-    "recommendation": "что исправить",
-    "editorial_fix_suggestion": "конкретная правка текста",
-    "confidence": "High|Medium|Low",
-    "context_status": "ok|insufficient_context"
-  }
-]
-Если проблем нет — верни пустой массив: []`;
+Выведи JSON-объект с единственным полем "findings" — массивом находок (может быть пустым):
+{
+  "findings": [
+    {
+      "mode": "self_check",
+      "issue_type": "editorial_*",
+      "field": "snake_case_параметр",
+      "severity": "Minor|Info",
+      "description": "что не так",
+      "target_quote": "цитата из Target",
+      "recommendation": "что исправить",
+      "editorial_fix_suggestion": "конкретная правка текста",
+      "confidence": "High|Medium|Low",
+      "context_status": "ok|insufficient_context"
+    }
+  ]
+}
+Если проблем нет — верни {"findings": []}`;
 
 const QA_SYSTEM_PROMPT = `Ты — старший QA-ревьюер клинических документов (Senior QC Reviewer). Тебе даны находки (замечания) от первичного аудита и текст документа.
 
@@ -1119,12 +1175,14 @@ const QA_SYSTEM_PROMPT = `Ты — старший QA-ревьюер клинич
 
 Проверяй каждую находку по контексту ВСЕГО документа, а не только по цитате.
 
-Верни СТРОГО JSON массив:
-[
-  {
-    "id": "<finding_id>",
-    "verdict": "confirmed|dismissed|adjusted",
-    "new_severity": "Critical|Major|Minor|Info",
-    "reason": "краткое обоснование на русском"
-  }
-]`;
+Верни СТРОГО JSON-объект с единственным полем "verdicts" — массивом вердиктов:
+{
+  "verdicts": [
+    {
+      "id": "<finding_id>",
+      "verdict": "confirmed|dismissed|adjusted",
+      "new_severity": "Critical|Major|Minor|Info",
+      "reason": "краткое обоснование на русском"
+    }
+  ]
+}`;
