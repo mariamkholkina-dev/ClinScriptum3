@@ -18,7 +18,6 @@ import {
   Shield,
   RotateCcw,
   FileText,
-  Clock,
 } from "lucide-react";
 import { openInWord } from "@/lib/open-in-word";
 
@@ -283,7 +282,6 @@ export default function IntraAuditPage() {
   const isRunning = statusQuery.data?.isRunning ?? false;
   const operatorReviewEnabled = statusQuery.data?.operatorReviewEnabled ?? false;
   const reviewPending = operatorReviewEnabled && (findingsQuery.data as any)?.reviewPending === true;
-  const reviewStatus = statusQuery.data?.reviewStatus ?? null;
 
   const selectedFinding = findings.find((f) => f.id === selectedFindingId);
 
@@ -366,12 +364,14 @@ export default function IntraAuditPage() {
         </div>
       )}
 
-      {/* Review pending banner */}
+      {/* Обработка ещё не завершена. Этап ревью оператором — внутренний и
+          скрыт от медицинского писателя: показываем нейтральный статус «идёт
+          обработка», не раскрывая, что находки на проверке у специалиста. */}
       {reviewPending && !isRunning && (
-        <div className="flex-none bg-amber-50 border-b border-amber-200 px-6 py-3">
-          <div className="flex items-center gap-2 text-sm text-amber-700">
-            <Clock className="h-4 w-4" />
-            Результаты аудита на проверке у специалиста. Findings будут доступны после публикации.
+        <div className="flex-none bg-blue-50 border-b border-blue-200 px-6 py-3">
+          <div className="flex items-center gap-2 text-sm text-blue-700">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Обработка документа ещё не завершена. Результаты появятся автоматически.
           </div>
         </div>
       )}
