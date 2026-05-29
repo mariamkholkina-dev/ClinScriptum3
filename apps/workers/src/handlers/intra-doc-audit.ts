@@ -42,6 +42,15 @@ interface AuditFinding {
 const LLM_CONCURRENCY = 3;
 
 /**
+ * Жёсткий лимит числа находок в одном QA-вызове. Батчинг по input-бюджету
+ * (символам) не ограничивает КОЛИЧЕСТВО находок: сотни коротких находок влезают
+ * в input, но столько же вердиктов + reasoning модели НЕ влезают в
+ * maxOutputTokens → ответ обрезается, JSON невалиден, 0 вердиктов. Лимит по
+ * числу находок держит размер выходного JSON предсказуемым независимо от модели.
+ */
+const MAX_FINDINGS_PER_QA_BATCH = 20;
+
+/**
  * Модель-агностичный разбор JSON-ответа LLM.
  *
  * Промты v2 просят объект-обёртку `{"<wrapperKey>": [...]}` (например
@@ -457,7 +466,7 @@ export async function handleIntraDocAudit(data: {
       let totalTokens = 0;
 
       try {
-        if (totalPromptSize <= inputBudget) {
+        if (totalPromptSize <= inputBudget && allFindings.length <= MAX_FINDINGS_PER_QA_BATCH) {
           /* Strategy A: full doc + all findings in one call */
           logger.info("[audit:llm_qa] Strategy A: single call", {
             findings: allFindings.length, docChars: fullDocText.length,
@@ -544,6 +553,27 @@ export async function handleIntraDocAudit(data: {
 
 /* ═══════════════ QA helpers ═══════════════ */
 
+/**
+ * Извлекает отдельные verdict-объекты из (возможно обрезанного) ответа.
+ * Используется как fallback, когда unwrapJsonArray не смог разобрать обёртку
+ * целиком — например, при оборванном по maxOutputTokens JSON последний объект
+ * битый, но предыдущие целые вердикты ещё можно спасти. Вердикты плоские
+ * (id/verdict/new_severity/reason — строки без вложенных {}), поэтому
+ * `\{[^{}]*\}` их надёжно ловит.
+ */
+function extractVerdictObjects(cleaned: string): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  const matches = cleaned.match(/\{[^{}]*\}/g);
+  if (!matches) return out;
+  for (const m of matches) {
+    try {
+      const obj = JSON.parse(m) as Record<string, unknown>;
+      if (obj && typeof obj === "object" && "verdict" in obj && "id" in obj) out.push(obj);
+    } catch { /* пропускаем битый фрагмент */ }
+  }
+  return out;
+}
+
 async function runQaBatch(
   gateway: LLMGateway,
   maxTokens: number,
@@ -573,16 +603,38 @@ async function runQaBatch(
 
   try {
     const cleaned = response.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
-    const verdicts = unwrapJsonArray(cleaned, "verdicts") as Array<{
+    let verdicts = unwrapJsonArray(cleaned, "verdicts") as Array<{
       id: string;
       verdict: "confirmed" | "dismissed" | "adjusted";
       new_severity?: string;
       reason: string;
     }> | null;
+    // Fallback: ответ мог быть обрезан по maxOutputTokens (reasoning-модели) —
+    // вытаскиваем уцелевшие вердикты поштучно, чтобы не терять весь батч.
+    if (!verdicts || verdicts.length === 0) {
+      const salvaged = extractVerdictObjects(cleaned) as typeof verdicts;
+      if (salvaged && salvaged.length > 0) {
+        logger.warn("[audit:llm_qa] Wrapper parse failed, salvaged verdicts individually", {
+          salvaged: salvaged.length, responseLen: response.content.length,
+        });
+        verdicts = salvaged;
+      }
+    }
+    if (!verdicts || verdicts.length === 0) {
+      // Совсем ничего не распарсилось — логируем образец, чтобы не было слепого
+      // пятна (раньше при null цикл просто пропускался → тихие 0/0/0).
+      logger.warn("[audit:llm_qa] No verdicts parsed from QA response", {
+        findings: findings.length, responseLen: response.content.length,
+        sample: cleaned.slice(0, 500),
+      });
+    }
+    let matched = 0;
+    let unmatched = 0;
     if (verdicts) {
       for (const v of verdicts) {
         const finding = findings.find((f) => f.id === v.id);
-        if (!finding) continue;
+        if (!finding) { unmatched++; continue; }
+        matched++;
 
         if (v.verdict === "dismissed") {
           await prisma.finding.update({
@@ -608,6 +660,13 @@ async function runQaBatch(
           confirmed++;
         }
       }
+      // Вердикты есть, но ни один не сопоставился с находкой по id — модель
+      // вернула чужие/выдуманные id. Логируем, иначе это тихие 0/0/0.
+      if (matched === 0 && unmatched > 0) {
+        logger.warn("[audit:llm_qa] Verdicts parsed but none matched a finding by id", {
+          parsed: verdicts.length, unmatched, findings: findings.length,
+        });
+      }
     }
   } catch (err) {
     logger.warn("[audit:llm_qa] Failed to parse QA response", { error: String(err) });
@@ -628,7 +687,12 @@ function batchFindings(
 
   for (const f of findings) {
     const entryLen = f.description.length + 200;
-    if (currentLen + entryLen > perFindingBudget && current.length > 0) {
+    // Режем батч либо по input-бюджету, либо по числу находок — что наступит
+    // раньше. Лимит по количеству держит размер выходного JSON в пределах
+    // maxOutputTokens (иначе ответ обрезается → 0 вердиктов).
+    const overBudget = currentLen + entryLen > perFindingBudget;
+    const overCount = current.length >= MAX_FINDINGS_PER_QA_BATCH;
+    if ((overBudget || overCount) && current.length > 0) {
       batches.push(current);
       current = [];
       currentLen = 0;
