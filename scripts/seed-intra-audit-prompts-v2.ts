@@ -52,27 +52,48 @@ type PromptSpec = {
 
 // ВАЖНО: pattern-ключи должны совпадать с тем, что читает handler через
 // toAuditPromptMap (см. apps/workers/src/handlers/intra-doc-audit.ts):
-//   promptMap.get("self_check_prompt" | "cross_check_prompt" |
-//                 "editorial_prompt" | "system_prompt")
-// Если использовать другие имена (например full_doc_*), handler не найдёт
-// их и упадёт на hard-coded v1 constants — активация v2 будет no-op.
+//   Variant 1 (полный документ, 3 вызова): full_doc_self_check_prompt /
+//     full_doc_cross_check_prompt / full_doc_editorial_prompt
+//   Variant 2 (zone-based, документ не влез): self_check_prompt /
+//     cross_check_prompt / editorial_prompt
+// 6 промтов: 3 full-doc (богатые, на полный документ) + 3 zone (на одну зону).
 const INTRA_AUDIT_PROMPTS: PromptSpec[] = [
+  // ── Variant 1: полный документ, 3 фокусных вызова ──
   {
-    pattern: "self_check_prompt",
+    pattern: "full_doc_self_check_prompt",
     name: "Self-check (full document) v2",
     promptFile: "full_doc_self_check.md",
     subStage: RuleSubStage.self_check,
   },
   {
-    pattern: "cross_check_prompt",
+    pattern: "full_doc_cross_check_prompt",
     name: "Cross-check (full document) v2",
     promptFile: "full_doc_cross_check.md",
     subStage: RuleSubStage.cross_check,
   },
   {
-    pattern: "editorial_prompt",
+    pattern: "full_doc_editorial_prompt",
     name: "Editorial (full document) v2",
     promptFile: "full_doc_editorial.md",
+    subStage: RuleSubStage.editorial,
+  },
+  // ── Variant 2: zone-based (документ не влезает целиком) ──
+  {
+    pattern: "self_check_prompt",
+    name: "Self-check (zone) v2",
+    promptFile: "zone_self_check.md",
+    subStage: RuleSubStage.self_check,
+  },
+  {
+    pattern: "cross_check_prompt",
+    name: "Cross-check (zone) v2",
+    promptFile: "zone_cross_check.md",
+    subStage: RuleSubStage.cross_check,
+  },
+  {
+    pattern: "editorial_prompt",
+    name: "Editorial (zone) v2",
+    promptFile: "zone_editorial.md",
     subStage: RuleSubStage.editorial,
   },
 ];

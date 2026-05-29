@@ -153,9 +153,13 @@ export function resolveCrossCheckPairs(
 /* ═══════════════ LLM-check call assembly ═══════════════ */
 
 export interface IntraAuditCheckPrompts {
-  /** "system_prompt" — комбинированный, для Variant 1 (single call). */
-  audit: string;
-  /** "self_check_prompt" — Variant 2. */
+  /** "full_doc_self_check_prompt" — Variant 1 (полный документ, 3 вызова). */
+  fullDocSelfCheck: string;
+  /** "full_doc_cross_check_prompt" — Variant 1. */
+  fullDocCrossCheck: string;
+  /** "full_doc_editorial_prompt" — Variant 1. */
+  fullDocEditorial: string;
+  /** "self_check_prompt" — Variant 2 (zone-based). */
   selfCheck: string;
   /** "cross_check_prompt" — Variant 2. */
   crossCheck: string;
@@ -179,16 +183,40 @@ export interface IntraAuditCheckPlan {
   calls: PromptCall[];
 }
 
+const FULL_DOC_PHASES: Array<{ name: string; promptKey: keyof IntraAuditCheckPrompts; userPrefix: string }> = [
+  {
+    name: "full_doc_self_check",
+    promptKey: "fullDocSelfCheck",
+    userPrefix: "Проведи SELF-CHECK аудит следующего клинического протокола:\n\n",
+  },
+  {
+    name: "full_doc_cross_check",
+    promptKey: "fullDocCrossCheck",
+    userPrefix: "Проведи CROSS-CHECK аудит следующего клинического протокола, сверяя разделы между собой:\n\n",
+  },
+  {
+    name: "full_doc_editorial",
+    promptKey: "fullDocEditorial",
+    userPrefix: "Проведи EDITORIAL (редакторскую) проверку следующего клинического протокола:\n\n",
+  },
+];
+
 /**
  * Воспроизводит ТОЧНО task-construction уровня llm_check intra-audit handler'а:
- * выбор Variant 1 (single call) vs Variant 2 (zone-based), нарезку по бюджету,
- * формирование system+user для каждого реального вызова gateway.generate.
+ * выбор Variant 1 (полный документ, 3 фокусных вызова) vs Variant 2 (zone-based),
+ * нарезку по бюджету, формирование system+user каждого реального вызова.
  */
 export function buildIntraAuditCheckCalls(opts: BuildIntraAuditCheckOptions): IntraAuditCheckPlan {
   const { sections, prompts, inputBudget, auditMode = "auto", crossCheckPairs } = opts;
 
   const fullDocText = buildFullDocumentText(sections);
-  const totalPromptSize = prompts.audit.length + fullDocText.length + 200;
+  // Влезает ли полный документ + самый длинный из 3 фокусных промтов в бюджет.
+  const longestFullDocPrompt = Math.max(
+    prompts.fullDocSelfCheck.length,
+    prompts.fullDocCrossCheck.length,
+    prompts.fullDocEditorial.length,
+  );
+  const totalPromptSize = longestFullDocPrompt + fullDocText.length + 200;
   const fitsInContext = totalPromptSize <= inputBudget;
 
   const useVariant1 =
@@ -197,18 +225,17 @@ export function buildIntraAuditCheckCalls(opts: BuildIntraAuditCheckOptions): In
     fitsInContext;
 
   if (useVariant1) {
+    /* Variant 1: полный документ, 3 фокусных вызова (self/cross/editorial) */
     return {
       variant: 1,
-      calls: [
-        {
-          stage: "intra_audit",
-          level: "llm_check",
-          label: "single_call",
-          system: prompts.audit,
-          user: `Проанализируй следующий клинический протокол на внутренние несоответствия:\n\n${fullDocText}`,
-          meta: { variant: 1 },
-        },
-      ],
+      calls: FULL_DOC_PHASES.map((phase) => ({
+        stage: "intra_audit",
+        level: "llm_check",
+        label: phase.name,
+        system: prompts[phase.promptKey],
+        user: `${phase.userPrefix}${fullDocText}`,
+        meta: { kind: phase.name, phase: phase.name },
+      })),
     };
   }
 
@@ -218,7 +245,12 @@ export function buildIntraAuditCheckCalls(opts: BuildIntraAuditCheckOptions): In
   const availableZones = new Set(zones.map((z) => z.zone));
   const pairs = resolveCrossCheckPairs(crossCheckPairs, availableZones);
 
-  const contentBudget = inputBudget - prompts.audit.length - 500;
+  const longestZonePrompt = Math.max(
+    prompts.selfCheck.length,
+    prompts.crossCheck.length,
+    prompts.editorial.length,
+  );
+  const contentBudget = inputBudget - longestZonePrompt - 500;
   const calls: PromptCall[] = [];
 
   for (const zone of zones) {

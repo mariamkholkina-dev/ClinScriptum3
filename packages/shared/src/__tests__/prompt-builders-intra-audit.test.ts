@@ -18,7 +18,9 @@ function sec(over: Partial<AnchorableSectionInput> & { title: string }): Anchora
 }
 
 const PROMPTS = {
-  audit: "AUDIT_SYS",
+  fullDocSelfCheck: "FD_SELF_SYS",
+  fullDocCrossCheck: "FD_CROSS_SYS",
+  fullDocEditorial: "FD_EDIT_SYS",
   selfCheck: "SELF_SYS",
   crossCheck: "CROSS_SYS",
   editorial: "EDIT_SYS",
@@ -40,7 +42,7 @@ describe("buildIntraAuditCheckCalls", () => {
     sec({ title: "Статистика", headingNumber: "2", standardSection: "statistics" }),
   ];
 
-  it("Variant 1 (single call) when doc fits in budget", () => {
+  it("Variant 1 (full document, 3 focused calls) when doc fits in budget", () => {
     const plan = buildIntraAuditCheckCalls({
       sections,
       prompts: PROMPTS,
@@ -48,11 +50,18 @@ describe("buildIntraAuditCheckCalls", () => {
       auditMode: "auto",
     });
     expect(plan.variant).toBe(1);
-    expect(plan.calls).toHaveLength(1);
-    expect(plan.calls[0]!.label).toBe("single_call");
-    expect(plan.calls[0]!.system).toBe("AUDIT_SYS");
-    expect(plan.calls[0]!.user).toContain("Проанализируй следующий клинический протокол");
+    expect(plan.calls).toHaveLength(3);
+    expect(plan.calls.map((c) => c.label)).toEqual([
+      "full_doc_self_check",
+      "full_doc_cross_check",
+      "full_doc_editorial",
+    ]);
+    expect(plan.calls[0]!.system).toBe("FD_SELF_SYS");
+    expect(plan.calls[1]!.system).toBe("FD_CROSS_SYS");
+    expect(plan.calls[2]!.system).toBe("FD_EDIT_SYS");
+    expect(plan.calls[0]!.user).toContain("SELF-CHECK аудит следующего клинического протокола");
     expect(plan.calls[0]!.user).toContain("[S1:synopsis]");
+    expect(plan.calls[0]!.meta).toMatchObject({ phase: "full_doc_self_check" });
   });
 
   it("Variant 2 (zone-based) when auditMode=zone_based", () => {

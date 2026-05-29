@@ -158,7 +158,11 @@ export async function handleIntraDocAudit(data: {
 
       const auditRules = await loadRulesForType(ctx.bundleId, "intra_audit");
       const promptMap = auditRules ? toAuditPromptMap(auditRules.rules) : new Map<string, string>();
-      const auditSystemPrompt = promptMap.get("system_prompt") || AUDIT_SYSTEM_PROMPT;
+      // Variant 1 (полный документ, 3 вызова) — full_doc_* промты.
+      const fullDocSelfCheckPrompt = promptMap.get("full_doc_self_check_prompt") || SELF_CHECK_SYSTEM_PROMPT;
+      const fullDocCrossCheckPrompt = promptMap.get("full_doc_cross_check_prompt") || CROSS_CHECK_SYSTEM_PROMPT;
+      const fullDocEditorialPrompt = promptMap.get("full_doc_editorial_prompt") || EDITORIAL_SYSTEM_PROMPT;
+      // Variant 2 (zone-based) — zone-промты.
       const selfCheckPrompt = promptMap.get("self_check_prompt") || SELF_CHECK_SYSTEM_PROMPT;
       const crossCheckPrompt = promptMap.get("cross_check_prompt") || CROSS_CHECK_SYSTEM_PROMPT;
       const editorialPrompt = promptMap.get("editorial_prompt") || EDITORIAL_SYSTEM_PROMPT;
@@ -168,12 +172,14 @@ export async function handleIntraDocAudit(data: {
       const auditMode = ctx.auditMode ?? "auto";
 
       // Сборка реальных LLM-вызовов — единый источник правды с preview-сервисом
-      // (packages/shared/prompt-builders/intra-audit). Variant 1 (single call) vs
-      // Variant 2 (zone-based) и нарезка по бюджету решаются внутри builder.
+      // (packages/shared/prompt-builders/intra-audit). Variant 1 (полный документ,
+      // 3 фокусных вызова) vs Variant 2 (zone-based) решаются внутри builder.
       const plan = buildIntraAuditCheckCalls({
         sections,
         prompts: {
-          audit: auditSystemPrompt,
+          fullDocSelfCheck: fullDocSelfCheckPrompt,
+          fullDocCrossCheck: fullDocCrossCheckPrompt,
+          fullDocEditorial: fullDocEditorialPrompt,
           selfCheck: selfCheckPrompt,
           crossCheck: crossCheckPrompt,
           editorial: editorialPrompt,
@@ -186,14 +192,14 @@ export async function handleIntraDocAudit(data: {
       let totalFindings = 0;
       let totalTokens = 0;
 
-      // Персист находок одного вызова. meta?.kind присутствует только для
-      // Variant 2 (zone-based) — тогда в sourceRef/extraAttributes добавляются
-      // zone/anchorZone/taskKind (поведение 1:1 с прежним кодом).
+      // Персист находок одного вызова. meta.phase → Variant 1 (full-doc фаза);
+      // meta.kind (+targetZone) → Variant 2 (zone-based). Поведение 1:1 с feat-веткой.
       const persistFindings = async (
         llmFindings: AuditFinding[],
         meta: Record<string, unknown> | undefined,
       ) => {
-        const kind = meta?.kind as string | undefined;
+        const phase = meta?.phase as string | undefined;
+        const kind = !phase ? (meta?.kind as string | undefined) : undefined;
         for (const finding of llmFindings) {
           const enriched = enrichFindingWithCanonical({
             issueType: finding.issueType,
@@ -211,6 +217,7 @@ export async function handleIntraDocAudit(data: {
               sourceRef: {
                 textSnippet: finding.sourceText,
                 referenceQuote: finding.referenceQuote,
+                ...(phase ? { phase } : {}),
                 ...(kind ? { zone: meta!.targetZone as string, anchorZone: meta!.anchorZone as string | undefined, taskKind: kind } : {}),
                 referenceSectionId: finding.referenceSectionId,
                 targetSectionId: finding.targetSectionId,
@@ -220,6 +227,7 @@ export async function handleIntraDocAudit(data: {
               status: finding.contextStatus === "insufficient_context" ? "false_positive" : "pending",
               extraAttributes: {
                 severity: finding.severity, method: "llm",
+                ...(phase ? { phase } : {}),
                 ...(kind ? { taskKind: kind } : {}),
                 issueType: finding.issueType, block: finding.block, field: finding.field,
                 confidence: finding.confidence, contextStatus: finding.contextStatus,
@@ -235,23 +243,24 @@ export async function handleIntraDocAudit(data: {
 
       try {
         if (plan.variant === 1) {
-          /* ─── Variant 1: full document in single call ─── */
-          logger.info("[audit:llm_check] Variant 1: full document in single call", {
-            docChars: fullDocText.length, budget: inputBudget, auditMode,
+          /* ─── Variant 1: full document, 3 focused calls (self/cross/editorial) ─── */
+          logger.info("[audit:llm_check] Variant 1: full document, 3 focused calls", {
+            docChars: fullDocText.length, budget: inputBudget, auditMode, phases: plan.calls.length,
           });
 
-          const call = plan.calls[0]!;
-          const response = await gateway.generate({
-            system: call.system,
-            messages: [{ role: "user", content: call.user }],
-            maxTokens: llmConfig.maxTokens,
-            responseFormat: "json",
-          });
-
-          totalTokens = response.usage.totalTokens;
-          const llmFindings = parseLLMFindings(response.content);
-          totalFindings = llmFindings.length;
-          await persistFindings(llmFindings, undefined);
+          for (const call of plan.calls) {
+            logger.info(`[audit:llm_check] Phase: ${call.label}`, { docChars: fullDocText.length });
+            const response = await gateway.generate({
+              system: call.system,
+              messages: [{ role: "user", content: call.user }],
+              maxTokens: llmConfig.maxTokens,
+              responseFormat: "json",
+            });
+            totalTokens += response.usage.totalTokens;
+            const llmFindings = parseLLMFindings(response.content);
+            totalFindings += llmFindings.length;
+            await persistFindings(llmFindings, call.meta);
+          }
         } else {
           /* ─── Variant 2: zone-based chunking with parallel execution ─── */
           logger.info("[audit:llm_check] Variant 2: zone-based chunking", {
