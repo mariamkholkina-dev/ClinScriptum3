@@ -2,6 +2,12 @@
 
 ## 2026-05-29
 
+### Fix: rule-admin (app)/layout — порядок хуков (React error #310)
+
+В `apps/rule-admin/src/app/(app)/layout.tsx` хук `trpc.findingReview.dashboard.useQuery` (бейдж «Ревью замечаний», добавлен ранее) вызывался **после** early-return'ов `if (!mounted) return ...` и `if (!accessToken) return null`. На первом рендере (`!mounted`) хук пропускался, на следующем — вызывался → React error #310 (несовпадение числа хуков между рендерами), краш всего layout (белый экран на всех страницах rule-admin). Проявилось на проде после пересборки `--no-cache`.
+
+Фикс: перенёс `useQuery` + вычисление `userRole`/`isReviewer` выше early-return'ов (все хуки теперь безусловны). `REVIEWER_ROLES` вынесен на module-level (не пересоздаётся каждый рендер). `visibleItems`/`pendingReviewCount` (не хуки) остались на месте.
+
 ### Fix: seed-intra-audit-prompts-v2 — bundle-aware активация + правильные pattern-ключи (E6)
 
 Два бага в seed-скрипте v2, из-за которых активация была no-op:
