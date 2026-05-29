@@ -2,6 +2,10 @@
 
 ## 2026-05-30
 
+### Feat: добавлены high-value пары зон в ZONE_AFFINITY_MAP
+
+К обновлённой карте авто-cross-check (PR #152) добавлены 9 обязательных пар, без которых пропускались важные кросс-секционные ошибки: `design↔statistics` (размер выборки/аналитические популяции), `design↔ip` (дозовые группы/схема лечения), `safety↔statistics` (правила остановки/анализ безопасности), `population↔procedures` (критерии включения/контрацепция), `ip↔population` (дозирование по подгруппам), `overview↔design`, `overview↔population`, `ethics↔population` (уязвимые группы/согласие), `ethics↔procedures` (согласие/контрацепция). Итого 31 пара. Требует деплой workers + api.
+
 ### Fix: cross_check в zone-режиме почти не работал — устаревшая ZONE_AFFINITY_MAP
 
 Диагностировано по реальному прогону (`b3b8e905`, 29 LLM-вызовов: 14 self_check + 14 editorial + **всего 1 cross_check** `synopsis→statistics`). Причина: `ZONE_AFFINITY_MAP` в `packages/shared/src/prompt-builders/intra-audit.ts` (21 пара зон для авто-cross-check) использовала **старые** ключи таксономии — `study_design`, `study_objectives`, `study_population`, `treatments`, `efficacy_assessments`, `safety_assessments`, `visit_schedule`, `appendices`. Актуальная таксономия (`taxonomy.yaml`) давно мигрировала на `design`, `population`, `ip`, `endpoints`, `safety`, `procedures`, `appendix`, `overview`. `resolveCrossCheckPairs` оставляет пару только если обе зоны присутствуют в документе → совпадали лишь `synopsis`/`statistics`/`ethics`, выживала единственная пара `synopsis↔statistics`. Кросс-сверка секций (половина смысла intra-audit) в zone-режиме была фактически выключена.

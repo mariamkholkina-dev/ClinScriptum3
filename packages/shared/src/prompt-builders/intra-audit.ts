@@ -148,6 +148,16 @@ export const ZONE_AFFINITY_MAP: [string, string][] = [
   // Управление данными ↔ статистика / процедуры.
   ["data_management", "statistics"],
   ["data_management", "procedures"],
+  // Обязательные high-value пары — без них пропускаются важные ошибки:
+  ["design", "statistics"],   // дизайн (размер выборки, аналитич. популяции) ↔ статистика
+  ["design", "ip"],           // дизайн (дозовые группы, схема лечения) ↔ препарат
+  ["safety", "statistics"],   // правила остановки / анализ безопасности ↔ статистика
+  ["population", "procedures"], // критерии включения / контрацепция ↔ процедуры
+  ["ip", "population"],        // дозирование по подгруппам ↔ популяция
+  ["overview", "design"],     // обзор/предпосылки ↔ дизайн
+  ["overview", "population"], // обзор ↔ популяция
+  ["ethics", "population"],   // этика (уязвимые группы, согласие) ↔ популяция
+  ["ethics", "procedures"],   // этика (согласие/контрацепция) ↔ процедуры
 ];
 
 export function detectCrossCheckPairs(availableZones: Set<string>): [string, string][] {
