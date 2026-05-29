@@ -2,6 +2,19 @@
 
 ## 2026-05-29
 
+### Feat: выгрузка реальных промтов в .txt для документа эталона — каркас + intra_audit (PR1)
+
+Эксперт может скачать .zip с реальными промтами, уходящими в LLM, для primary-документа эталонного набора — для дебага/тюнинга. PR1: каркас + этап intra_audit (llm_check).
+
+**Single source of truth:** логика сборки промтов intra_audit вынесена в `packages/shared/src/prompt-builders/intra-audit.ts` — её используют И worker-handler, И preview-сервис, поэтому .txt идентичен уходящему в LLM.
+
+- **shared**: новый `prompt-builders/` — `types.ts` (`PromptCall`), `intra-audit.ts` (перенос `buildSectionAnchor`/`parseSectionAnchor`/`buildFullDocumentText`/`buildZoneTexts`/`ZONE_AFFINITY_MAP`/`resolveCrossCheckPairs` + новый `buildIntraAuditCheckCalls` — воспроизводит Variant 1 single-call / Variant 2 zone-based, нарезку по бюджету, формирование system+user каждого вызова). 16 unit-тестов.
+- **workers**: `intra-doc-audit.ts` рефакторен на `buildIntraAuditCheckCalls` (поведение 1:1, 237 тестов проходят). `lib/build-section-anchor.ts` → реэкспорт из shared.
+- **api**: `prompt-preview.service.ts` — реконструирует вызовы из текущего состояния документа (sections + активный ruleset через loadRulesForType + getEffectiveLlmConfig + study.auditMode/crossCheckPairs). REST `GET /api/golden/:goldenSampleId/prompts.zip` (jszip): по .txt на каждый вызов (`### SYSTEM ### / ### USER ###`) + `_manifest.txt` (provider/model/budget/variant/...). Tenant-guard.
+- **rule-admin**: кнопка «Промты (.zip)» (иконка FileCode2) на строке документа в golden-dataset.
+
+Отсутствующие в ruleset промты помечаются в .txt (handler использует fallback-константу). Реконструкция, без реальных LLM-вызовов. Следующие PR расширят на classification / extraction / soa / inter / impact / generation.
+
 ### Feat: тумблер «Детерминированные находки» в Настройках обработки (intra-audit)
 
 Раньше deterministic-уровень (level 1, регексные/эвристические проверки `runEditorialChecks`) в внутридокументном аудите был жёстко зашит — отключить нельзя. Теперь это per-study настройка в `/study-settings`.
