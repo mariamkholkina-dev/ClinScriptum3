@@ -6,12 +6,13 @@ import type { PipelineStepHandler, PipelineContext } from "../../pipeline/orches
 const findingCreate = vi.fn();
 const findingFindMany = vi.fn();
 const findingUpdate = vi.fn();
+const findingDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
 const processingRunFindUnique = vi.fn();
 const documentVersionUpdate = vi.fn();
 
 vi.mock("@clinscriptum/db", () => ({
   prisma: {
-    finding: { create: findingCreate, findMany: findingFindMany, update: findingUpdate },
+    finding: { create: findingCreate, findMany: findingFindMany, update: findingUpdate, deleteMany: findingDeleteMany },
     processingRun: { findUnique: processingRunFindUnique },
     documentVersion: { update: documentVersionUpdate },
   },

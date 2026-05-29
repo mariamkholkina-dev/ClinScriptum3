@@ -91,6 +91,20 @@ export async function handleIntraDocAudit(data: {
   const deterministicHandler: PipelineStepHandler = {
     level: "deterministic",
     async execute(ctx: PipelineContext): Promise<StepResult> {
+      // Чистим находки предыдущих прогонов intra-audit этого документа, чтобы
+      // не накапливались между запусками. Без этого QA-шаг грузил все pending
+      // находки (включая зависшие от прошлых прогонов) → счётчик llm_check
+      // расходился с QA. Детерминированный шаг идёт первым в пайплайне, поэтому
+      // удаление здесь гарантирует чистый старт до создания новых находок.
+      // intra-audit создаёт находки с type editorial/semantic (см. ниже и
+      // llm_check). FindingReviewLog ссылается на findingId без FK-cascade.
+      const cleared = await prisma.finding.deleteMany({
+        where: { docVersionId: ctx.docVersionId, type: { in: ["editorial", "semantic"] } },
+      });
+      if (cleared.count > 0) {
+        logger.info("[audit:deterministic] cleared stale intra-audit findings", { cleared: cleared.count });
+      }
+
       // Тумблер из «Настроек обработки» (Study.intraAuditDeterministicEnabled).
       // Уровень остаётся в пайплайне (sequencing не ломается), но находки не
       // создаются. По умолчанию включено.
