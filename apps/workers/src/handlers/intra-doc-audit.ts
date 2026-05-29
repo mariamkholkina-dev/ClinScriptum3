@@ -270,7 +270,10 @@ export async function handleIntraDocAudit(data: {
               system: call.system,
               messages: [{ role: "user", content: call.user }],
               maxTokens: llmConfig.maxTokens,
-              responseFormat: "json",
+              // НЕ json_object: промт требует JSON-МАССИВ, а response_format
+              // json_object на части моделей (qwen3 на YandexGPT) запрещает
+              // массив и заставляет вернуть один объект → терялись находки.
+              // parseLLMFindings толерантно извлекает [...] из текста.
               label: call.label,
             });
             totalTokens += response.usage.totalTokens;
@@ -292,7 +295,7 @@ export async function handleIntraDocAudit(data: {
                 system: call.system,
                 messages: [{ role: "user", content: call.user }],
                 maxTokens: llmConfig.maxTokens,
-                responseFormat: "json",
+                // НЕ json_object — см. комментарий в Variant 1 (массив vs объект).
                 label: call.label,
               });
               return { call, response };
@@ -507,7 +510,8 @@ async function runQaBatch(
       content: `НАХОДКИ ДЛЯ ПРОВЕРКИ:\n${findingsText}\n\nДОКУМЕНТ:\n${docContext}`,
     }],
     maxTokens,
-    responseFormat: "json",
+    // НЕ json_object: QA-промт требует JSON-массив вердиктов; json_object на
+    // части моделей (qwen3) ломает массив. Парсер ниже толерантно берёт [...].
   });
 
   let dismissed = 0;
