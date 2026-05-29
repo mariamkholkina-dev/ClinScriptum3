@@ -113,6 +113,7 @@ model Study {
   excludedSectionPrefixes  String[]   @default([]) @map("excluded_section_prefixes")
   auditMode                String     @default("auto") @map("audit_mode")
   crossCheckPairs          Json?      @map("cross_check_pairs") @db.JsonB
+  intraAuditDeterministicEnabled Boolean @default(true) @map("intra_audit_deterministic_enabled")
   createdAt                DateTime   @default(now()) @map("created_at")
   updatedAt              DateTime   @updatedAt @map("updated_at")
 

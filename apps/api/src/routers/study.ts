@@ -59,6 +59,7 @@ export const studyRouter = router({
         excludedSectionPrefixes: z.array(z.string()).optional(),
         auditMode: z.enum(["auto", "single_call", "zone_based"]).optional(),
         crossCheckPairs: z.array(z.tuple([z.string(), z.string()])).nullable().optional(),
+        intraAuditDeterministicEnabled: z.boolean().optional(),
       }),
     )
     .mutation(({ ctx, input }) => {

@@ -78,7 +78,7 @@ export const studyService = {
   async getSettings(tenantId: string, studyId: string) {
     const study = await prisma.study.findFirst({
       where: { id: studyId, tenantId },
-      select: { id: true, tenantId: true, operatorReviewEnabled: true, llmThinkingEnabled: true, excludedSectionPrefixes: true, auditMode: true, crossCheckPairs: true },
+      select: { id: true, tenantId: true, operatorReviewEnabled: true, llmThinkingEnabled: true, excludedSectionPrefixes: true, auditMode: true, crossCheckPairs: true, intraAuditDeterministicEnabled: true },
     });
     requireTenantResource(study, tenantId);
     return {
@@ -87,13 +87,14 @@ export const studyService = {
       excludedSectionPrefixes: study.excludedSectionPrefixes,
       auditMode: study.auditMode,
       crossCheckPairs: study.crossCheckPairs as [string, string][] | null,
+      intraAuditDeterministicEnabled: study.intraAuditDeterministicEnabled,
     };
   },
 
   async updateSettings(
     tenantId: string,
     studyId: string,
-    data: { operatorReviewEnabled?: boolean; llmThinkingEnabled?: boolean; excludedSectionPrefixes?: string[]; auditMode?: string; crossCheckPairs?: [string, string][] | null },
+    data: { operatorReviewEnabled?: boolean; llmThinkingEnabled?: boolean; excludedSectionPrefixes?: string[]; auditMode?: string; crossCheckPairs?: [string, string][] | null; intraAuditDeterministicEnabled?: boolean },
   ) {
     const study = await prisma.study.findFirst({
       where: { id: studyId, tenantId },

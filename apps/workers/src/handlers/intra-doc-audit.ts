@@ -204,6 +204,14 @@ export async function handleIntraDocAudit(data: {
   const deterministicHandler: PipelineStepHandler = {
     level: "deterministic",
     async execute(ctx: PipelineContext): Promise<StepResult> {
+      // Тумблер из «Настроек обработки» (Study.intraAuditDeterministicEnabled).
+      // Уровень остаётся в пайплайне (sequencing не ломается), но находки не
+      // создаются. По умолчанию включено.
+      if (ctx.intraAuditDeterministicEnabled === false) {
+        logger.info("[audit:deterministic] disabled by study setting, skipping");
+        return { data: { deterministicFindings: 0, skipped: true }, needsNextStep: true };
+      }
+
       const sections = await loadSections(ctx);
 
       const findings: AuditFinding[] = [];

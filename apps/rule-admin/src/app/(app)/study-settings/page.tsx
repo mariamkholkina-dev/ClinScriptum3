@@ -260,6 +260,31 @@ function StudySettingsPanel({ studyId }: { studyId: string }) {
           />
         </div>
 
+        {/* Intra-audit deterministic findings */}
+        <div className="flex items-center justify-between px-6 py-5">
+          <div className="space-y-1">
+            <div className="text-sm font-medium text-gray-900">
+              Детерминированные находки (внутридокументный аудит)
+            </div>
+            <div className="text-xs text-gray-500 max-w-md">
+              Включает уровень 1 (регексные / эвристические проверки) во
+              внутридокументном аудите. При выключении находки с
+              method=&quot;deterministic&quot; не создаются — аудит остаётся
+              только на LLM-уровнях. Этап в пайплайне сохраняется.
+            </div>
+          </div>
+          <Toggle
+            checked={settings.intraAuditDeterministicEnabled ?? true}
+            onChange={(value) =>
+              updateMutation.mutate({
+                studyId,
+                intraAuditDeterministicEnabled: value,
+              })
+            }
+            disabled={updateMutation.isPending}
+          />
+        </div>
+
         {/* Excluded Section Prefixes */}
         <div className="px-6 py-5">
           <ExcludedPrefixesEditor

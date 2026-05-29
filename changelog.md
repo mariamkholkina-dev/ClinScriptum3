@@ -2,6 +2,19 @@
 
 ## 2026-05-29
 
+### Feat: тумблер «Детерминированные находки» в Настройках обработки (intra-audit)
+
+Раньше deterministic-уровень (level 1, регексные/эвристические проверки `runEditorialChecks`) в внутридокументном аудите был жёстко зашит — отключить нельзя. Теперь это per-study настройка в `/study-settings`.
+
+Слои:
+- **Schema**: `Study.intraAuditDeterministicEnabled Boolean @default(true)` + миграция `20260529120000_add_intra_audit_deterministic_toggle`.
+- **Orchestrator** (`pipeline/orchestrator.ts`): поле добавлено в `PipelineContext`, в select из `study`, в построение ctx.
+- **Handler** (`intra-doc-audit.ts`): deterministic-уровень при `ctx.intraAuditDeterministicEnabled === false` возвращает `{deterministicFindings: 0, skipped: true}` без создания находок. Уровень остаётся в пайплайне (sequencing не ломается).
+- **Service/Router** (`study.service.ts`, `study.ts`): `getSettings` возвращает поле, `updateSettings` принимает.
+- **UI** (`study-settings/page.tsx`): тумблер «Детерминированные находки (внутридокументный аудит)» рядом с Audit Mode.
+
+По умолчанию включено (backward-compat). Выключение → аудит только на LLM-уровнях, находки `method="deterministic"` не создаются.
+
 ### Fix: rule-admin (app)/layout — порядок хуков (React error #310)
 
 В `apps/rule-admin/src/app/(app)/layout.tsx` хук `trpc.findingReview.dashboard.useQuery` (бейдж «Ревью замечаний», добавлен ранее) вызывался **после** early-return'ов `if (!mounted) return ...` и `if (!accessToken) return null`. На первом рендере (`!mounted`) хук пропускался, на следующем — вызывался → React error #310 (несовпадение числа хуков между рендерами), краш всего layout (белый экран на всех страницах rule-admin). Проявилось на проде после пересборки `--no-cache`.
