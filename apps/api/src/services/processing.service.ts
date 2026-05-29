@@ -37,7 +37,11 @@ export const processingService = {
   async getRun(tenantId: string, runId: string) {
     const run = await prisma.processingRun.findUnique({
       where: { id: runId },
-      include: { steps: { orderBy: { startedAt: "asc" } }, study: true },
+      include: {
+        steps: { orderBy: { startedAt: "asc" } },
+        study: true,
+        _count: { select: { llmResponses: true } },
+      },
     });
     requireTenantResource(run, tenantId, (r) => r.study.tenantId);
     return run;

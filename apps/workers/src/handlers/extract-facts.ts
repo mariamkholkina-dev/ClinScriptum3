@@ -8,6 +8,7 @@ import { runDeterministic, runLlmCheck, runLlmQa } from "@clinscriptum/shared/fa
 import { runPipeline } from "../pipeline/orchestrator.js";
 import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeline/orchestrator.js";
 import { logger } from "../lib/logger.js";
+import { makeLlmResponseLogger } from "../lib/llm-response-logger.js";
 
 export async function handleExtractFacts(data: {
   processingRunId: string;
@@ -24,7 +25,10 @@ export async function handleExtractFacts(data: {
   const llmCheckHandler: PipelineStepHandler = {
     level: "llm_check",
     async execute(ctx: PipelineContext): Promise<StepResult> {
-      const result = await runLlmCheck(ctx, logger);
+      const result = await runLlmCheck(
+        { ...ctx, onLlmResponse: makeLlmResponseLogger(ctx.processingRunId, ctx.docVersionId, "llm_check") },
+        logger,
+      );
       return { ...result, needsNextStep: true };
     },
   };
@@ -32,7 +36,10 @@ export async function handleExtractFacts(data: {
   const llmQaHandler: PipelineStepHandler = {
     level: "llm_qa",
     async execute(ctx: PipelineContext): Promise<StepResult> {
-      const result = await runLlmQa(ctx, logger);
+      const result = await runLlmQa(
+        { ...ctx, onLlmResponse: makeLlmResponseLogger(ctx.processingRunId, ctx.docVersionId, "llm_qa") },
+        logger,
+      );
       return { ...result, needsNextStep: true };
     },
   };

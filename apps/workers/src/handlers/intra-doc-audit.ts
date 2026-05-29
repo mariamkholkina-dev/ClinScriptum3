@@ -9,6 +9,7 @@ import { runWithConcurrency } from "../lib/concurrency.js";
 import { loadSections, invalidateSectionsCache } from "../lib/section-cache.js";
 import { deduplicateByFamilyAndAnchor, pickDuplicateIds } from "../lib/intra-audit-dedup.js";
 import { enrichFindingWithCanonical } from "../lib/canonicalize-finding-value.js";
+import { makeLlmResponseLogger } from "../lib/llm-response-logger.js";
 import {
   buildFullDocumentText,
   buildZoneTexts,
@@ -154,6 +155,7 @@ export async function handleIntraDocAudit(data: {
         thinkingEnabled: ctx.llmThinkingEnabled,
         reasoningMode: llmConfig.reasoningMode,
         timeoutMs: llmConfig.timeoutMs,
+        onResponse: makeLlmResponseLogger(ctx.processingRunId, ctx.docVersionId, "llm_check"),
       });
 
       const auditRules = await loadRulesForType(ctx.bundleId, "intra_audit");
@@ -255,6 +257,7 @@ export async function handleIntraDocAudit(data: {
               messages: [{ role: "user", content: call.user }],
               maxTokens: llmConfig.maxTokens,
               responseFormat: "json",
+              label: call.label,
             });
             totalTokens += response.usage.totalTokens;
             const llmFindings = parseLLMFindings(response.content);
@@ -276,6 +279,7 @@ export async function handleIntraDocAudit(data: {
                 messages: [{ role: "user", content: call.user }],
                 maxTokens: llmConfig.maxTokens,
                 responseFormat: "json",
+                label: call.label,
               });
               return { call, response };
             }),
@@ -373,6 +377,7 @@ export async function handleIntraDocAudit(data: {
         thinkingEnabled: ctx.llmThinkingEnabled,
         reasoningMode: llmConfig.reasoningMode,
         timeoutMs: llmConfig.timeoutMs,
+        onResponse: makeLlmResponseLogger(ctx.processingRunId, ctx.docVersionId, "llm_qa"),
       });
 
       const qaRules = await loadRulesForType(ctx.bundleId, "intra_audit_qa");

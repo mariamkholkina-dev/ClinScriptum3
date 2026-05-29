@@ -4,6 +4,7 @@ import { LLMGateway } from "@clinscriptum/llm-gateway";
 import type { LLMProvider } from "@clinscriptum/llm-gateway";
 import { runPipeline } from "../pipeline/orchestrator.js";
 import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeline/orchestrator.js";
+import { makeLlmResponseLogger } from "../lib/llm-response-logger.js";
 
 /**
  * URS-060..067, URS-082
@@ -91,6 +92,7 @@ export async function handleGenerateCSR(data: {
         thinkingEnabled: ctx.llmThinkingEnabled,
         reasoningMode: llmConfig.reasoningMode,
         timeoutMs: llmConfig.timeoutMs,
+        onResponse: makeLlmResponseLogger(ctx.processingRunId, ctx.docVersionId, "llm_check"),
       });
 
       const genRules = await loadRulesForType(ctx.bundleId, "generation");
