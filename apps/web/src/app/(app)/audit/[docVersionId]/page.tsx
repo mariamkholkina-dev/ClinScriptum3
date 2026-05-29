@@ -18,7 +18,6 @@ import {
   Shield,
   RotateCcw,
   FileText,
-  Clock,
 } from "lucide-react";
 import { openInWord } from "@/lib/open-in-word";
 
@@ -191,7 +190,7 @@ export default function IntraAuditPage() {
   const { docVersionId } = useParams<{ docVersionId: string }>();
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<string>("all");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [auditStarted, setAuditStarted] = useState(false);
 
   const statusQuery = trpc.audit.getAuditStatus.useQuery(
@@ -199,11 +198,13 @@ export default function IntraAuditPage() {
     { refetchInterval: (data) => (data?.state?.data?.isRunning ? 3000 : false) }
   );
 
+  // NB: severity/type фильтруются КЛИЕНТСКИ (ниже), не на бэке. Колонка
+  // Finding.severity у intra-audit находок не заполняется (серьёзность лежит
+  // в extraAttributes.severity), поэтому серверный where.severity обнулял
+  // список. auditCategory тоже не пишется. Фильтруем по extractFindingMeta —
+  // тем же значениям, что показаны на карточках.
   const findingsQuery = trpc.audit.getAuditFindings.useQuery(
-    {
-      docVersionId,
-      severity: severityFilter !== "all" ? (severityFilter as any) : undefined,
-    },
+    { docVersionId },
     { enabled: !statusQuery.data?.isRunning }
   );
 
@@ -270,19 +271,17 @@ export default function IntraAuditPage() {
   };
 
   const allFindings = findingsQuery.data?.findings ?? [];
-  const findings = categoryFilter === "all"
-    ? allFindings
-    : allFindings.filter((f) => {
-        const extra = (f.extraAttributes as Record<string, unknown>) ?? {};
-        const cat = (extra.auditCategory as string) ?? (f as any).auditCategory ?? "";
-        return cat === categoryFilter;
-      });
+  const findings = allFindings.filter((f) => {
+    const m = extractFindingMeta(f);
+    if (severityFilter !== "all" && m.severity !== severityFilter) return false;
+    if (typeFilter !== "all" && m.type !== typeFilter) return false;
+    return true;
+  });
   const docTitle = findingsQuery.data?.documentTitle ?? "Документ";
   const versionLabel = findingsQuery.data?.versionLabel ?? "";
   const isRunning = statusQuery.data?.isRunning ?? false;
   const operatorReviewEnabled = statusQuery.data?.operatorReviewEnabled ?? false;
   const reviewPending = operatorReviewEnabled && (findingsQuery.data as any)?.reviewPending === true;
-  const reviewStatus = statusQuery.data?.reviewStatus ?? null;
 
   const selectedFinding = findings.find((f) => f.id === selectedFindingId);
 
@@ -365,12 +364,14 @@ export default function IntraAuditPage() {
         </div>
       )}
 
-      {/* Review pending banner */}
+      {/* Обработка ещё не завершена. Этап ревью оператором — внутренний и
+          скрыт от медицинского писателя: показываем нейтральный статус «идёт
+          обработка», не раскрывая, что находки на проверке у специалиста. */}
       {reviewPending && !isRunning && (
-        <div className="flex-none bg-amber-50 border-b border-amber-200 px-6 py-3">
-          <div className="flex items-center gap-2 text-sm text-amber-700">
-            <Clock className="h-4 w-4" />
-            Результаты аудита на проверке у специалиста. Findings будут доступны после публикации.
+        <div className="flex-none bg-blue-50 border-b border-blue-200 px-6 py-3">
+          <div className="flex items-center gap-2 text-sm text-blue-700">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Обработка документа ещё не завершена. Результаты появятся автоматически.
           </div>
         </div>
       )}
@@ -388,23 +389,19 @@ export default function IntraAuditPage() {
                 className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
               >
                 <option value="all">Все серьёзности</option>
-                <option value="critical">Critical</option>
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
                 <option value="info">Info</option>
               </select>
               <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
                 className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
               >
-                <option value="all">Все категории</option>
-                <option value="consistency">Согласованность</option>
-                <option value="logic">Логика</option>
-                <option value="terminology">Терминология</option>
-                <option value="compliance">Соответствие</option>
-                <option value="grammar">Редакторское</option>
+                <option value="all">Все типы</option>
+                <option value="semantic">Семантическая</option>
+                <option value="editorial">Редакторская</option>
               </select>
             </div>
             {findings.length > 0 && (
