@@ -2,6 +2,12 @@
 
 ## 2026-05-29
 
+### Fix: QA внутридокументного аудита давал 0 вердиктов (вернул json_object для QA)
+
+Регрессия после #147: убрав `response_format: json_object` со всех intra-audit вызовов, сломали QA-шаг на reasoning-модели deepseek-v32 — он начал давать 0 вердиктов (Variant 2, 220 находок: «QA вердикты (0)», 280с/133k токенов впустую). Причина: без json_object reasoning-блоки `<think>` попадают в content и переполняют maxTokens → JSON вердиктов обрезается → парсер извлекает 0.
+
+Фикс: вернуть `responseFormat: "json"` **только для QA** (runQaBatch). deepseek-v32 массивы под json_object отдаёт корректно (Yandex прячет reasoning, отдаёт чистый JSON — раньше QA так и работал, 11 вердиктов). У full-doc check-вызовов json_object остаётся убранным (там qwen3, для которого json_object ломает массив — #147). Итого: check (qwen3) без json_object, QA (deepseek) с json_object — каждая модель в своём рабочем режиме.
+
 ### Fix: intra-audit возвращал по одной находке на вызов (json_object + qwen3)
 
 Баг: full-doc вызовы (self/cross/editorial) возвращали лишь ~1 находку. Причина: gateway шлёт `response_format: { type: "json_object" }` для всех json-запросов, а промты требуют JSON-**массив** находок. На модели `qwen3-235b` (выбрана для llm_check) YandexGPT-режим json_object запрещает массив → модель возвращает один объект → `parseLLMFindings` извлекал одну находку. Подтверждено живым запросом: qwen3 с json_object отдаёт один объект, без него — корректный массив. QA работал, т.к. использовал deepseek-v32 (массивы под json_object отдаёт).

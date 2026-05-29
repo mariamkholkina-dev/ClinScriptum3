@@ -510,8 +510,13 @@ async function runQaBatch(
       content: `НАХОДКИ ДЛЯ ПРОВЕРКИ:\n${findingsText}\n\nДОКУМЕНТ:\n${docContext}`,
     }],
     maxTokens,
-    // НЕ json_object: QA-промт требует JSON-массив вердиктов; json_object на
-    // части моделей (qwen3) ломает массив. Парсер ниже толерантно берёт [...].
+    // QA идёт батчами (≤10 находок), ответы короткие. json_object нужен для
+    // reasoning-моделей (deepseek-v32): без него `<think>` попадает в content
+    // и при reasoning переполняет maxTokens → JSON вердиктов обрезается, парсер
+    // даёт 0 вердиктов. С json_object Yandex отдаёт чистый JSON (reasoning скрыт).
+    // deepseek массивы под json_object отдаёт корректно (в отличие от qwen3 на
+    // больших full-doc check-вызовах, где json_object убран).
+    responseFormat: "json",
   });
 
   let dismissed = 0;
