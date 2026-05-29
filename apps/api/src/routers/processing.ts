@@ -2,6 +2,7 @@ import { z } from "zod";
 import { router, protectedProcedure, qualityProcedure } from "../trpc/trpc.js";
 import { withDomainErrors } from "../trpc/error-mapper.js";
 import { processingService } from "../services/processing.service.js";
+import { costService } from "../services/cost.service.js";
 
 const p = protectedProcedure.use(withDomainErrors);
 const qp = qualityProcedure.use(withDomainErrors);
@@ -42,6 +43,10 @@ export const processingRouter = router({
   getRun: p
     .input(z.object({ runId: z.string().uuid() }))
     .query(({ ctx, input }) => processingService.getRun(ctx.user.tenantId, input.runId)),
+
+  getRunCost: p
+    .input(z.object({ runId: z.string().uuid() }))
+    .query(({ ctx, input }) => costService.computeRunCost(ctx.user.tenantId, input.runId)),
 
   listRuns: p
     .input(z.object({ docVersionId: z.string().uuid() }))

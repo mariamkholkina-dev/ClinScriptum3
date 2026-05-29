@@ -272,8 +272,13 @@ function StepResultSummary({ result }: { result: Record<string, unknown> }) {
   );
 }
 
+function fmtRub(v: number): string {
+  return v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function ExpandedRow({ runId }: { runId: string }) {
   const { data: run } = trpc.processing.getRun.useQuery({ runId });
+  const { data: cost } = trpc.processing.getRunCost.useQuery({ runId });
 
   if (!run) return <tr><td colSpan={9} className="px-4 py-3 text-sm text-gray-500">Загрузка...</td></tr>;
 
@@ -323,6 +328,74 @@ function ExpandedRow({ runId }: { runId: string }) {
             >
               ⬇ Ответы LLM ({run._count?.llmResponses})
             </button>
+          </td>
+        </tr>
+      )}
+      {cost && cost.total.calls > 0 && (
+        <tr className="bg-gray-50">
+          <td />
+          <td colSpan={8} className="px-4 py-2">
+            <details className="text-xs">
+              <summary className="cursor-pointer font-medium text-gray-700">
+                💰 Стоимость: {fmtRub(cost.total.cost)} {cost.currency}
+                <span className="ml-2 font-normal text-gray-500">
+                  ({cost.total.promptTokens.toLocaleString("ru-RU")} промпт + {cost.total.completionTokens.toLocaleString("ru-RU")} ответ токенов, {cost.total.calls} вызовов)
+                </span>
+              </summary>
+              {cost.unpricedModels.length > 0 && (
+                <div className="mt-1 text-amber-600">
+                  ⚠ Цена не задана для моделей: {cost.unpricedModels.join(", ")} — добавьте в LlmModelPricing.
+                </div>
+              )}
+              {/* Итоги по этапам */}
+              <div className="mt-2">
+                <div className="mb-1 font-medium text-gray-600">По этапам:</div>
+                <table className="w-full max-w-lg">
+                  <tbody>
+                    {Object.entries(cost.byLevel).map(([level, agg]) => (
+                      <tr key={level} className="border-t border-gray-100">
+                        <td className="py-0.5 pr-3">{LEVEL_LABELS[level] ?? level}</td>
+                        <td className="py-0.5 pr-3 text-gray-500">{agg.calls} выз.</td>
+                        <td className="py-0.5 pr-3 text-gray-500">{(agg.promptTokens + agg.completionTokens).toLocaleString("ru-RU")} ток.</td>
+                        <td className="py-0.5 text-right font-medium">{fmtRub(agg.cost)} {cost.currency}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Стоимость по каждому вызову */}
+              <div className="mt-3">
+                <div className="mb-1 font-medium text-gray-600">По вызовам:</div>
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-gray-400">
+                      <th className="py-0.5 pr-3 text-left font-normal">Вызов</th>
+                      <th className="py-0.5 pr-3 text-left font-normal">Этап</th>
+                      <th className="py-0.5 pr-3 text-left font-normal">Модель</th>
+                      <th className="py-0.5 pr-3 text-right font-normal">Промпт</th>
+                      <th className="py-0.5 pr-3 text-right font-normal">Ответ</th>
+                      <th className="py-0.5 text-right font-normal">₽</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cost.calls.map((c) => (
+                      <tr key={c.id} className="border-t border-gray-100">
+                        <td className="py-0.5 pr-3">{c.label ?? "—"}</td>
+                        <td className="py-0.5 pr-3 text-gray-500">{LEVEL_LABELS[c.level] ?? c.level}</td>
+                        <td className="py-0.5 pr-3 text-gray-400" title={c.model ?? ""}>
+                          {c.model ? c.model.split("/").slice(-2, -1)[0] ?? c.model : "—"}
+                        </td>
+                        <td className="py-0.5 pr-3 text-right text-gray-500">{c.promptTokens.toLocaleString("ru-RU")}</td>
+                        <td className="py-0.5 pr-3 text-right text-gray-500">{c.completionTokens.toLocaleString("ru-RU")}</td>
+                        <td className="py-0.5 text-right font-medium">
+                          {c.priced ? fmtRub(c.costTotal) : <span className="text-amber-600" title="Цена модели не задана">н/д</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </td>
         </tr>
       )}

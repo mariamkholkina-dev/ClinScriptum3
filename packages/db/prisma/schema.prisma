@@ -1016,6 +1016,25 @@ model LlmConfig {
   @@map("llm_configs")
 }
 
+/// Цены LLM-моделей для расчёта стоимости токенов в «Аудит обработок».
+/// modelPattern — подстрока для матчинга LlmResponseLog.model
+/// (напр. "qwen3-235b" матчит "gpt://<folder>/qwen3-235b-a22b-fp8/latest").
+/// При нескольких совпадениях берётся самый длинный (специфичный) pattern.
+model LlmModelPricing {
+  id                   String   @id @default(uuid()) @db.Uuid
+  modelPattern         String   @map("model_pattern")
+  provider             String?
+  costPerInputKTokens  Float    @map("cost_per_input_k_tokens") // ₽ за 1000 input-токенов
+  costPerOutputKTokens Float    @map("cost_per_output_k_tokens") // ₽ за 1000 output-токенов
+  currency             String   @default("RUB")
+  note                 String?
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@map("llm_model_pricing")
+}
+
 enum ContextStrategy {
   chunk
   multi_chunk
