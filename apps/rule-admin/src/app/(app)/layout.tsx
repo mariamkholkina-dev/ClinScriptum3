@@ -54,6 +54,15 @@ const NAV_ITEMS: NavItem[] = [
 
 const SIDEBAR_KEY = "rule-admin:sidebar-collapsed";
 
+// Роли, которым показываем бейдж «Ревью замечаний». Module-level, чтобы Set
+// не пересоздавался на каждый рендер.
+const REVIEWER_ROLES = new Set([
+  "findings_reviewer",
+  "qc_operator",
+  "rule_admin",
+  "tenant_admin",
+]);
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -86,6 +95,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     router.push("/login");
   }, [logout, router]);
 
+  const userRole = user?.role ?? "";
+  const isReviewer = REVIEWER_ROLES.has(userRole);
+
+  // Badge count для «Ревью замечаний» — pending+in_review reviews.
+  // Polling раз в минуту. ВАЖНО: хук должен идти ДО любых early-return ниже,
+  // иначе при первом рендере (!mounted) он не вызовется, а на следующем —
+  // вызовется → React error #310 (несовпадение числа хуков между рендерами).
+  const dashboardQuery = trpc.findingReview.dashboard.useQuery(undefined, {
+    enabled: isReviewer,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
+  });
+
   if (!mounted) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50">
@@ -96,26 +119,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (!accessToken) return null;
 
-  const userRole = user?.role ?? "";
   const visibleItems = NAV_ITEMS.filter(
     (item) => !item.approverOnly || userRole === "rule_approver"
   );
 
-  // Badge count для «Ревью замечаний» — pending+in_review reviews.
-  // Polling раз в минуту, чтобы новые review были видны без перезагрузки.
-  const REVIEWER_ROLES = new Set([
-    "findings_reviewer",
-    "qc_operator",
-    "rule_admin",
-    "tenant_admin",
-  ]);
-  const isReviewer = REVIEWER_ROLES.has(userRole);
-  const dashboardQuery = trpc.findingReview.dashboard.useQuery(undefined, {
-    enabled: isReviewer,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-    refetchOnWindowFocus: false,
-  });
   const pendingReviewCount = Array.isArray(dashboardQuery.data)
     ? dashboardQuery.data.filter(
         (r: { status?: string }) => r.status === "pending" || r.status === "in_review",
