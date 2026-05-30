@@ -5,9 +5,14 @@
 ### Fix: находки synopsis_body_mismatch теперь type=semantic (а не intra_audit)
 
 Этап извлечения фактов (`fact-extraction-core.ts`) писал находку расхождения синопсиса с основным текстом (`synopsis_body_mismatch`) под `type=intra_audit`, из-за чего она не попадала под фильтр по типу (semantic/editorial) в основном интерфейсе и отображалась как «Внутренний аудит». По сути это семантическое расхождение значений → теперь пишется `type=semantic`. Миграция данных `20260530140000_reclassify_synopsis_body_mismatch` переводит существующие такие находки в `semantic` (`UPDATE ... WHERE type='intra_audit' AND issue_type='synopsis_body_mismatch'`). Требует деплой workers + миграцию.
+
 ### Fix: фильтр «Тип» на экране внутридокументного аудита — динамические опции
 
 Фильтр по типу находки (PR #149) имел фиксированные опции `semantic`/`editorial`, но в данных встречаются и находки `type=intra_audit` (показываются на карточке как «Внутренний аудит»). Их нельзя было выбрать, а выбор `semantic`/`editorial` исключал их из списка — фильтр воспринимался как «не работает». Фикс: опции селекта «Тип» теперь строятся **динамически** из реально присутствующих в находках значений `type` (с подписями из `TYPE_LABELS`). Покрывает любой набор типов в данных.
+
+### Chore: удалён мёртвый legacy-движок внутридокументного аудита (API-сторона)
+
+Удалены `apps/api/src/lib/intra-audit.ts` (`runIntraDocAudit`) и `apps/api/src/lib/processing-pipeline.ts` (`runProcessingPipeline`) — синхронная реализация всего пайплайна на API-стороне, дублировавшая рабочий worker-пайплайн (BullMQ + `orchestrator.ts` + `handlers/intra-doc-audit.ts`). Обе функции вызывались только друг другом и не были подключены ни к одному REST/tRPC-эндпоинту или тесту (проверено grep по всему репо). Именно этот движок писал ВСЕ находки с `type=intra_audit`; актуальный путь пишет `editorial`/`semantic` (а fact-consistency находки `synopsis_body_mismatch` создаёт этап extract_facts). Модули, которые тянул только legacy-пайплайн, не осиротели: `fact-extraction-pipeline` нужен `resume-pipeline.ts`, `soa-detection`/`event-publisher` используются широко. typecheck чист.
 
 ### Feat: добавлены high-value пары зон в ZONE_AFFINITY_MAP
 
