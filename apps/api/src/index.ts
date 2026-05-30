@@ -358,6 +358,9 @@ app.get("/api/audit-report/:versionId", async (req, res) => {
       return;
     }
 
+    // Backstop: отчёт буферизует весь Word-документ в памяти, поэтому
+    // ограничиваем число находок защитным потолком (см. OOM api).
+    const MAX_REPORT_FINDINGS = 5000;
     const findings = await prisma.finding.findMany({
       where: {
         docVersionId: req.params.versionId,
@@ -367,7 +370,14 @@ app.get("/api/audit-report/:versionId", async (req, res) => {
         ],
       },
       orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
+      take: MAX_REPORT_FINDINGS,
     });
+    if (findings.length === MAX_REPORT_FINDINGS) {
+      logger.warn("[audit-report] findings hit backstop cap — report truncated", {
+        versionId: req.params.versionId,
+        cap: MAX_REPORT_FINDINGS,
+      });
+    }
 
     const buffer = await generateAuditReport(version, findings);
     const filename = `Аудит_${version.document.title}_${version.versionLabel ?? "v" + version.versionNumber}.docx`;

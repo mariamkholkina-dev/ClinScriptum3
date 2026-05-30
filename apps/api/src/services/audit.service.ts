@@ -7,6 +7,11 @@ import { requireTenantResource } from "./tenant-guard.js";
 
 const REVIEWER_ROLES = new Set(["findings_reviewer", "rule_admin", "tenant_admin"]);
 
+// Защитный потолок для непагинированных запросов находок (см. OOM api).
+// Реальные документы дают сотни находок — этот лимит их не урезает, но
+// предотвращает безграничный рост heap при патологии.
+const MAX_UNPAGINATED_FINDINGS = 2000;
+
 async function validateInterAuditPair(
   tenantId: string,
   protocolVersionId: string,
@@ -192,6 +197,10 @@ export const auditService = {
 
     const paginated = input.take !== undefined || input.cursor !== undefined;
     const take = input.take ?? 100;
+    // Web грузит находки без пагинации (фильтрация на клиенте), поэтому в
+    // непагинированном режиме применяем высокий защитный backstop: не урезает
+    // реальные документы (сотни находок), но не даёт heap расти безгранично при
+    // патологии (тысячи находок) — см. OOM api.
     const findings = await prisma.finding.findMany({
       where,
       orderBy: [
@@ -204,8 +213,16 @@ export const auditService = {
             take: take + 1,
             ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
           }
-        : {}),
+        : { take: MAX_UNPAGINATED_FINDINGS + 1 }),
     });
+
+    if (!paginated && findings.length > MAX_UNPAGINATED_FINDINGS) {
+      logger.warn("getAuditFindings hit unpaginated backstop — results truncated", {
+        docVersionId: input.docVersionId,
+        cap: MAX_UNPAGINATED_FINDINGS,
+      });
+      findings.length = MAX_UNPAGINATED_FINDINGS;
+    }
 
     let nextCursor: string | null = null;
     let pagedFindings = findings;
@@ -309,10 +326,21 @@ export const auditService = {
     });
     requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
 
+    // Грузим только текст блоков (content), без тяжёлого rawHtml — иначе на
+    // большом документе в память тянется весь HTML каждого блока, хотя в ответ
+    // он не идёт (см. OOM api: heap-balloon на полном протоколе/CSR).
     const sections = await prisma.section.findMany({
       where: { docVersionId },
       orderBy: { order: "asc" },
-      include: { contentBlocks: { orderBy: { order: "asc" } } },
+      select: {
+        id: true,
+        title: true,
+        standardSection: true,
+        contentBlocks: {
+          orderBy: { order: "asc" },
+          select: { content: true },
+        },
+      },
     });
 
     return sections.map((s) => ({
