@@ -110,7 +110,7 @@ describe("findingReviewService.dashboard", () => {
     expect(mockFinding.count).toHaveBeenCalledWith({
       where: {
         docVersionId: DOC_VERSION_ID,
-        type: "intra_audit",
+        type: { in: ["intra_audit", "editorial", "semantic"] },
         status: { not: "false_positive" },
       },
     });
@@ -145,7 +145,7 @@ describe("findingReviewService.getReview", () => {
     expect(mockFinding.findMany).toHaveBeenCalledWith({
       where: {
         docVersionId: DOC_VERSION_ID,
-        type: "intra_audit",
+        type: { in: ["intra_audit", "editorial", "semantic"] },
         status: { not: "false_positive" },
       },
       orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
