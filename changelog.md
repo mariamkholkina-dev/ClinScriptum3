@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-05-31
+
+### Feat: повтор LLM-вызовов intra-audit при transient-ошибке (fetch failed)
+
+Раньше (#159/#160) упавший по `fetch failed` промт сразу попадал в `failedCalls` без повтора. Добавлен `lib/llm-retry.ts` (`withTransientRetry`): каждый LLM-вызов intra-audit (llm_check Variant 1 и Variant 2, llm_qa-батчи) сначала повторяется до 3 раз с экспоненциальным backoff (5с → 10с) при временной ошибке (`fetch failed`, таймаут, разрыв соединения, 429/5xx, перегрузка), и лишь после исчерпания попыток пишется в `failedCalls`. Постоянные ошибки (401/невалидный запрос/лимит токенов) не повторяются — fail-fast. Файлы: `apps/workers/src/lib/llm-retry.ts` (+тест, 6 кейсов), `apps/workers/src/handlers/intra-doc-audit.ts`. Требует деплой workers.
+
 ## 2026-05-30
 
 ### Fix: фильтры на экранах аудита и ревью находок (web)
