@@ -1,10 +1,10 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
-import { ArrowLeft, AlertTriangle, Database } from "lucide-react";
+import { AlertTriangle, Database } from "lucide-react";
+import { DocumentVersionHeader } from "@/components/document-version-header";
 
 const statusLabels: Record<string, string> = {
   extracted: "Извлечён",
@@ -16,6 +16,8 @@ const statusLabels: Record<string, string> = {
 export default function FactsPage() {
   const { docVersionId } = useParams<{ docVersionId: string }>();
   const factsQuery = trpc.processing.listFacts.useQuery({ docVersionId });
+  const versionQuery = trpc.document.getVersion.useQuery({ versionId: docVersionId });
+  const v = versionQuery.data as any;
 
   const grouped = new Map<string, typeof factsQuery.data>();
   for (const fact of factsQuery.data ?? []) {
@@ -26,12 +28,14 @@ export default function FactsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link href="/documents" className="text-gray-400 hover:text-gray-600">
-          <ArrowLeft className="h-5 w-5" />
-        </Link>
-        <h1 className="text-2xl font-bold text-gray-900">Извлечённые факты</h1>
-      </div>
+      <DocumentVersionHeader
+        studyTitle={v?.document?.study?.title}
+        studyId={v?.document?.studyId}
+        documentTitle={v?.document?.title}
+        versionLabel={v?.versionLabel ?? (v ? `v${v.versionNumber}` : null)}
+        stageLabel="Извлечённые факты"
+        backHref="/documents"
+      />
 
       {factsQuery.isLoading && <p className="text-sm text-gray-500">Загрузка...</p>}
 
