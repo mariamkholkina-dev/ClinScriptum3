@@ -3,29 +3,50 @@ declare const Office: any;
 
 const CLINSCRIPTUM_NS = "urn:clinscriptum:word-session";
 
+/**
+ * Лучшая цитата для поиска места находки в документе. У intra-audit находок
+ * текст лежит в разных полях sourceRef в зависимости от направления проверки
+ * (self/cross/editorial), поэтому перебираем все известные варианты, а не
+ * только textSnippet — иначе подсветка/переход для части находок не работают.
+ */
+export function bestSnippet(sourceRef: any): string | undefined {
+  const r = sourceRef ?? {};
+  const candidate =
+    r.textSnippet || r.checkedDocQuote || r.anchorQuote || r.targetQuote || r.referenceQuote;
+  return typeof candidate === "string" && candidate.trim() ? candidate : undefined;
+}
+
+/**
+ * Нормализует цитату под Word.search: схлопывает переводы строк и повторные
+ * пробелы (иначе поиск не находит фрагмент, пересекающий границы абзацев/
+ * прогонов) и ограничивает длину (Word.search не принимает строки > 255).
+ */
+function normalizeForSearch(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
 export async function navigateToText(textSnippet: string): Promise<boolean> {
+  const normalized = normalizeForSearch(textSnippet);
+  if (!normalized) return false;
+  // Кандидаты от наиболее специфичного к менее: полная нормализованная цитата,
+  // затем первые ~120 и ~60 символов (длиннее = меньше ложных совпадений).
+  const candidates = [normalized];
+  if (normalized.length > 120) candidates.push(normalized.slice(0, 120));
+  if (normalized.length > 60) candidates.push(normalized.slice(0, 60));
+
   return Word.run(async (context: any) => {
     const body = context.document.body;
-    const searchResults = body.search(textSnippet, {
-      matchCase: false,
-      matchWholeWord: false,
-    });
-    searchResults.load("items");
-    await context.sync();
-
-    if (searchResults.items.length > 0) {
-      searchResults.items[0].select();
+    for (const term of candidates) {
+      const results = body.search(term, { matchCase: false, matchWholeWord: false });
+      results.load("items");
       await context.sync();
-      return true;
-    }
-
-    if (textSnippet.length > 40) {
-      const shorter = textSnippet.slice(0, 40);
-      const fallback = body.search(shorter, { matchCase: false });
-      fallback.load("items");
-      await context.sync();
-      if (fallback.items.length > 0) {
-        fallback.items[0].select();
+      if (results.items.length > 0) {
+        results.items[0].select();
+        // scrollIntoView гарантирует прокрутку к выделению (select не всегда
+        // прокручивает, если место уже «технически» в области просмотра).
+        if (typeof results.items[0].scrollIntoView === "function") {
+          results.items[0].scrollIntoView();
+        }
         await context.sync();
         return true;
       }
@@ -95,7 +116,9 @@ export async function highlightFindingLocations(
     let count = 0;
     for (const snippet of snippets) {
       if (!snippet || snippet.length < 5) continue;
-      const searchText = snippet.length > 60 ? snippet.slice(0, 60) : snippet;
+      const clean = normalizeForSearch(snippet);
+      const searchText = clean.length > 60 ? clean.slice(0, 60) : clean;
+      if (!searchText) continue;
       const results = context.document.body.search(searchText, { matchCase: false });
       results.load("items");
       await context.sync();
