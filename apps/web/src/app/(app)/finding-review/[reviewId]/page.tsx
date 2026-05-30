@@ -54,6 +54,30 @@ const AUDIT_TYPE_LABELS: Record<string, string> = {
   inter_audit: "Междокументный аудит",
 };
 
+// Метки типа находки и статуса валидации — те же, что на экране аудита.
+const FINDING_TYPE_LABELS: Record<string, string> = {
+  editorial: "Редакторская",
+  semantic: "Семантическая",
+  intra_audit: "Внутренний аудит",
+  inter_audit: "Межд. аудит",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: "К валидации",
+  confirmed: "Подтверждено",
+  rejected: "Игнорировать",
+  resolved: "Исправлено",
+  false_positive: "Ложное срабатывание",
+};
+
+// Эффективная серьёзность находки. У intra-audit находок колонка severity не
+// заполняется — реальная серьёзность лежит в extraAttributes.severity (как на
+// экране аудита). Приоритет: override ревьюера (колонка) → исходная из
+// extraAttributes → info. Без этого все находки на review показывались как INFO.
+function effSeverity(f: any): string {
+  return f?.severity ?? (f?.extraAttributes as any)?.severity ?? "info";
+}
+
 /* ──────────────────── Main Page ──────────────────── */
 
 export default function FindingReviewPage() {
@@ -61,6 +85,8 @@ export default function FindingReviewPage() {
   const router = useRouter();
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [noteText, setNoteText] = useState("");
   const [showPublishConfirm, setShowPublishConfirm] = useState(false);
 
@@ -106,8 +132,17 @@ export default function FindingReviewPage() {
   const review = data?.review;
   const findings = data?.findings ?? [];
 
+  const availableTypes = Array.from(
+    new Set(findings.map((f: any) => f.type).filter(Boolean)),
+  ).sort() as string[];
+  const availableStatuses = Array.from(
+    new Set(findings.map((f: any) => f.status).filter(Boolean)),
+  ).sort() as string[];
+
   const filteredFindings = findings.filter((f: any) => {
-    if (severityFilter !== "all" && f.severity !== severityFilter) return false;
+    if (severityFilter !== "all" && effSeverity(f) !== severityFilter) return false;
+    if (typeFilter !== "all" && f.type !== typeFilter) return false;
+    if (statusFilter !== "all" && f.status !== statusFilter) return false;
     return true;
   });
 
@@ -200,19 +235,43 @@ export default function FindingReviewPage() {
       <div className="flex-1 flex min-h-0">
         {/* Left: Findings list */}
         <div className="w-[440px] flex-none border-r flex flex-col bg-gray-50">
-          <div className="flex-none p-4 border-b bg-white space-y-2">
-            <select
-              value={severityFilter}
-              onChange={(e) => setSeverityFilter(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
-            >
-              <option value="all">Все серьёзности ({findings.length})</option>
-              {SEVERITY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label} ({findings.filter((f: any) => f.severity === o.value).length})
-                </option>
-              ))}
-            </select>
+          <div className="flex-none p-4 border-b bg-white">
+            {/* Фильтры аналогичны экрану аудита: severity / тип / статус,
+                grid-cols-2 — не вылезают за ширину панели. */}
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={severityFilter}
+                onChange={(e) => setSeverityFilter(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="all">Все серьёзности ({findings.length})</option>
+                {SEVERITY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label} ({findings.filter((f: any) => effSeverity(f) === o.value).length})
+                  </option>
+                ))}
+              </select>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="all">Все типы</option>
+                {availableTypes.map((t) => (
+                  <option key={t} value={t}>{FINDING_TYPE_LABELS[t] ?? t}</option>
+                ))}
+              </select>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="all">Все статусы</option>
+                {availableStatuses.map((s) => (
+                  <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
@@ -224,7 +283,7 @@ export default function FindingReviewPage() {
             )}
 
             {filteredFindings.map((finding: any) => {
-              const severity = finding.severity ?? "info";
+              const severity = effSeverity(finding);
               const isSelected = finding.id === selectedFinding?.id;
 
               return (
@@ -346,7 +405,7 @@ function ReviewDetail({
   isSavingNote: boolean;
 }) {
   const ref = finding.sourceRef as any;
-  const severity = finding.severity ?? "info";
+  const severity = effSeverity(finding);
 
   return (
     <div className="space-y-6 max-w-3xl">
