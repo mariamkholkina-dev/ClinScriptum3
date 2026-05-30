@@ -6,6 +6,7 @@ import { runPipeline } from "../pipeline/orchestrator.js";
 import type { PipelineStepHandler, PipelineContext, StepResult } from "../pipeline/orchestrator.js";
 import { logger } from "../lib/logger.js";
 import { runWithConcurrency } from "../lib/concurrency.js";
+import { withTransientRetry } from "../lib/llm-retry.js";
 import { loadSections, invalidateSectionsCache } from "../lib/section-cache.js";
 import { deduplicateByFamilyAndAnchor, pickDuplicateIds } from "../lib/intra-audit-dedup.js";
 import { enrichFindingWithCanonical } from "../lib/canonicalize-finding-value.js";
@@ -327,16 +328,21 @@ export async function handleIntraDocAudit(data: {
           for (const call of plan.calls) {
             try {
               logger.info(`[audit:llm_check] Phase: ${call.label}`, { docChars: fullDocText.length });
-              const response = await gateway.generate({
-                system: call.system,
-                messages: [{ role: "user", content: call.user }],
-                maxTokens: llmConfig.maxTokens,
-                // json_object безопасен: промты v2 просят объект-обёртку
-                // {"findings":[...]}, а не голый массив. Это работает на любой
-                // модели (qwen3/deepseek/...), parseLLMFindings читает .findings.
-                responseFormat: "json",
-                label: call.label,
-              });
+              // Повтор при transient-ошибке (fetch failed/таймаут/5xx): промт
+              // несколько раз ретраится с backoff, прежде чем попасть в failedCalls.
+              const response = await withTransientRetry(
+                () => gateway.generate({
+                  system: call.system,
+                  messages: [{ role: "user", content: call.user }],
+                  maxTokens: llmConfig.maxTokens,
+                  // json_object безопасен: промты v2 просят объект-обёртку
+                  // {"findings":[...]}, а не голый массив. Это работает на любой
+                  // модели (qwen3/deepseek/...), parseLLMFindings читает .findings.
+                  responseFormat: "json",
+                  label: call.label,
+                }),
+                { label: call.label },
+              );
               totalTokens += response.usage.totalTokens;
               const llmFindings = parseLLMFindings(response.content);
               totalFindings += llmFindings.length;
@@ -363,14 +369,17 @@ export async function handleIntraDocAudit(data: {
             plan.calls.map((call, i) => async () => {
               try {
                 logger.info(`[audit:llm_check] Task ${i + 1}/${plan.calls.length}: ${call.label}`);
-                const response = await gateway.generate({
-                  system: call.system,
-                  messages: [{ role: "user", content: call.user }],
-                  maxTokens: llmConfig.maxTokens,
-                  // json_object безопасен — промт просит объект-обёртку (см. V1).
-                  responseFormat: "json",
-                  label: call.label,
-                });
+                const response = await withTransientRetry(
+                  () => gateway.generate({
+                    system: call.system,
+                    messages: [{ role: "user", content: call.user }],
+                    maxTokens: llmConfig.maxTokens,
+                    // json_object безопасен — промт просит объект-обёртку (см. V1).
+                    responseFormat: "json",
+                    label: call.label,
+                  }),
+                  { label: call.label },
+                );
                 totalTokens += response.usage.totalTokens;
                 const llmFindings = parseLLMFindings(response.content);
                 totalFindings += llmFindings.length;
@@ -680,20 +689,24 @@ async function runQaBatch(
   docContext: string,
   systemPrompt: string,
 ): Promise<{ dismissed: number; adjusted: number; confirmed: number; tokens: number }> {
-  const response = await gateway.generate({
-    system: systemPrompt,
-    messages: [{
-      role: "user",
-      content: `НАХОДКИ ДЛЯ ПРОВЕРКИ:\n${findingsText}\n\nДОКУМЕНТ:\n${docContext}`,
-    }],
-    maxTokens,
-    // Всегда json_object: модель-агностично. Промт QA просит объект-обёртку
-    // {"verdicts": [...]}, parseLLMFindings/unwrapJsonArray её разбирают. Это
-    // нужно reasoning-моделям (deepseek-v32): без json_object `<think>` попадает
-    // в content и переполняет maxTokens → JSON обрезается, 0 вердиктов. А под
-    // json_object qwen3 не умеет вернуть голый массив, но обёртку-объект — да.
-    responseFormat: "json",
-  });
+  // Повтор при transient-ошибке (fetch failed/таймаут/5xx) до записи в failedCalls.
+  const response = await withTransientRetry(
+    () => gateway.generate({
+      system: systemPrompt,
+      messages: [{
+        role: "user",
+        content: `НАХОДКИ ДЛЯ ПРОВЕРКИ:\n${findingsText}\n\nДОКУМЕНТ:\n${docContext}`,
+      }],
+      maxTokens,
+      // Всегда json_object: модель-агностично. Промт QA просит объект-обёртку
+      // {"verdicts": [...]}, parseLLMFindings/unwrapJsonArray её разбирают. Это
+      // нужно reasoning-моделям (deepseek-v32): без json_object `<think>` попадает
+      // в content и переполняет maxTokens → JSON обрезается, 0 вердиктов. А под
+      // json_object qwen3 не умеет вернуть голый массив, но обёртку-объект — да.
+      responseFormat: "json",
+    }),
+    { label: "qa_batch" },
+  );
 
   let dismissed = 0;
   let adjusted = 0;
