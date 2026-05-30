@@ -10,7 +10,7 @@ import { Location24Regular } from "@fluentui/react-icons";
 import { SeverityBadge } from "../shared/SeverityBadge";
 import { StatusBadge } from "../shared/StatusBadge";
 import { StatusActions } from "./StatusActions";
-import { navigateToText, applyTextReplacement } from "../office-helpers";
+import { navigateToText, applyTextReplacement, bestSnippet } from "../office-helpers";
 import type { Finding } from "../shared/useFindings";
 
 const useStyles = makeStyles({
@@ -50,9 +50,9 @@ export function FindingDetail({ finding, onUpdateStatus }: Props) {
   const styles = useStyles();
   const ref = finding.sourceRef as any;
 
+  const navSnippet = bestSnippet(ref);
   const handleNavigate = async () => {
-    const snippet = ref?.textSnippet || ref?.checkedDocQuote || ref?.anchorQuote;
-    if (snippet) await navigateToText(snippet);
+    if (navSnippet) await navigateToText(navSnippet);
   };
 
   const handleApplyFix = async () => {
@@ -116,7 +116,7 @@ export function FindingDetail({ finding, onUpdateStatus }: Props) {
         size="small"
         icon={<Location24Regular />}
         onClick={handleNavigate}
-        disabled={!ref?.textSnippet && !ref?.checkedDocQuote && !ref?.anchorQuote}
+        disabled={!navSnippet}
       >
         Перейти в документе
       </Button>
