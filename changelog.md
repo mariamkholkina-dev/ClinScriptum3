@@ -2,6 +2,10 @@
 
 ## 2026-05-30
 
+### Fix: внутридокументный аудит не наполнял очередь ревью оператором
+
+При включённой настройке «Ревью оператором» (`operatorReviewEnabled`) ревьюер не видел документы intra-аудита в очереди, а находки сразу показывались писателю. Причина: боевой пайплайн (воркер `intra-doc-audit.ts`) никогда не создавал запись `FindingReview(intra_audit)` — единственный такой `upsert` жил в мёртвом коде `apps/api/src/lib/intra-audit.ts`, не подключённом к боевому пути и удалённом в #156 (для inter-аудита запись создаётся штатно — `inter-audit.ts:393`). Добавил создание/сброс `FindingReview(intra_audit, status=pending)` по завершении intra-аудита **только при `operatorReviewEnabled=true`** — зеркалит inter-аудит. Теперь документ появляется у ревьюера, а находки скрыты от писателя до публикации (`audit.service.getAuditFindings`). Покрывает оба входа (`run_pipeline` и standalone `intra_doc_audit`). Только `apps/workers/src/handlers/intra-doc-audit.ts`. 8 тестов хендлера проходят. Требует деплой workers.
+
 ### Fix: ограничение памяти в API-запросах аудита (причина OOM)
 
 API падал с `JavaScript heap out of memory` (heap дорастал до ~512 МБ за пару минут), что приводило к 502 от nginx и видимым в браузере «CORS policy»/401. Причина — эндпоинты грузили данные без ограничений:

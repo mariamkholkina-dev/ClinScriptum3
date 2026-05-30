@@ -595,6 +595,44 @@ export async function handleIntraDocAudit(data: {
       operatorReviewEnabled: data.operatorReviewEnabled ?? false,
       steps: Array.from(handlers.values()),
     }, handlers);
+
+    // Наполняем очередь ревью оператором. При включённой настройке
+    // operatorReviewEnabled создаём (или сбрасываем в pending) запись
+    // FindingReview(intra_audit): документ появляется у ревьюера, а находки
+    // скрываются от писателя до публикации (см. audit.service.getAuditFindings).
+    // Боевой пайплайн этого не делал — единственный upsert intra_audit жил в
+    // мёртвом коде, удалённом в #156. Зеркалит inter-audit.ts.
+    if (data.operatorReviewEnabled) {
+      const run = await prisma.processingRun.findUnique({
+        where: { id: data.processingRunId },
+        select: {
+          docVersionId: true,
+          docVersion: {
+            select: { document: { select: { study: { select: { tenantId: true } } } } },
+          },
+        },
+      });
+      if (run?.docVersion) {
+        await prisma.findingReview.upsert({
+          where: {
+            docVersionId_auditType: {
+              docVersionId: run.docVersionId,
+              auditType: "intra_audit",
+            },
+          },
+          create: {
+            tenantId: run.docVersion.document.study.tenantId,
+            docVersionId: run.docVersionId,
+            auditType: "intra_audit",
+            status: "pending",
+          },
+          update: { status: "pending", reviewerId: null, publishedAt: null },
+        });
+        logger.info("[intra-audit] FindingReview(intra_audit) created/reset for operator review", {
+          docVersionId: run.docVersionId,
+        });
+      }
+    }
   } finally {
     if (data.restoreStatusOnComplete) {
       const run = await prisma.processingRun.findUnique({
