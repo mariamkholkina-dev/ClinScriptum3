@@ -238,7 +238,7 @@ describe("auditService", () => {
       };
     }
 
-    it("without take/cursor: returns ALL findings (no pagination, back-compat)", async () => {
+    it("without take/cursor: returns ALL findings up to a safety backstop", async () => {
       mockVersion.findUnique.mockResolvedValue(makeVersion());
       mockFinding.findMany.mockResolvedValueOnce([
         makeFinding("f1"),
@@ -252,9 +252,10 @@ describe("auditService", () => {
 
       expect(result.findings).toHaveLength(3);
       expect(result.nextCursor).toBeNull();
-      // findMany called WITHOUT take/cursor when neither was supplied
+      // findMany called WITHOUT cursor, but WITH a high backstop take (2000+1)
+      // to prevent unbounded heap growth — does not truncate realistic docs.
       const findManyCall = mockFinding.findMany.mock.calls[0][0];
-      expect(findManyCall.take).toBeUndefined();
+      expect(findManyCall.take).toBe(2001);
       expect(findManyCall.cursor).toBeUndefined();
     });
 
