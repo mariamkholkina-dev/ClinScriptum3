@@ -190,6 +190,7 @@ export default function IntraAuditPage() {
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [auditStarted, setAuditStarted] = useState(false);
 
   const statusQuery = trpc.audit.getAuditStatus.useQuery(
@@ -277,10 +278,16 @@ export default function IntraAuditPage() {
   const availableTypes = Array.from(
     new Set(allFindings.map((f) => extractFindingMeta(f).type).filter((t): t is string => !!t)),
   ).sort();
+  // Статусы валидации, реально присутствующие в находках (К валидации /
+  // Подтверждено / Игнорировать / Исправлено / Ложное срабатывание).
+  const availableStatuses = Array.from(
+    new Set(allFindings.map((f) => f.status as string).filter((s): s is string => !!s)),
+  ).sort();
   const findings = allFindings.filter((f) => {
     const m = extractFindingMeta(f);
     if (severityFilter !== "all" && m.severity !== severityFilter) return false;
     if (typeFilter !== "all" && m.type !== typeFilter) return false;
+    if (statusFilter !== "all" && f.status !== statusFilter) return false;
     return true;
   });
   const docTitle = findingsQuery.data?.documentTitle ?? "Документ";
@@ -399,6 +406,16 @@ export default function IntraAuditPage() {
                 <option value="all">Все типы</option>
                 {availableTypes.map((t) => (
                   <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
+                ))}
+              </select>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="all">Все статусы</option>
+                {availableStatuses.map((s) => (
+                  <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
                 ))}
               </select>
             </div>
