@@ -11,6 +11,10 @@ API падал с `JavaScript heap out of memory` (heap дорастал до ~5
 
 Файлы: `apps/api/src/services/audit.service.ts`, `apps/api/src/index.ts`, тест `audit.service.test.ts`. Параллельно на проде поднят heap-лимит Node (`NODE_OPTIONS=--max-old-space-size=896`, контейнер уже имеет 1 ГБ). Требует деплой api.
 
+### Fix: классификация не отправляет ложные заголовки в LLM
+
+На этапе классификации ложные заголовки (`isFalseHeading=true` — пункты оглавления, мусорные строки, помеченные на парсинге) уходили в LLM наравне с реальными секциями: жгли токены и попадали в результаты. Это было несогласовано с остальным пайплайном — `run-evaluation` и annotate-UI их уже отсеивают. Добавил фильтр `!isFalseHeading` в оба LLM-шага классификации: `llm_check` (`sectionsToVerify`, плюс счётчик `skippedFalseHeadings` в лог) и `llm_qa`. Поле `isFalseHeading` добавлено в тип `CachedSection`. Детерминированный шаг (без токенов) не затронут. Файлы: `apps/workers/src/handlers/classify-sections.ts`, `apps/workers/src/lib/section-cache.ts`. 17 тестов классификации проходят. Требует деплой workers.
+
 ### Fix: экран настроек cross-check показывал устаревшие пары/зоны (Variant 2)
 
 На экране «Настройки исследования» список cross-check пар в авто-режиме и выпадающий список зон использовали старую таксономию (`study_design`, `efficacy_assessments`, …) и всего 21 пару — это хардкод-зеркало рантайм-карты `ZONE_AFFINITY_MAP`, которое не обновили вместе с #152/#153. Рантайм при этом уже работал по 31 паре на новых ключах, так что баг был чисто визуальным (движок аудита не затронут). Синхронизировал `DEFAULT_AFFINITY_PAIRS` (21 → 31 пара, новые ключи) и `KNOWN_ZONES` (старые ключи → 13 канонических зон из `taxonomy.yaml`); добавил комментарий-указатель на источник правды. Только `apps/rule-admin/src/app/(app)/study-settings/page.tsx`. Требует деплой rule-admin.

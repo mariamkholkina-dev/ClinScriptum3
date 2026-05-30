@@ -631,15 +631,21 @@ ${inputLines.join("\n")}`;
         }
       };
 
-      const sectionsToVerify = sections.filter(
+      // Ложные заголовки (TOC, мусорные строки, помеченные на парсинге) не
+      // передаём в LLM — это шум, который жжёт токены и портит результат.
+      // Согласовано с run-evaluation / annotate, которые тоже их отсеивают.
+      const realSections = sections.filter((s) => !s.isFalseHeading);
+      const skippedFalseHeadings = sections.length - realSections.length;
+      const sectionsToVerify = realSections.filter(
         (s) => !s.algoSection || (s.algoConfidence ?? 0) < HIGH_CONFIDENCE_SKIP,
       );
-      const skippedHighConfidence = sections.length - sectionsToVerify.length;
+      const skippedHighConfidence = realSections.length - sectionsToVerify.length;
 
       logger.info("LLM Check filtering", {
         total: sections.length,
         toVerify: sectionsToVerify.length,
         skippedHighConfidence,
+        skippedFalseHeadings,
         threshold: HIGH_CONFIDENCE_SKIP,
       });
 
@@ -701,7 +707,8 @@ ${inputLines.join("\n")}`;
       }
 
       const allSections = await loadSections(ctx);
-      const sections = allSections.filter((s) => s.standardSection);
+      // Ложные заголовки не отправляем в QA-арбитраж (как и в llm_check).
+      const sections = allSections.filter((s) => s.standardSection && !s.isFalseHeading);
 
       if (sections.length === 0) {
         return { data: { message: "No classified sections to verify", corrections: 0 }, needsNextStep: true };
