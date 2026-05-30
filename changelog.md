@@ -2,6 +2,16 @@
 
 ## 2026-05-30
 
+### Fix: устойчивость intra-audit к падению отдельных LLM-вызовов (fetch failed)
+
+Раньше ошибка одного LLM-вызова на шаге llm_check (например `fetch failed` по таймауту модели) обрывала весь шаг: в Variant 1 прерывался цикл и следующие промты не выполнялись, в Variant 2 `runWithConcurrency` реджектил и находки всех вызовов терялись (0 находок, «LLM unavailable»).
+
+Теперь каждый LLM-вызов обёрнут в свой try/catch:
+- находки **успешных** промтов сохраняются сразу (persist внутри вызова), не теряются;
+- **упавший** промт пропускается, остальные продолжают выполняться;
+- запоминается, **какой именно промт** упал (label + текст ошибки) — список `failedCalls` пишется в `ProcessingStep.result` и отображается в разделе «Аудит обработок» (жёлтый блок «Упавшие LLM-вызовы (N)» под этапом, даже если этап завершён).
+
+`apps/workers/src/handlers/intra-doc-audit.ts` (Variant 1 + Variant 2) + `apps/rule-admin/.../audit/page.tsx`. 237 workers-тестов проходят. Требует деплой workers + rule-admin.
 ### Feat: единый формат header на экранах версии документа
 
 Шапки экранов версии документа приведены к формату страницы документа: «Исследование {название} / {документ} / Версия N · {этап}». Новый презентационный компонент `apps/web/src/components/document-version-header.tsx` (`DocumentVersionHeader`) заменил инлайн-breadcrumb'ы на однодокументных экранах: внутридокументный аудит (`audit/[docVersionId]`), ревью находок (`finding-review/[reviewId]`), факты (`facts/[docVersionId]`), результаты аудита (`findings/[docVersionId]`). Бэкенд `audit.getAuditFindings` дополнен `studyTitle`/`studyId`; facts/findings подтягивают метаданные через `document.getVersion`; finding-review использует уже имеющийся `studyTitle`. Экраны сравнения (две версии) не затронуты.
