@@ -911,7 +911,12 @@ function parseLLMFindings(llmOutput: string): AuditFinding[] {
         if (!rawDesc) continue;
         const mode = String(item.mode ?? "").toLowerCase();
         const issueType = String(item.issue_type ?? "");
-        const isEditorial = mode === "self_check" && issueType.startsWith("editorial_");
+        // Editorial — это и выделенное editorial-направление (mode="editorial"),
+        // и редакторские issue в self_check (issue_type начинается с "editorial_").
+        // Раньше условие требовало mode==="self_check", поэтому находки
+        // editorial-направления (mode="editorial") молча сохранялись как semantic
+        // → в фильтре «Тип» не было «Редакторской».
+        const isEditorial = issueType.startsWith("editorial_") || mode === "editorial";
 
         findings.push({
           type: isEditorial || String(item.type ?? "").toLowerCase() === "editorial" ? "editorial" : "semantic",
@@ -945,7 +950,12 @@ function parseLLMFindings(llmOutput: string): AuditFinding[] {
         if (!item.description) continue;
         const mode = String(item.mode ?? "").toLowerCase();
         const issueType = String(item.issue_type ?? "");
-        const isEditorial = mode === "self_check" && issueType.startsWith("editorial_");
+        // Editorial — это и выделенное editorial-направление (mode="editorial"),
+        // и редакторские issue в self_check (issue_type начинается с "editorial_").
+        // Раньше условие требовало mode==="self_check", поэтому находки
+        // editorial-направления (mode="editorial") молча сохранялись как semantic
+        // → в фильтре «Тип» не было «Редакторской».
+        const isEditorial = issueType.startsWith("editorial_") || mode === "editorial";
         findings.push({
           type: isEditorial || String(item.type ?? "").toLowerCase() === "editorial" ? "editorial" : "semantic",
           description: String(item.description),
