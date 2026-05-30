@@ -346,7 +346,9 @@ export async function runDeterministic(
     await prisma.finding.create({
       data: {
         docVersionId: ctx.docVersionId,
-        type: "intra_audit",
+        // semantic: расхождение значений между синопсисом и телом — семантическая
+        // находка (раньше писалось type=intra_audit, что путало фильтр по типу).
+        type: "semantic",
         description: `Расхождение значения «${factKey}» между synopsis и основным текстом: synopsis = ${synopsisValues.join("; ")}, body = ${bodyValues.join("; ")}`,
         suggestion: "Проверьте, какое значение является корректным, и приведите оба упоминания к единой формулировке.",
         sourceRef: {
