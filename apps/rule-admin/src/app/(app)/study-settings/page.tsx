@@ -493,35 +493,61 @@ function AuditModeSelector({
 
 /* ──────────── Cross-Check Pairs Editor ──────────── */
 
+// Канонические зоны верхнего уровня (canonical_zone из taxonomy.yaml).
+// Зона = standardSection.split(".")[0]; см. buildZoneTexts в
+// apps/workers/src/handlers/intra-doc-audit.ts.
 const KNOWN_ZONES = [
-  "synopsis", "introduction", "study_objectives", "study_design",
-  "study_population", "treatments", "efficacy_assessments",
-  "safety_assessments", "statistics", "visit_schedule",
-  "ethics", "references", "abbreviations", "appendices",
+  "overview", "synopsis", "design", "ip", "population",
+  "procedures", "endpoints", "safety", "statistics",
+  "data_management", "ethics", "admin", "appendix",
 ];
 
+// ВАЖНО: это отображаемое зеркало рантайм-карты аффинности.
+// Источник правды — ZONE_AFFINITY_MAP в
+// packages/shared/src/prompt-builders/intra-audit.ts.
+// При изменении той карты синхронизируй этот список (rule-admin не
+// зависит от @clinscriptum/shared, поэтому импортировать напрямую нельзя).
 const DEFAULT_AFFINITY_PAIRS: [string, string][] = [
-  ["synopsis", "study_design"],
-  ["synopsis", "study_objectives"],
-  ["synopsis", "study_population"],
-  ["synopsis", "treatments"],
-  ["synopsis", "efficacy_assessments"],
-  ["synopsis", "safety_assessments"],
+  // Синопсис резюмирует весь протокол — сверяется со всеми ключевыми зонами.
+  ["synopsis", "overview"],
+  ["synopsis", "design"],
+  ["synopsis", "endpoints"],
+  ["synopsis", "population"],
+  ["synopsis", "ip"],
+  ["synopsis", "safety"],
   ["synopsis", "statistics"],
-  ["synopsis", "visit_schedule"],
-  ["study_objectives", "efficacy_assessments"],
-  ["study_objectives", "statistics"],
-  ["efficacy_assessments", "statistics"],
-  ["efficacy_assessments", "visit_schedule"],
-  ["study_design", "visit_schedule"],
-  ["study_design", "study_population"],
-  ["study_design", "appendices"],
-  ["safety_assessments", "treatments"],
-  ["safety_assessments", "visit_schedule"],
-  ["safety_assessments", "study_population"],
-  ["safety_assessments", "ethics"],
-  ["study_population", "statistics"],
-  ["treatments", "visit_schedule"],
+  ["synopsis", "procedures"],
+  // Цели/обзор ↔ конечные точки.
+  ["overview", "endpoints"],
+  // Конечные точки ↔ как измеряются (статистика, процедуры).
+  ["endpoints", "statistics"],
+  ["endpoints", "procedures"],
+  // Дизайн ↔ процедуры / популяция / приложения.
+  ["design", "procedures"],
+  ["design", "population"],
+  ["design", "appendix"],
+  // Безопасность ↔ препарат / процедуры / популяция / этика.
+  ["safety", "ip"],
+  ["safety", "procedures"],
+  ["safety", "population"],
+  ["safety", "ethics"],
+  // Популяция ↔ статистика (размер выборки).
+  ["population", "statistics"],
+  // Исследуемый препарат ↔ процедуры (введение/график).
+  ["ip", "procedures"],
+  // Управление данными ↔ статистика / процедуры.
+  ["data_management", "statistics"],
+  ["data_management", "procedures"],
+  // Обязательные high-value пары — без них пропускаются важные ошибки.
+  ["design", "statistics"],
+  ["design", "ip"],
+  ["safety", "statistics"],
+  ["population", "procedures"],
+  ["ip", "population"],
+  ["overview", "design"],
+  ["overview", "population"],
+  ["ethics", "population"],
+  ["ethics", "procedures"],
 ];
 
 function CrossCheckPairsEditor({
