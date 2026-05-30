@@ -169,7 +169,11 @@ export const auditService = {
           },
         },
       });
-      if (review && review.status !== "published") {
+      // Fail-closed: при включённом ревью оператором писатель НЕ видит находки,
+      // пока ревьюер их не опубликует. Скрываем и когда записи ревью ещё нет
+      // (аудит без записи / старые прогоны до #164) — иначе находки утекают
+      // писателю до проверки. Раскрывает находки только статус "published".
+      if (!review || review.status !== "published") {
         return {
           findings: [],
           nextCursor: null as string | null,

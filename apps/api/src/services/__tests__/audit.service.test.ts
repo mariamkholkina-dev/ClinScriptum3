@@ -226,6 +226,65 @@ describe("auditService", () => {
     });
   });
 
+  describe("getAuditFindings: operator review hiding (fail-closed)", () => {
+    function makeVersionWithReview(tenantId = TENANT_A) {
+      return {
+        id: VERSION_ID,
+        status: "parsed",
+        versionLabel: "1.0",
+        versionNumber: 1,
+        document: {
+          title: "Doc",
+          type: "protocol",
+          studyId: "study-001",
+          study: { tenantId, title: "Study", operatorReviewEnabled: true },
+        },
+      };
+    }
+
+    it("operatorReviewEnabled + NO review record: hides findings from writer (fail-closed)", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersionWithReview());
+      mockFindingReview.findUnique.mockResolvedValueOnce(null);
+
+      const result = await auditService.getAuditFindings(TENANT_A, "writer", {
+        docVersionId: VERSION_ID,
+      });
+
+      expect(result.reviewPending).toBe(true);
+      expect(result.findings).toHaveLength(0);
+      expect(mockFinding.findMany).not.toHaveBeenCalled();
+    });
+
+    it("operatorReviewEnabled + published review: shows findings to writer", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersionWithReview());
+      mockFindingReview.findUnique.mockResolvedValueOnce({ status: "published" });
+      mockFinding.findMany.mockResolvedValueOnce([
+        { id: "f1", docVersionId: VERSION_ID, type: "semantic", severity: "low", status: "pending", createdAt: new Date() },
+      ]);
+
+      const result = await auditService.getAuditFindings(TENANT_A, "writer", {
+        docVersionId: VERSION_ID,
+      });
+
+      expect(result.reviewPending).toBeFalsy();
+      expect(result.findings).toHaveLength(1);
+    });
+
+    it("reviewer role: sees findings even with pending review", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersionWithReview());
+      mockFinding.findMany.mockResolvedValueOnce([
+        { id: "f1", docVersionId: VERSION_ID, type: "editorial", severity: "low", status: "pending", createdAt: new Date() },
+      ]);
+
+      const result = await auditService.getAuditFindings(TENANT_A, "findings_reviewer", {
+        docVersionId: VERSION_ID,
+      });
+
+      expect(result.findings).toHaveLength(1);
+      expect(mockFindingReview.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
   describe("getAuditFindings: cursor pagination", () => {
     function makeFinding(id: string) {
       return {

@@ -2,6 +2,14 @@
 
 ## 2026-05-30
 
+### Fix: ревью оператором — находки утекали писателю и не показывались ревьюеру
+
+Два бага в флоу «Ревью оператором» для внутридокументного аудита:
+1. **Находки показывались писателю до проверки.** `audit.service.getAuditFindings` скрывал находки только если запись `FindingReview` существует и не опубликована (`if (review && ...)`) — при отсутствии записи находки утекали. Сделано fail-closed: при `operatorReviewEnabled` писатель видит находки только при статусе ревью `published`; нет записи / не опубликовано → скрыто (`reviewPending`).
+2. **Ревью показывало 0 находок.** `finding-review.service` сопоставлял находки с ревью по `type = auditType` (`"intra_audit"`), но боевой аудит пишет находки с `type` = `editorial`/`semantic`. Добавлен helper `findingTypesForAudit` (для intra_audit → `["intra_audit","editorial","semantic"]`, как в audit.service) — счётчик и список ревью теперь видят находки.
+
+Файлы: `apps/api/src/services/audit.service.ts`, `apps/api/src/services/finding-review.service.ts` + тесты (40 проходят). Требует деплой api.
+
 ### Fix: внутридокументный аудит не наполнял очередь ревью оператором
 
 При включённой настройке «Ревью оператором» (`operatorReviewEnabled`) ревьюер не видел документы intra-аудита в очереди, а находки сразу показывались писателю. Причина: боевой пайплайн (воркер `intra-doc-audit.ts`) никогда не создавал запись `FindingReview(intra_audit)` — единственный такой `upsert` жил в мёртвом коде `apps/api/src/lib/intra-audit.ts`, не подключённом к боевому пути и удалённом в #156 (для inter-аудита запись создаётся штатно — `inter-audit.ts:393`). Добавил создание/сброс `FindingReview(intra_audit, status=pending)` по завершении intra-аудита **только при `operatorReviewEnabled=true`** — зеркалит inter-аудит. Теперь документ появляется у ревьюера, а находки скрыты от писателя до публикации (`audit.service.getAuditFindings`). Покрывает оба входа (`run_pipeline` и standalone `intra_doc_audit`). Только `apps/workers/src/handlers/intra-doc-audit.ts`. 8 тестов хендлера проходят. Требует деплой workers.

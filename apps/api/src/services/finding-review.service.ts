@@ -2,6 +2,18 @@ import { prisma } from "@clinscriptum/db";
 import { DomainError } from "./errors.js";
 import { requireTenantResource } from "./tenant-guard.js";
 
+/**
+ * Типы находок, относящиеся к ревью данного auditType. Боевой
+ * внутридокументный аудит пишет находки с type=editorial/semantic (а не
+ * "intra_audit"), поэтому сопоставлять напрямую type=auditType нельзя —
+ * иначе ревью показывает 0 находок. Тот же набор, что в audit.service.
+ */
+function findingTypesForAudit(auditType: string): string[] {
+  return auditType === "intra_audit"
+    ? ["intra_audit", "editorial", "semantic"]
+    : [auditType];
+}
+
 export const findingReviewService = {
   async dashboard(tenantId: string) {
     const reviews = await prisma.findingReview.findMany({
@@ -23,7 +35,7 @@ export const findingReviewService = {
         const findingsCount = await prisma.finding.count({
           where: {
             docVersionId: r.docVersionId,
-            type: r.auditType as any,
+            type: { in: findingTypesForAudit(r.auditType) as any },
             status: { not: "false_positive" },
           },
         });
@@ -63,7 +75,7 @@ export const findingReviewService = {
     const findings = await prisma.finding.findMany({
       where: {
         docVersionId: review.docVersionId,
-        type: review.auditType as any,
+        type: { in: findingTypesForAudit(review.auditType) as any },
         status: { not: "false_positive" },
       },
       orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
