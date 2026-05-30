@@ -2,11 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
 import {
-  ArrowLeft,
   RefreshCw,
   Download,
   Loader2,
@@ -20,6 +18,7 @@ import {
   FileText,
 } from "lucide-react";
 import { openInWord } from "@/lib/open-in-word";
+import { DocumentVersionHeader } from "@/components/document-version-header";
 
 /* ──────────────────── Constants ──────────────────── */
 
@@ -286,6 +285,8 @@ export default function IntraAuditPage() {
   });
   const docTitle = findingsQuery.data?.documentTitle ?? "Документ";
   const versionLabel = findingsQuery.data?.versionLabel ?? "";
+  const studyTitle = (findingsQuery.data as any)?.studyTitle ?? null;
+  const studyId = (findingsQuery.data as any)?.studyId ?? null;
   const isRunning = statusQuery.data?.isRunning ?? false;
   const operatorReviewEnabled = statusQuery.data?.operatorReviewEnabled ?? false;
   const reviewPending = operatorReviewEnabled && (findingsQuery.data as any)?.reviewPending === true;
@@ -314,25 +315,14 @@ export default function IntraAuditPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       {/* Header */}
-      <div className="flex-none border-b bg-white px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/studies" className="text-gray-400 hover:text-gray-600">
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-            <div>
-              <div className="flex items-center gap-1.5 text-sm text-gray-400">
-                <span>ClinNexus</span>
-                <ChevronRight className="h-3 w-3" />
-                <span>{docTitle} {versionLabel}</span>
-                <ChevronRight className="h-3 w-3" />
-                <span className="text-gray-600 font-medium">Внутридокументный аудит</span>
-              </div>
-              <h1 className="text-xl font-bold text-gray-900">Внутридокументный аудит</h1>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
+      <DocumentVersionHeader
+        studyTitle={studyTitle}
+        studyId={studyId}
+        documentTitle={docTitle}
+        versionLabel={versionLabel}
+        stageLabel="Внутридокументный аудит"
+        actions={
+          <>
             <button
               onClick={handleRerunAudit}
               disabled={isRunning}
@@ -357,9 +347,9 @@ export default function IntraAuditPage() {
               <Download className="h-4 w-4" />
               Выгрузить отчёт
             </button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Loading state */}
       {isRunning && (

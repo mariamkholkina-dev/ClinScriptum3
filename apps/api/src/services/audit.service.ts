@@ -171,6 +171,8 @@ export const auditService = {
           documentTitle: version.document.title,
           versionLabel: version.versionLabel ?? `v${version.versionNumber}`,
           documentType: version.document.type,
+          studyTitle: version.document.study.title,
+          studyId: version.document.studyId,
           reviewPending: true,
         };
       }
@@ -218,6 +220,8 @@ export const auditService = {
       documentTitle: version.document.title,
       versionLabel: version.versionLabel ?? `v${version.versionNumber}`,
       documentType: version.document.type,
+      studyTitle: version.document.study.title,
+      studyId: version.document.studyId,
       reviewPending: false,
     };
   },

@@ -2,6 +2,9 @@
 
 ## 2026-05-30
 
+### Feat: единый формат header на экранах версии документа
+
+Шапки экранов версии документа приведены к формату страницы документа: «Исследование {название} / {документ} / Версия N · {этап}». Новый презентационный компонент `apps/web/src/components/document-version-header.tsx` (`DocumentVersionHeader`) заменил инлайн-breadcrumb'ы на однодокументных экранах: внутридокументный аудит (`audit/[docVersionId]`), ревью находок (`finding-review/[reviewId]`), факты (`facts/[docVersionId]`), результаты аудита (`findings/[docVersionId]`). Бэкенд `audit.getAuditFindings` дополнен `studyTitle`/`studyId`; facts/findings подтягивают метаданные через `document.getVersion`; finding-review использует уже имеющийся `studyTitle`. Экраны сравнения (две версии) не затронуты.
 ### Fix: находки synopsis_body_mismatch теперь type=semantic (а не intra_audit)
 
 Этап извлечения фактов (`fact-extraction-core.ts`) писал находку расхождения синопсиса с основным текстом (`synopsis_body_mismatch`) под `type=intra_audit`, из-за чего она не попадала под фильтр по типу (semantic/editorial) в основном интерфейсе и отображалась как «Внутренний аудит». По сути это семантическое расхождение значений → теперь пишется `type=semantic`. Миграция данных `20260530140000_reclassify_synopsis_body_mismatch` переводит существующие такие находки в `semantic` (`UPDATE ... WHERE type='intra_audit' AND issue_type='synopsis_body_mismatch'`). Требует деплой workers + миграцию.

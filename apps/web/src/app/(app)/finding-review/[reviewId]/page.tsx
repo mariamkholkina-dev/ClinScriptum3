@@ -2,12 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
+import { DocumentVersionHeader } from "@/components/document-version-header";
 import {
-  ArrowLeft,
-  ChevronRight,
   Eye,
   EyeOff,
   Send,
@@ -147,27 +145,14 @@ export default function FindingReviewPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       {/* Header */}
-      <div className="flex-none border-b bg-white px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/finding-review" className="text-gray-400 hover:text-gray-600">
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-            <div>
-              <div className="flex items-center gap-1.5 text-sm text-gray-400">
-                <span>Ревью findings</span>
-                <ChevronRight className="h-3 w-3" />
-                <span className="text-gray-600 font-medium">
-                  {data.documentTitle} {data.versionLabel}
-                </span>
-              </div>
-              <h1 className="text-xl font-bold text-gray-900">
-                {AUDIT_TYPE_LABELS[review.auditType] ?? review.auditType}
-              </h1>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
+      <DocumentVersionHeader
+        studyTitle={(data as any).studyTitle}
+        documentTitle={data.documentTitle}
+        versionLabel={data.versionLabel}
+        backHref="/finding-review"
+        stageLabel={`Ревью findings · ${AUDIT_TYPE_LABELS[review.auditType] ?? review.auditType}`}
+        actions={
+          <>
             <div className="text-right text-xs text-gray-500">
               <div>Видимые: <span className="font-semibold text-gray-900">{visibleCount}</span></div>
               <div>Скрытые: <span className="font-semibold text-red-600">{hiddenCount}</span></div>
@@ -207,9 +192,9 @@ export default function FindingReviewPage() {
                 )}
               </>
             )}
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Main content */}
       <div className="flex-1 flex min-h-0">
