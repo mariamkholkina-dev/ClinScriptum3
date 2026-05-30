@@ -12,6 +12,10 @@
 
 Файлы: `apps/word-addin/src/office-helpers.ts`, `findings/FindingsPanel.tsx`, `findings/FindingDetail.tsx`. Требует деплой word-addin.
 
+### Fix: находки editorial-направления сохранялись как «семантические»
+
+В фильтре «Тип» на экране внутридокументного аудита была доступна только «Семантическая», хотя редакторские находки есть. Причина: парсер `parseLLMFindings` считал находку editorial только при `mode === "self_check"`, а выделенное editorial-направление промптов выдаёт `mode: "editorial"` (с `issue_type`, начинающимся с `editorial_`) — такие находки молча сохранялись как `type=semantic`. Исправлено условие: `isEditorial = issueType.startsWith("editorial_") || mode === "editorial"`. Добавлена миграция `20260530160000_reclassify_editorial_findings` — реклассифицирует уже сохранённые находки (`semantic` → `editorial`, где `extra_attributes.issueType` начинается с `editorial_`), чтобы фильтр заработал и на существующих документах без повторного прогона. Файлы: `apps/workers/src/handlers/intra-doc-audit.ts` + миграция. Требует деплой workers + `migrate deploy`.
+
 ### Fix: ревью оператором — находки утекали писателю и не показывались ревьюеру
 
 Два бага в флоу «Ревью оператором» для внутридокументного аудита:
