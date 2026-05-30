@@ -386,11 +386,14 @@ export default function IntraAuditPage() {
         <div className="w-[480px] flex-none border-r flex flex-col bg-gray-50">
           {/* Filters */}
           <div className="flex-none p-4 space-y-2 border-b bg-white">
-            <div className="flex gap-2">
+            {/* grid-cols-2: фильтры переносятся (2+1) и не вылезают за ширину
+                узкой панели списка — раньше 3 select c flex-1 не сжимались и
+                последний обрезался. min-w-0 разрешает select сжиматься в ячейке. */}
+            <div className="grid grid-cols-2 gap-2">
               <select
                 value={severityFilter}
                 onChange={(e) => setSeverityFilter(e.target.value)}
-                className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
               >
                 <option value="all">Все серьёзности</option>
                 <option value="high">High</option>
@@ -401,7 +404,7 @@ export default function IntraAuditPage() {
               <select
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value)}
-                className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
               >
                 <option value="all">Все типы</option>
                 {availableTypes.map((t) => (
@@ -411,7 +414,7 @@ export default function IntraAuditPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
               >
                 <option value="all">Все статусы</option>
                 {availableStatuses.map((s) => (
