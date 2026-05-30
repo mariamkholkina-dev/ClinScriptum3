@@ -526,7 +526,7 @@ function FindingCard({
         )}
         {m.taskKind && (
           <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">
-            {TASK_KIND_LABELS[m.taskKind] ?? m.taskKind}
+            Направление: {TASK_KIND_LABELS[m.taskKind] ?? m.taskKind}
           </span>
         )}
         {m.issueFamily && (
@@ -627,12 +627,12 @@ function FindingDetail({
         )}
         {m.type && (
           <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-            {TYPE_LABELS[m.type] ?? m.type}
+            Тип: {TYPE_LABELS[m.type] ?? m.type}
           </span>
         )}
         {m.taskKind && (
           <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-            {TASK_KIND_LABELS[m.taskKind] ?? m.taskKind}
+            Направление: {TASK_KIND_LABELS[m.taskKind] ?? m.taskKind}
           </span>
         )}
         {m.confidence && CONFIDENCE_LABELS[m.confidence] && (
