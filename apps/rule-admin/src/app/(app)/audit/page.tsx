@@ -451,6 +451,23 @@ function ExpandedRow({ runId }: { runId: string }) {
                           </td>
                         </tr>
                       )}
+                      {Array.isArray(stepResult?.failedCalls) && (stepResult.failedCalls as unknown[]).length > 0 && (
+                        <tr className="bg-amber-50/40">
+                          <td />
+                          <td colSpan={5} className="px-3 pb-2">
+                            <div className="mb-1 text-xs font-medium text-amber-700">
+                              Упавшие LLM-вызовы ({(stepResult.failedCalls as unknown[]).length}) — находки остальных промтов сохранены:
+                            </div>
+                            <ul className="space-y-0.5">
+                              {(stepResult.failedCalls as Array<{ label: string; error: string }>).map((fc, i) => (
+                                <li key={i} className="text-xs text-amber-800">
+                                  <span className="font-mono font-medium">{fc.label}</span>: {fc.error}
+                                </li>
+                              ))}
+                            </ul>
+                          </td>
+                        </tr>
+                      )}
                       {stepResult && step.status === "completed" && (
                         <tr className="bg-gray-50/30">
                           <td />

@@ -264,6 +264,9 @@ export async function handleIntraDocAudit(data: {
 
       let totalFindings = 0;
       let totalTokens = 0;
+      // Упавшие LLM-вызовы (fetch failed и пр.): запоминаем какой промт упал,
+      // чтобы не терять успешные находки и показать ошибки в «Аудит обработок».
+      const failedCalls: Array<{ label: string; error: string }> = [];
 
       // Персист находок одного вызова. meta.phase → Variant 1 (full-doc фаза);
       // meta.kind (+targetZone) → Variant 2 (zone-based). Поведение 1:1 с feat-веткой.
@@ -322,21 +325,29 @@ export async function handleIntraDocAudit(data: {
           });
 
           for (const call of plan.calls) {
-            logger.info(`[audit:llm_check] Phase: ${call.label}`, { docChars: fullDocText.length });
-            const response = await gateway.generate({
-              system: call.system,
-              messages: [{ role: "user", content: call.user }],
-              maxTokens: llmConfig.maxTokens,
-              // json_object безопасен: промты v2 просят объект-обёртку
-              // {"findings":[...]}, а не голый массив. Это работает на любой
-              // модели (qwen3/deepseek/...), parseLLMFindings читает .findings.
-              responseFormat: "json",
-              label: call.label,
-            });
-            totalTokens += response.usage.totalTokens;
-            const llmFindings = parseLLMFindings(response.content);
-            totalFindings += llmFindings.length;
-            await persistFindings(llmFindings, call.meta);
+            try {
+              logger.info(`[audit:llm_check] Phase: ${call.label}`, { docChars: fullDocText.length });
+              const response = await gateway.generate({
+                system: call.system,
+                messages: [{ role: "user", content: call.user }],
+                maxTokens: llmConfig.maxTokens,
+                // json_object безопасен: промты v2 просят объект-обёртку
+                // {"findings":[...]}, а не голый массив. Это работает на любой
+                // модели (qwen3/deepseek/...), parseLLMFindings читает .findings.
+                responseFormat: "json",
+                label: call.label,
+              });
+              totalTokens += response.usage.totalTokens;
+              const llmFindings = parseLLMFindings(response.content);
+              totalFindings += llmFindings.length;
+              await persistFindings(llmFindings, call.meta);
+            } catch (callErr) {
+              // Один промт упал (напр. fetch failed) — не теряем уже сохранённые
+              // находки и продолжаем остальные вызовы.
+              const msg = callErr instanceof Error ? callErr.message : String(callErr);
+              failedCalls.push({ label: call.label, error: msg });
+              logger.error(`[audit:llm_check] Phase failed, continuing: ${call.label}`, { error: msg });
+            }
           }
         } else {
           /* ─── Variant 2: zone-based chunking with parallel execution ─── */
@@ -345,34 +356,55 @@ export async function handleIntraDocAudit(data: {
             auditMode, crossPairsSource: ctx.crossCheckPairs?.length ? "manual" : "auto",
           });
 
-          const taskResults = await runWithConcurrency(
+          // Каждая задача сама обрабатывает свою ошибку и персистит находки —
+          // упавший промт (fetch failed) не реджектит runWithConcurrency и не
+          // теряет результаты остальных вызовов.
+          await runWithConcurrency(
             plan.calls.map((call, i) => async () => {
-              logger.info(`[audit:llm_check] Task ${i + 1}/${plan.calls.length}: ${call.label}`);
-              const response = await gateway.generate({
-                system: call.system,
-                messages: [{ role: "user", content: call.user }],
-                maxTokens: llmConfig.maxTokens,
-                // json_object безопасен — промт просит объект-обёртку (см. V1).
-                responseFormat: "json",
-                label: call.label,
-              });
-              return { call, response };
+              try {
+                logger.info(`[audit:llm_check] Task ${i + 1}/${plan.calls.length}: ${call.label}`);
+                const response = await gateway.generate({
+                  system: call.system,
+                  messages: [{ role: "user", content: call.user }],
+                  maxTokens: llmConfig.maxTokens,
+                  // json_object безопасен — промт просит объект-обёртку (см. V1).
+                  responseFormat: "json",
+                  label: call.label,
+                });
+                totalTokens += response.usage.totalTokens;
+                const llmFindings = parseLLMFindings(response.content);
+                totalFindings += llmFindings.length;
+                await persistFindings(llmFindings, call.meta);
+              } catch (callErr) {
+                const msg = callErr instanceof Error ? callErr.message : String(callErr);
+                failedCalls.push({ label: call.label, error: msg });
+                logger.error(`[audit:llm_check] Task failed, continuing: ${call.label}`, { error: msg });
+              }
             }),
             LLM_CONCURRENCY,
           );
-
-          for (const { call, response } of taskResults) {
-            totalTokens += response.usage.totalTokens;
-            const llmFindings = parseLLMFindings(response.content);
-            totalFindings += llmFindings.length;
-            await persistFindings(llmFindings, call.meta);
-          }
         }
 
         invalidateSectionsCache(ctx);
 
+        if (failedCalls.length > 0) {
+          logger.warn("[audit:llm_check] Some LLM calls failed", {
+            failed: failedCalls.length, total: plan.calls.length,
+            labels: failedCalls.map((f) => f.label),
+          });
+        }
+
         return {
-          data: { llmFindings: totalFindings, tokensUsed: totalTokens, auditMode, variant: plan.variant },
+          data: {
+            llmFindings: totalFindings,
+            tokensUsed: totalTokens,
+            auditMode,
+            variant: plan.variant,
+            totalCalls: plan.calls.length,
+            failedCallsCount: failedCalls.length,
+            // Список упавших промтов (label + ошибка) — отображается в «Аудит обработок».
+            failedCalls,
+          },
           needsNextStep: true,
           llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
           ruleSnapshot: snapshotRules(auditRules?.rules, {
@@ -388,7 +420,13 @@ export async function handleIntraDocAudit(data: {
           model: llmConfig.model,
         });
         return {
-          data: { message: "LLM unavailable, skipped", llmFindings: totalFindings, llmError: errorMessage },
+          data: {
+            message: "LLM unavailable, skipped",
+            llmFindings: totalFindings,
+            llmError: errorMessage,
+            failedCallsCount: failedCalls.length,
+            failedCalls,
+          },
           needsNextStep: true,
           llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
         };
