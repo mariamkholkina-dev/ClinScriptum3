@@ -502,6 +502,10 @@ export async function handleIntraDocAudit(data: {
       let adjusted = 0;
       let confirmed = 0;
       let totalTokens = 0;
+      // Упавшие QA-вызовы (fetch failed и пр.): применённые вердикты успешных
+      // батчей сохраняются (runQaBatch пишет их в БД сразу), упавший батч
+      // пропускаем и продолжаем остальные; список — в «Аудит обработок».
+      const failedCalls: Array<{ label: string; error: string }> = [];
 
       try {
         if (totalPromptSize <= inputBudget && allFindings.length <= MAX_FINDINGS_PER_QA_BATCH) {
@@ -510,11 +514,17 @@ export async function handleIntraDocAudit(data: {
             findings: allFindings.length, docChars: fullDocText.length,
           });
 
-          const result = await runQaBatch(gateway, llmConfig.maxTokens, allFindings, findingsText, fullDocText, qaSystemPrompt);
-          dismissed += result.dismissed;
-          adjusted += result.adjusted;
-          confirmed += result.confirmed;
-          totalTokens += result.tokens;
+          try {
+            const result = await runQaBatch(gateway, llmConfig.maxTokens, allFindings, findingsText, fullDocText, qaSystemPrompt);
+            dismissed += result.dismissed;
+            adjusted += result.adjusted;
+            confirmed += result.confirmed;
+            totalTokens += result.tokens;
+          } catch (batchErr) {
+            const msg = batchErr instanceof Error ? batchErr.message : String(batchErr);
+            failedCalls.push({ label: "qa_single", error: msg });
+            logger.error("[audit:llm_qa] Single call failed", { error: msg });
+          }
         } else {
           /* Need to chunk — try progressively smaller context */
           const findingsBatches = batchFindings(allFindings, inputBudget, qaSystemPrompt.length);
@@ -534,20 +544,32 @@ export async function handleIntraDocAudit(data: {
               findings: batch.length, contextChars: docContext.length,
             });
 
-            const result = await runQaBatch(gateway, llmConfig.maxTokens, batch, batchFindingsText, docContext, qaSystemPrompt);
-            dismissed += result.dismissed;
-            adjusted += result.adjusted;
-            confirmed += result.confirmed;
-            totalTokens += result.tokens;
+            try {
+              const result = await runQaBatch(gateway, llmConfig.maxTokens, batch, batchFindingsText, docContext, qaSystemPrompt);
+              dismissed += result.dismissed;
+              adjusted += result.adjusted;
+              confirmed += result.confirmed;
+              totalTokens += result.tokens;
+            } catch (batchErr) {
+              // Один QA-батч упал (fetch failed) — не теряем вердикты уже
+              // обработанных батчей и продолжаем следующие.
+              const msg = batchErr instanceof Error ? batchErr.message : String(batchErr);
+              failedCalls.push({ label: `qa_batch:${i + 1}/${findingsBatches.length}`, error: msg });
+              logger.error(`[audit:llm_qa] Batch ${i + 1}/${findingsBatches.length} failed, continuing`, { error: msg });
+            }
           }
         }
 
         logger.info("[audit:llm_qa] Complete", {
-          total: allFindings.length, dismissed, adjusted, confirmed, totalTokens,
+          total: allFindings.length, dismissed, adjusted, confirmed, totalTokens, failed: failedCalls.length,
         });
 
         return {
-          data: { total: allFindings.length, deduplicated: dedupedCount, dismissed, adjusted, confirmed, totalTokens },
+          data: {
+            total: allFindings.length, deduplicated: dedupedCount, dismissed, adjusted, confirmed, totalTokens,
+            failedCallsCount: failedCalls.length,
+            failedCalls,
+          },
           needsNextStep: true,
           llmConfigSnapshot: toConfigSnapshot(llmConfig) as unknown as Record<string, unknown>,
         };
