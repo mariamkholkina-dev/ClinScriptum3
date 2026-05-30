@@ -271,6 +271,13 @@ export default function IntraAuditPage() {
   };
 
   const allFindings = findingsQuery.data?.findings ?? [];
+  // Опции фильтра по типу строим из РЕАЛЬНО присутствующих в находках значений
+  // (editorial / semantic / intra_audit / ...). Фиксированный список опций
+  // пропускал типы вроде intra_audit → выбор обнулял список, а сам тип нельзя
+  // было выбрать.
+  const availableTypes = Array.from(
+    new Set(allFindings.map((f) => extractFindingMeta(f).type).filter((t): t is string => !!t)),
+  ).sort();
   const findings = allFindings.filter((f) => {
     const m = extractFindingMeta(f);
     if (severityFilter !== "all" && m.severity !== severityFilter) return false;
@@ -400,8 +407,9 @@ export default function IntraAuditPage() {
                 className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
               >
                 <option value="all">Все типы</option>
-                <option value="semantic">Семантическая</option>
-                <option value="editorial">Редакторская</option>
+                {availableTypes.map((t) => (
+                  <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
+                ))}
               </select>
             </div>
             {findings.length > 0 && (
