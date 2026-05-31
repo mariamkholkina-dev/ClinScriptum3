@@ -92,6 +92,46 @@ export const findingReviewRouter = router({
       ),
     ),
 
+  listGoldenSamples: r.query(({ ctx }) =>
+    findingReviewService.listGoldenSamples(ctx.user.tenantId),
+  ),
+
+  bulkSetHidden: r
+    .input(
+      z.object({
+        reviewId: z.string().uuid(),
+        findingIds: z.array(z.string().uuid()).min(1),
+        hidden: z.boolean(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      findingReviewService.bulkSetHidden(
+        ctx.user.tenantId,
+        input.reviewId,
+        input.findingIds,
+        input.hidden,
+        ctx.user.userId,
+      ),
+    ),
+
+  bulkChangeSeverity: r
+    .input(
+      z.object({
+        reviewId: z.string().uuid(),
+        findingIds: z.array(z.string().uuid()).min(1),
+        severity: z.enum(["critical", "high", "medium", "low", "info"]),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      findingReviewService.bulkChangeSeverity(
+        ctx.user.tenantId,
+        input.reviewId,
+        input.findingIds,
+        input.severity,
+        ctx.user.userId,
+      ),
+    ),
+
   getReviewStatus: p
     .input(
       z.object({

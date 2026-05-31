@@ -13,6 +13,7 @@ import {
   Loader2,
   MessageSquare,
   AlertTriangle,
+  Star,
 } from "lucide-react";
 import {
   SEVERITY_BORDER,
@@ -29,6 +30,7 @@ import {
   FindingCardBody,
   FindingDetailBody,
 } from "@/components/finding-display";
+import { PromoteToGoldenModal } from "@/components/promote-to-golden-modal";
 
 /* ──────────────────── Constants ──────────────────── */
 
@@ -58,6 +60,10 @@ export default function FindingReviewPage() {
   const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [noteText, setNoteText] = useState("");
   const [showPublishConfirm, setShowPublishConfirm] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Цель модалки promote-to-golden: массив id (одна находка из детализации или
+  // выбранные для bulk). null — модалка закрыта.
+  const [promoteTarget, setPromoteTarget] = useState<string[] | null>(null);
 
   const utils = trpc.useUtils();
 
@@ -89,6 +95,20 @@ export default function FindingReviewPage() {
     onSuccess: () => {
       utils.findingReview.getReview.invalidate({ reviewId });
       setShowPublishConfirm(false);
+    },
+  });
+
+  const clearSelection = () => setSelectedIds(new Set());
+  const bulkSetHidden = trpc.findingReview.bulkSetHidden.useMutation({
+    onSuccess: () => {
+      utils.findingReview.getReview.invalidate({ reviewId });
+      clearSelection();
+    },
+  });
+  const bulkChangeSeverity = trpc.findingReview.bulkChangeSeverity.useMutation({
+    onSuccess: () => {
+      utils.findingReview.getReview.invalidate({ reviewId });
+      clearSelection();
     },
   });
 
@@ -150,6 +170,29 @@ export default function FindingReviewPage() {
     ? selectTestedSections(extractFindingMeta(selectedFinding), sections)
     : [];
 
+  // ── Множественный выбор для массовых операций ──
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const filteredIds = filteredFindings.map((f: any) => f.id);
+  const allFilteredSelected =
+    filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+  const toggleSelectAll = () =>
+    setSelectedIds((prev) => {
+      if (allFilteredSelected) {
+        const next = new Set(prev);
+        filteredIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...filteredIds]);
+    });
+  const selectedArray = Array.from(selectedIds);
+  const bulkBusy = bulkSetHidden.isPending || bulkChangeSeverity.isPending;
+
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       {/* Header */}
@@ -174,13 +217,15 @@ export default function FindingReviewPage() {
               <>
                 {showPublishConfirm ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600">Опубликовать?</span>
+                    <span className="text-sm text-gray-600">
+                      Завершить ревью и опубликовать находки писателю?
+                    </span>
                     <button
                       onClick={() => publish.mutate({ reviewId })}
                       disabled={publish.isPending}
                       className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                     >
-                      {publish.isPending ? "..." : "Да, опубликовать"}
+                      {publish.isPending ? "..." : "Да, завершить"}
                     </button>
                     <button
                       onClick={() => setShowPublishConfirm(false)}
@@ -193,9 +238,10 @@ export default function FindingReviewPage() {
                   <button
                     onClick={() => setShowPublishConfirm(true)}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                    title="Завершить ревью и опубликовать находки писателю"
                   >
                     <Send className="h-4 w-4" />
-                    Опубликовать
+                    Завершить ревью
                   </button>
                 )}
               </>
@@ -253,7 +299,81 @@ export default function FindingReviewPage() {
                 ))}
               </select>
             </div>
+
+            {/* Выбор для массовых операций */}
+            {!isPublished && filteredFindings.length > 0 && (
+              <div className="mt-2 flex items-center justify-between">
+                <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded border-gray-300"
+                  />
+                  Выбрать все ({filteredFindings.length})
+                </label>
+                {selectedIds.size > 0 && (
+                  <button
+                    onClick={clearSelection}
+                    className="text-xs text-gray-400 hover:text-gray-600"
+                  >
+                    Снять выделение ({selectedIds.size})
+                  </button>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* Bulk-бар массовых операций */}
+          {!isPublished && selectedIds.size > 0 && (
+            <div className="flex-none border-b bg-amber-50 px-3 py-2 space-y-2">
+              <div className="text-xs font-medium text-amber-800">
+                Выбрано: {selectedIds.size}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  onClick={() => bulkSetHidden.mutate({ reviewId, findingIds: selectedArray, hidden: true })}
+                  disabled={bulkBusy}
+                  className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  <EyeOff className="h-3 w-3" /> Скрыть (FP)
+                </button>
+                <button
+                  onClick={() => bulkSetHidden.mutate({ reviewId, findingIds: selectedArray, hidden: false })}
+                  disabled={bulkBusy}
+                  className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <Eye className="h-3 w-3" /> Показать
+                </button>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      bulkChangeSeverity.mutate({
+                        reviewId,
+                        findingIds: selectedArray,
+                        severity: e.target.value as any,
+                      });
+                    }
+                  }}
+                  disabled={bulkBusy}
+                  className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-50"
+                >
+                  <option value="">Серьёзность…</option>
+                  {SEVERITY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => setPromoteTarget(selectedArray)}
+                  disabled={bulkBusy}
+                  className="inline-flex items-center gap-1 rounded border border-yellow-300 bg-yellow-50 px-2 py-1 text-xs text-yellow-800 hover:bg-yellow-100 disabled:opacity-50"
+                >
+                  <Star className="h-3 w-3" /> В эталон
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {filteredFindings.length === 0 && (
@@ -269,6 +389,8 @@ export default function FindingReviewPage() {
               const showOriginal =
                 finding.originalSeverity && finding.originalSeverity !== severity;
 
+              const isChecked = selectedIds.has(finding.id);
+
               return (
                 <div
                   key={finding.id}
@@ -277,11 +399,22 @@ export default function FindingReviewPage() {
                     "rounded-lg border bg-white p-3 cursor-pointer transition-all border-l-4",
                     SEVERITY_BORDER[severity] ?? "border-l-gray-300",
                     finding.hiddenByReviewer && "opacity-50",
+                    isChecked && "ring-1 ring-amber-300",
                     isSelected
                       ? "ring-2 ring-brand-400 shadow-md"
                       : "hover:shadow-sm"
                   )}
                 >
+                  {/* Чекбокс множественного выбора (только до публикации) */}
+                  {!isPublished && (
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleSelect(finding.id)}
+                      className="float-right ml-2 mt-0.5 rounded border-gray-300"
+                    />
+                  )}
                   {/* Бэйджи как на экране внутридокументного аудита + признаки ревью */}
                   <FindingBadges finding={finding} showStatus />
                   {(finding.hiddenByReviewer || showOriginal) && (
@@ -344,6 +477,7 @@ export default function FindingReviewPage() {
                   note: noteText,
                 })
               }
+              onPromote={() => setPromoteTarget([selectedFinding.id])}
               isToggling={toggleHidden.isPending}
               isChangingSeverity={changeSeverity.isPending}
               isSavingNote={addNote.isPending}
@@ -351,6 +485,15 @@ export default function FindingReviewPage() {
           )}
         </div>
       </div>
+
+      {/* Модалка promote-to-golden (одна находка или массовый перенос) */}
+      {promoteTarget && (
+        <PromoteToGoldenModal
+          reviewId={reviewId}
+          findingIds={promoteTarget}
+          onClose={() => setPromoteTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -366,6 +509,7 @@ function ReviewDetail({
   onToggleHidden,
   onChangeSeverity,
   onSaveNote,
+  onPromote,
   isToggling,
   isChangingSeverity,
   isSavingNote,
@@ -378,6 +522,7 @@ function ReviewDetail({
   onToggleHidden: () => void;
   onChangeSeverity: (severity: string) => void;
   onSaveNote: () => void;
+  onPromote: () => void;
   isToggling: boolean;
   isChangingSeverity: boolean;
   isSavingNote: boolean;
@@ -387,6 +532,18 @@ function ReviewDetail({
 
   return (
     <div className="space-y-6 max-w-3xl">
+      {/* Действие: перенести находку в эталонный набор (доступно всегда) */}
+      <div className="flex justify-end">
+        <button
+          onClick={onPromote}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-1.5 text-sm font-medium text-yellow-800 hover:bg-yellow-100"
+          title="Перенести находку в эталонный набор"
+        >
+          <Star className="h-4 w-4" />
+          В эталон
+        </button>
+      </div>
+
       {/* Контекст ревью: исходная серьёзность алгоритма + признак скрытия */}
       {(showOriginal || finding.hiddenByReviewer) && (
         <div className="flex items-center gap-2 flex-wrap">

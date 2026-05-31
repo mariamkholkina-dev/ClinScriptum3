@@ -19,6 +19,9 @@ vi.mock("@clinscriptum/db", () => ({
     section: {
       findMany: vi.fn(),
     },
+    goldenSample: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -39,6 +42,7 @@ const mockFinding = prisma.finding as unknown as {
 };
 const mockLog = (prisma as any).findingReviewLog as { create: ReturnType<typeof vi.fn> };
 const mockSection = (prisma as any).section as { findMany: ReturnType<typeof vi.fn> };
+const mockGolden = (prisma as any).goldenSample as { findMany: ReturnType<typeof vi.fn> };
 
 const TENANT_A = "tenant-aaa";
 const TENANT_B = "tenant-bbb";
@@ -374,5 +378,75 @@ describe("findingReviewService.getReviewStatus", () => {
 
     const result = await findingReviewService.getReviewStatus(DOC_VERSION_ID, "inter_audit");
     expect(result).toBeNull();
+  });
+});
+
+describe("findingReviewService.listGoldenSamples", () => {
+  it("returns tenant-scoped minimal sample list", async () => {
+    mockGolden.findMany.mockResolvedValueOnce([
+      { id: "g1", name: "Sample 1", sampleType: "protocol" },
+    ]);
+
+    const result = await findingReviewService.listGoldenSamples(TENANT_A);
+
+    expect(result).toHaveLength(1);
+    expect(mockGolden.findMany).toHaveBeenCalledWith({
+      where: { tenantId: TENANT_A },
+      select: { id: true, name: true, sampleType: true },
+      orderBy: { createdAt: "desc" },
+    });
+  });
+});
+
+describe("findingReviewService.bulkSetHidden", () => {
+  it("hides only findings whose state changes and logs each", async () => {
+    mockReview.findUnique.mockResolvedValueOnce(makeReview());
+    mockFinding.findMany.mockResolvedValueOnce([
+      { id: "f1", docVersionId: DOC_VERSION_ID, hiddenByReviewer: false },
+      { id: "f2", docVersionId: DOC_VERSION_ID, hiddenByReviewer: true }, // already hidden → skip
+    ]);
+    mockFinding.update.mockResolvedValue({});
+
+    const result = await findingReviewService.bulkSetHidden(
+      TENANT_A, REVIEW_ID, ["f1", "f2"], true, USER_ID,
+    );
+
+    expect(result.updated).toBe(1);
+    expect(mockFinding.update).toHaveBeenCalledTimes(1);
+    expect(mockFinding.update).toHaveBeenCalledWith({
+      where: { id: "f1" },
+      data: { hiddenByReviewer: true },
+    });
+  });
+
+  it("rejects cross-tenant review", async () => {
+    mockReview.findUnique.mockResolvedValueOnce(makeReview(TENANT_B));
+    await expect(
+      findingReviewService.bulkSetHidden(TENANT_A, REVIEW_ID, ["f1"], true, USER_ID),
+    ).rejects.toThrow(DomainError);
+  });
+});
+
+describe("findingReviewService.bulkChangeSeverity", () => {
+  it("writes column + extraAttributes + originalSeverity per finding", async () => {
+    mockReview.findUnique.mockResolvedValueOnce(makeReview());
+    mockFinding.findMany.mockResolvedValueOnce([
+      { id: "f1", docVersionId: DOC_VERSION_ID, severity: null, extraAttributes: { severity: "low" }, originalSeverity: null },
+    ]);
+    mockFinding.update.mockResolvedValue({});
+
+    const result = await findingReviewService.bulkChangeSeverity(
+      TENANT_A, REVIEW_ID, ["f1"], "high", USER_ID,
+    );
+
+    expect(result.updated).toBe(1);
+    expect(mockFinding.update).toHaveBeenCalledWith({
+      where: { id: "f1" },
+      data: expect.objectContaining({
+        severity: "high",
+        extraAttributes: expect.objectContaining({ severity: "high" }),
+        originalSeverity: "low",
+      }),
+    });
   });
 });
