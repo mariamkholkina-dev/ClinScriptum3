@@ -25,14 +25,22 @@ function normalizeForSearch(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
-export async function navigateToText(textSnippet: string): Promise<boolean> {
+// Относительные положения вхождения ПОСЛЕ заголовка раздела (item относительно
+// heading). Используется, чтобы выбрать совпадение в нужном разделе, а не первое
+// одноимённое по всему документу.
+const AFTER_RELATIONS = new Set(["After", "AdjacentAfter", "OverlapsAfter"]);
+
+/**
+ * Переход к месту в документе. Если задан `sectionHint` (заголовок раздела
+ * находки) — сначала находим заголовок и выбираем ПЕРВОЕ вхождение цитаты
+ * ПОСЛЕ него, а не первое по всему документу (иначе переход «прыгал» на
+ * одноимённый текст в другом разделе).
+ */
+export async function navigateToText(textSnippet: string, sectionHint?: string): Promise<boolean> {
   const normalized = normalizeForSearch(textSnippet);
   if (!normalized) return false;
-  // Кандидаты от наиболее специфичного к менее. ВАЖНО: Word.body.search
-  // ограничен 255 символами — более длинный term бросает ошибку и (без
-  // try/catch) ронял весь Word.run, из-за чего «Перейти в документе» молча
-  // не срабатывало на длинных цитатах. Первый кандидат режем до 255, каждый
-  // поиск оборачиваем в try/catch и пробуем более короткий.
+  // Кандидаты от наиболее специфичного к менее. Word.body.search ограничен
+  // ~255 символами и на длинном term бросает — режем и оборачиваем в try/catch.
   const candidates: string[] = [];
   const pushCand = (s: string) => {
     if (s.length >= 3 && !candidates.includes(s)) candidates.push(s);
@@ -41,23 +49,49 @@ export async function navigateToText(textSnippet: string): Promise<boolean> {
   pushCand(normalized.slice(0, 120));
   pushCand(normalized.slice(0, 60));
 
+  const headingTerm = sectionHint ? normalizeForSearch(sectionHint).slice(0, 255) : "";
+
   return Word.run(async (context: any) => {
     const body = context.document.body;
+
+    // Якорь — заголовок раздела находки (если передан и найден).
+    let heading: any = null;
+    if (headingTerm.length >= 3) {
+      try {
+        const hr = body.search(headingTerm, { matchCase: false, matchWholeWord: false });
+        hr.load("items");
+        await context.sync();
+        if (hr.items.length > 0) heading = hr.items[0];
+      } catch {
+        // заголовок не нашли — продолжаем без привязки
+      }
+    }
+
     for (const term of candidates) {
       try {
         const results = body.search(term, { matchCase: false, matchWholeWord: false });
         results.load("items");
         await context.sync();
-        if (results.items.length > 0) {
-          results.items[0].select();
-          // scrollIntoView гарантирует прокрутку к выделению (select не всегда
-          // прокручивает, если место уже «технически» в области просмотра).
-          if (typeof results.items[0].scrollIntoView === "function") {
-            results.items[0].scrollIntoView();
-          }
+        if (results.items.length === 0) continue;
+
+        let chosen = results.items[0];
+        // Привязка к разделу: берём первое вхождение, идущее ПОСЛЕ заголовка.
+        if (heading && results.items.length > 1) {
+          const rels = results.items.map((it: any) => it.compareLocationWith(heading));
           await context.sync();
-          return true;
+          for (let i = 0; i < results.items.length; i++) {
+            if (AFTER_RELATIONS.has(rels[i].value)) {
+              chosen = results.items[i];
+              break;
+            }
+          }
         }
+
+        chosen.select();
+        // scrollIntoView гарантирует прокрутку к выделению.
+        if (typeof chosen.scrollIntoView === "function") chosen.scrollIntoView();
+        await context.sync();
+        return true;
       } catch {
         // Слишком длинный/невалидный term — пробуем следующий, короче.
       }

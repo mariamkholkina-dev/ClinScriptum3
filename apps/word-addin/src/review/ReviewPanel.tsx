@@ -8,7 +8,6 @@ import {
   Select,
   Textarea,
   Switch,
-  Divider,
   MessageBar,
   MessageBarBody,
   makeStyles,
@@ -88,7 +87,7 @@ const useStyles = makeStyles({
     padding: "6px 12px",
     backgroundColor: tokens.colorPaletteYellowBackground1,
   },
-  list: { flex: 1, minHeight: 0, overflowY: "auto", padding: "0 8px 8px" },
+  list: { flex: 1, minHeight: 0, overflowY: "auto", padding: "8px", borderTop: `1px solid ${tokens.colorNeutralStroke2}` },
   detailNav: {
     flex: "none",
     display: "flex",
@@ -267,8 +266,6 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
             </div>
           )}
 
-          <Divider />
-
           <div className={styles.list}>
             {filtered.length === 0 && <div className={styles.empty}><Text>Нет находок</Text></div>}
             {filtered.map((f) => (
@@ -311,6 +308,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
           </div>
           <ReviewDetail
             f={selected}
+            sections={r.data.sections ?? []}
             isPublished={isPublished}
             busy={r.busy}
             onBack={() => setSelectedId(null)}
@@ -374,9 +372,10 @@ function ReviewCard({
 }
 
 function ReviewDetail({
-  f, isPublished, busy, onBack, onToggleHidden, onChangeSeverity, onSaveNote, onPromote, onRestore,
+  f, sections, isPublished, busy, onBack, onToggleHidden, onChangeSeverity, onSaveNote, onPromote, onRestore,
 }: {
   f: ReviewFinding;
+  sections: { title: string; standardSection: string | null; content: string }[];
   isPublished: boolean;
   busy: boolean;
   onBack: () => void;
@@ -392,13 +391,45 @@ function ReviewDetail({
   const sev = effSeverity(f);
   const isFalsePositive = f.status === "false_positive";
 
+  // Заголовок раздела, содержащего цитату — чтобы переход в Word искал текст
+  // именно в этом разделе (а не первое одноимённое вхождение по всему документу).
+  // Среди разделов с этой цитатой предпочитаем те, что в зоне(ах) находки.
+  const sectionHeadingFor = (quote: string): string | undefined => {
+    const probe = quote.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 60);
+    if (probe.length < 12) return undefined;
+    const cands = sections.filter(
+      (s) => s.content.toLowerCase().replace(/\s+/g, " ").includes(probe),
+    );
+    if (cands.length === 0) return undefined;
+    const z = effZones(f);
+    const zones = [z.anchor, z.target].filter((zz): zz is string => !!zz);
+    const inZone = (s: { standardSection: string | null }) => {
+      if (zones.length === 0) return true;
+      const root = (s.standardSection ?? "").split(".")[0];
+      return zones.some(
+        (zz) => root === zz || s.standardSection === zz || (s.standardSection ?? "").startsWith(zz + "."),
+      );
+    };
+    return (cands.find(inZone) ?? cands[0]).title;
+  };
+
   // Места в документе, на которые ссылается находка, по порядку (1-е и 2-е).
   const quoteList = useMemo(() => {
-    const first = ref?.textSnippet || ref?.anchorQuote || ref?.referenceQuote || ref?.checkedDocQuote;
-    const second = ref?.targetQuote;
+    // Два места находки. У cross-check это referenceQuote (якорь/референс) и
+    // textSnippet (проверяемая зона) — targetQuote/anchorQuote там НЕТ, поэтому
+    // их раздельно собирать нельзя. Берём «якорное» и «проверяемое» места из
+    // доступных полей и добавляем все остальные непустые цитаты как запас.
+    const anchor = ref?.anchorQuote || ref?.referenceQuote || ref?.protocolQuote;
+    const target = ref?.textSnippet || ref?.targetQuote || ref?.checkedDocQuote;
     const list: string[] = [];
-    for (const q of [first, second]) {
+    const add = (q: unknown) => {
       if (typeof q === "string" && q.trim() && !list.includes(q)) list.push(q);
+    };
+    add(anchor);
+    add(target);
+    // На случай нестандартного sourceRef — подхватываем любые оставшиеся цитаты.
+    for (const k of ["referenceQuote", "anchorQuote", "textSnippet", "targetQuote", "protocolQuote", "checkedDocQuote"]) {
+      add(ref?.[k]);
     }
     return list;
   }, [f.id]);
@@ -407,13 +438,13 @@ function ReviewDetail({
   const goToQuote = (i: number) => {
     if (i < 0 || i >= quoteList.length) return;
     setNavIdx(i);
-    void navigateToText(quoteList[i]);
+    void navigateToText(quoteList[i], sectionHeadingFor(quoteList[i]));
   };
 
   // При открытии карточки находки — автопереход на первое место в документе.
   useEffect(() => {
     setNavIdx(0);
-    if (quoteList.length > 0) void navigateToText(quoteList[0]);
+    if (quoteList.length > 0) void navigateToText(quoteList[0], sectionHeadingFor(quoteList[0]));
   }, [f.id]);
 
   return (
