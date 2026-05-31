@@ -72,14 +72,31 @@ export const findingReviewService = {
     });
     requireTenantResource(review, tenantId);
 
+    // Ревьюер должен видеть ВСЕ находки, включая помеченные false_positive
+    // (insufficient_context / QA-dismissed / дедуплицированные) — чтобы решать
+    // по ним, а не получать уже отфильтрованный набор. Фильтр по статусу
+    // делается на клиенте.
     const findings = await prisma.finding.findMany({
       where: {
         docVersionId: review.docVersionId,
         type: { in: findingTypesForAudit(review.auditType) as any },
-        status: { not: "false_positive" },
       },
       orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
     });
+
+    // Разделы документа — чтобы детализация находки в Word/web могла показать
+    // именно проверяемые разделы (контент, содержащий цитату находки).
+    const sectionRows = await prisma.section.findMany({
+      where: { docVersionId: review.docVersionId },
+      orderBy: { order: "asc" },
+      include: { contentBlocks: { orderBy: { order: "asc" } } },
+    });
+    const sections = sectionRows.map((s) => ({
+      id: s.id,
+      title: s.title,
+      standardSection: s.standardSection,
+      content: s.contentBlocks.map((b) => b.content).join("\n"),
+    }));
 
     return {
       review: {
@@ -97,6 +114,7 @@ export const findingReviewService = {
       versionLabel: review.docVersion.versionLabel ?? `v${review.docVersion.versionNumber}`,
       studyTitle: review.docVersion.document.study.title,
       findings,
+      sections,
     };
   },
 
@@ -173,7 +191,13 @@ export const findingReviewService = {
     requireTenantResource(review, tenantId);
     requireTenantResource(finding, tenantId, (f) => f.docVersion.document.study.tenantId);
 
-    const previousSeverity = finding.severity ?? "info";
+    // «Эффективная» серьёзность intra-audit находок лежит в
+    // extraAttributes.severity (колонка Finding.severity у них не заполняется).
+    // Берём предыдущее значение оттуда же, чтобы лог и originalSeverity
+    // отражали то, что реально видел ревьюер.
+    const extra = (finding.extraAttributes ?? {}) as Record<string, unknown>;
+    const previousSeverity =
+      (extra.severity as string) ?? finding.severity ?? "info";
 
     await prisma.findingReviewLog.create({
       data: {
@@ -188,7 +212,17 @@ export const findingReviewService = {
 
     return prisma.finding.update({
       where: { id: findingId },
-      data: { severity: severity as any },
+      data: {
+        // Пишем И колонку, И extraAttributes.severity — иначе правка ревьюера
+        // не отразилась бы на экранах/в отчёте, читающих extraAttributes
+        // (внутридокументный аудит, audit-report).
+        severity: severity as any,
+        extraAttributes: { ...extra, severity } as any,
+        // Сохраняем исходную (алгоритмическую) серьёзность при первой правке —
+        // для индикатора «Алгоритм: X».
+        originalSeverity:
+          (finding.originalSeverity as any) ?? (previousSeverity as any),
+      },
     });
   },
 

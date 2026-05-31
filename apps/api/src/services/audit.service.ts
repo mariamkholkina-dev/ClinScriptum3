@@ -196,7 +196,13 @@ export const auditService = {
     if (input.status) where.status = input.status;
 
     if (!isReviewer) {
+      // Писатель не видит находки, скрытые ревьюером, и ложноположительные
+      // (insufficient_context / QA-dismissed / дедуплицированные). Их разбирает
+      // ревьюер на экране finding-review, а не медицинский писатель.
       where.hiddenByReviewer = false;
+      if (!input.status || input.status === "false_positive") {
+        where.status = { not: "false_positive" };
+      }
     }
 
     const paginated = input.take !== undefined || input.cursor !== undefined;
