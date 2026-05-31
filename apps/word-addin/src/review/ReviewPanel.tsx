@@ -54,6 +54,15 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorPaletteYellowBackground1,
   },
   list: { flex: 1, minHeight: 0, overflowY: "auto", padding: "0 8px 8px" },
+  detailNav: {
+    flex: "none",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+    padding: "6px 10px",
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
   card: {
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: "6px",
@@ -111,7 +120,8 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
     });
   }, [findings, severityFilter, statusFilter, visibilityFilter]);
 
-  const selected = filtered.find((f) => f.id === selectedId) ?? null;
+  const selectedIndex = filtered.findIndex((f) => f.id === selectedId);
+  const selected = selectedIndex >= 0 ? filtered[selectedIndex] : null;
   const hiddenCount = findings.filter((f) => f.hiddenByReviewer).length;
 
   const toggleSel = (id: string) =>
@@ -224,17 +234,41 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
       )}
 
       {selected && (
-        <ReviewDetail
-          f={selected}
-          isPublished={isPublished}
-          busy={r.busy}
-          onBack={() => setSelectedId(null)}
-          onToggleHidden={() => r.toggleHidden(selected.id)}
-          onChangeSeverity={(s) => r.changeSeverity(selected.id, s)}
-          onSaveNote={(note) => r.addNote(selected.id, note)}
-          onPromote={() => setPromoteTarget([selected.id])}
-          onRestore={() => r.restoreFromFalsePositive([selected.id])}
-        />
+        <>
+          {/* Навигация по находкам с учётом текущих фильтров */}
+          <div className={styles.detailNav}>
+            <Button
+              size="small"
+              appearance="subtle"
+              disabled={selectedIndex <= 0}
+              onClick={() => setSelectedId(filtered[selectedIndex - 1]?.id ?? null)}
+            >
+              ← Назад
+            </Button>
+            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+              {selectedIndex + 1} / {filtered.length}
+            </Text>
+            <Button
+              size="small"
+              appearance="subtle"
+              disabled={selectedIndex >= filtered.length - 1}
+              onClick={() => setSelectedId(filtered[selectedIndex + 1]?.id ?? null)}
+            >
+              Вперёд →
+            </Button>
+          </div>
+          <ReviewDetail
+            f={selected}
+            isPublished={isPublished}
+            busy={r.busy}
+            onBack={() => setSelectedId(null)}
+            onToggleHidden={() => r.toggleHidden(selected.id)}
+            onChangeSeverity={(s) => r.changeSeverity(selected.id, s)}
+            onSaveNote={(note) => r.addNote(selected.id, note)}
+            onPromote={() => setPromoteTarget([selected.id])}
+            onRestore={() => r.restoreFromFalsePositive([selected.id])}
+          />
+        </>
       )}
 
       {promoteTarget && (
