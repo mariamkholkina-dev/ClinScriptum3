@@ -35,6 +35,7 @@ import {
 export default function IntraAuditPage() {
   const { docVersionId } = useParams<{ docVersionId: string }>();
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState<string>("");
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -158,6 +159,7 @@ export default function IntraAuditPage() {
   const availableTypes = Array.from(
     new Set(allFindings.map((f) => extractFindingMeta(f).type).filter((t): t is string => !!t)),
   ).sort();
+  const q = searchText.trim().toLowerCase();
   const findings = allFindings.filter((f) => {
     const m = extractFindingMeta(f);
     // Писатель не видит ложноположительные находки (страховка к серверной
@@ -166,6 +168,13 @@ export default function IntraAuditPage() {
     if (severityFilter !== "all" && m.severity !== severityFilter) return false;
     if (typeFilter !== "all" && m.type !== typeFilter) return false;
     if (statusFilter !== "all" && f.status !== statusFilter) return false;
+    if (q) {
+      const hay = [m.description, m.suggestion, m.textSnippet, m.referenceQuote, m.anchorQuote, m.targetQuote]
+        .filter((x): x is string => typeof x === "string")
+        .join(" ")
+        .toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
   const docTitle = findingsQuery.data?.documentTitle ?? "Документ";
@@ -254,6 +263,14 @@ export default function IntraAuditPage() {
         >
           {/* Filters */}
           <div className="flex-none p-4 space-y-2 border-b bg-white">
+            {/* Поиск по тексту находки (описание/рекомендация/цитаты) */}
+            <input
+              type="text"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Поиск по тексту находки…"
+              className="w-full mb-2 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+            />
             {/* grid-cols-2: фильтры переносятся (2+1) и не вылезают за ширину
                 узкой панели списка — раньше 3 select c flex-1 не сжимались и
                 последний обрезался. min-w-0 разрешает select сжиматься в ячейке. */}
@@ -353,7 +370,7 @@ export default function IntraAuditPage() {
               <p className="text-sm mt-1">Нажмите на карточку находки в левой панели</p>
             </div>
           ) : (
-            <div className="max-w-3xl">
+            <div className="w-full">
               <FindingDetailBody finding={selectedFinding} sections={relevantSections} />
             </div>
           )}

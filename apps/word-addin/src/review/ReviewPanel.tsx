@@ -3,6 +3,7 @@ import {
   Text,
   Spinner,
   Button,
+  Input,
   Badge,
   Checkbox,
   Select,
@@ -138,6 +139,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
   const r = useReview(reviewId);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState("");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [taskKindFilter, setTaskKindFilter] = useState("all");
@@ -155,6 +157,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
   );
 
   const filtered = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
     return findings.filter((f) => {
       // «Ложное срабатывание» = скрыто ревьюером ИЛИ помечено конвейером/LLM
       // (status=false_positive) — фильтр ловит оба случая.
@@ -164,12 +167,28 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
       if (taskKindFilter !== "all" && effTaskKind(f) !== taskKindFilter) return false;
       if (visibilityFilter === "hidden" && !isFalsePositive) return false;
       if (visibilityFilter === "visible" && isFalsePositive) return false;
+      if (q) {
+        const ref = (f.sourceRef ?? {}) as Record<string, unknown>;
+        const hay = [
+          f.description,
+          f.suggestion,
+          ref.textSnippet, ref.anchorQuote, ref.targetQuote, ref.referenceQuote,
+        ]
+          .filter((x): x is string => typeof x === "string")
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     });
-  }, [findings, severityFilter, statusFilter, taskKindFilter, visibilityFilter]);
+  }, [findings, searchText, severityFilter, statusFilter, taskKindFilter, visibilityFilter]);
 
+  // Выбранную находку ищем по id в ПОЛНОМ списке, а не в отфильтрованном:
+  // иначе при смене критичности (если активен фильтр по severity) находка
+  // выпадала из filtered и детализация сбрасывалась/«перескакивала».
+  // selectedIndex (в filtered) нужен только для навигации ←/→.
   const selectedIndex = filtered.findIndex((f) => f.id === selectedId);
-  const selected = selectedIndex >= 0 ? filtered[selectedIndex] : null;
+  const selected = findings.find((f) => f.id === selectedId) ?? null;
   const hiddenCount = findings.filter((f) => f.hiddenByReviewer).length;
 
   const toggleSel = (id: string) =>
@@ -231,6 +250,13 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
       {!selected && (
         <>
           <div className={styles.filters}>
+            <Input
+              size="small"
+              placeholder="Поиск по тексту находки…"
+              value={searchText}
+              onChange={(_, d) => setSearchText(d.value)}
+              style={{ width: "100%" }}
+            />
             <Select size="small" value={severityFilter} onChange={(_, d) => setSeverityFilter(d.value)}>
               <option value="all">Все серьёзности</option>
               {SEVERITY_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}

@@ -60,6 +60,7 @@ export default function FindingReviewDetailPage() {
   const router = useRouter();
 
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState("");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -150,6 +151,7 @@ export default function FindingReviewDetailPage() {
     new Set(findings.map((f: any) => extractFindingMeta(f).type).filter(Boolean)),
   ).sort() as string[];
 
+  const q = searchText.trim().toLowerCase();
   const filteredFindings = findings.filter((f: any) => {
     // «Ложное срабатывание» — это И скрытое ревьюером (hiddenByReviewer), И
     // помеченное конвейером/LLM (status=false_positive): на карточках обе пометки
@@ -160,6 +162,14 @@ export default function FindingReviewDetailPage() {
     if (statusFilter !== "all" && f.status !== statusFilter) return false;
     if (visibilityFilter === "hidden" && !isFalsePositive) return false;
     if (visibilityFilter === "visible" && isFalsePositive) return false;
+    if (q) {
+      const m = extractFindingMeta(f);
+      const hay = [m.description, m.suggestion, m.textSnippet, m.referenceQuote, m.anchorQuote, m.targetQuote, f.reviewerNote]
+        .filter((x): x is string => typeof x === "string")
+        .join(" ")
+        .toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
 
@@ -307,6 +317,14 @@ export default function FindingReviewDetailPage() {
           style={{ width: leftWidth }}
         >
           <div className="flex-none p-4 border-b bg-white">
+            {/* Поиск по тексту находки (описание/рекомендация/цитаты/заметка) */}
+            <input
+              type="text"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Поиск по тексту находки…"
+              className="w-full mb-2 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+            />
             <div className="grid grid-cols-2 gap-2">
               <select
                 value={severityFilter}
@@ -572,7 +590,7 @@ function ReviewDetail({
   const isFalsePositive = finding.status === "false_positive";
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 w-full">
       <div className="flex justify-end gap-2">
         {isFalsePositive && (
           <button
