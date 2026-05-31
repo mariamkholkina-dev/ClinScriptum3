@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Text,
   Spinner,
   CounterBadge,
   Button,
+  Input,
   makeStyles,
   tokens,
   MessageBar,
@@ -64,7 +65,17 @@ const useStyles = makeStyles({
     gap: "8px",
     padding: "4px 12px",
   },
+  search: {
+    padding: "8px 12px 0",
+  },
 });
+
+/** Раздел документа — для перехода по цитате именно в нужный раздел. */
+export interface SectionLite {
+  title: string;
+  standardSection: string | null;
+  content: string;
+}
 
 interface Props {
   docVersionId: string;
@@ -87,8 +98,24 @@ export function FindingsPanel({ docVersionId, categoryFilter }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [searchText, setSearchText] = useState("");
+
+  // Разделы документа — чтобы переход по цитате искал текст именно в нужном
+  // разделе (а не в первом одноимённом вхождении по всему документу).
+  const [sections, setSections] = useState<SectionLite[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    trpcCall<{ sections: SectionLite[] } | SectionLite[]>("audit.getDocumentSections", { docVersionId })
+      .then((res) => {
+        if (cancelled) return;
+        setSections(Array.isArray(res) ? res : res.sections ?? []);
+      })
+      .catch(() => { /* секции необязательны: без них переход по цитате просто менее точен */ });
+    return () => { cancelled = true; };
+  }, [docVersionId]);
 
   const filtered = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
     return findings.filter((f) => {
       if (severityFilter !== "all" && f.severity !== severityFilter) return false;
       if (statusFilter !== "all" && f.status !== statusFilter) return false;
@@ -100,12 +127,26 @@ export function FindingsPanel({ docVersionId, categoryFilter }: Props) {
         if (categoryFilter === "fact" && !isFact) return false;
         if (categoryFilter === "section" && isFact) return false;
       }
+      if (q) {
+        const ref = (f.sourceRef ?? {}) as Record<string, unknown>;
+        const hay = [
+          f.description,
+          f.suggestion,
+          ref.textSnippet, ref.anchorQuote, ref.targetQuote, ref.referenceQuote,
+        ]
+          .filter((x): x is string => typeof x === "string")
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     });
-  }, [findings, severityFilter, statusFilter, categoryFilter]);
+  }, [findings, severityFilter, statusFilter, categoryFilter, searchText]);
 
   const selectedIndex = filtered.findIndex((f) => f.id === selectedId);
-  const selected = selectedIndex >= 0 ? filtered[selectedIndex] : undefined;
+  // Выбранную находку ищем в ПОЛНОМ списке, а не в filtered: иначе при наборе
+  // поиска/смене фильтра открытая находка выпадала и детализация сбрасывалась.
+  const selected = findings.find((f) => f.id === selectedId) ?? undefined;
   const pendingCount = findings.filter((f) => f.status === "pending").length;
 
   const handleHighlightAll = async () => {
@@ -157,14 +198,28 @@ export function FindingsPanel({ docVersionId, categoryFilter }: Props) {
         </MessageBar>
       )}
 
-      <FindingsFilter
-        severity={severityFilter}
-        onSeverityChange={setSeverityFilter}
-        status={statusFilter}
-        onStatusChange={setStatusFilter}
-      />
+      {!selected && (
+        <div className={styles.search}>
+          <Input
+            size="small"
+            placeholder="Поиск по тексту находки…"
+            value={searchText}
+            onChange={(_, d) => setSearchText(d.value)}
+            style={{ width: "100%" }}
+          />
+        </div>
+      )}
 
-      {findings.length > 0 && (
+      {!selected && (
+        <FindingsFilter
+          severity={severityFilter}
+          onSeverityChange={setSeverityFilter}
+          status={statusFilter}
+          onStatusChange={setStatusFilter}
+        />
+      )}
+
+      {!selected && findings.length > 0 && (
         <div className={styles.bulkActions}>
           <Button size="small" appearance="subtle" onClick={() => handleValidateAll("resolve")}>
             Всё исправлено
@@ -207,7 +262,7 @@ export function FindingsPanel({ docVersionId, categoryFilter }: Props) {
               </Button>
             </div>
           </div>
-          <FindingDetail finding={selected} onUpdateStatus={updateStatus} />
+          <FindingDetail finding={selected} sections={sections} onUpdateStatus={updateStatus} />
         </div>
       ) : (
         <div className={styles.list}>
