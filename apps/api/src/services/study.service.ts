@@ -19,7 +19,14 @@ export const studyService = {
       include: {
         documents: {
           include: {
-            versions: { orderBy: { versionNumber: "desc" } },
+            // omit digitalTwin — тяжёлое JSONB-поле (мегабайты/версию), списку
+            // версий на странице исследования не нужно. Без omit вход в
+            // исследование с обработанными документами валил API по heap OOM
+            // (тот же класс бага, что #173 в document.listAll).
+            versions: {
+              orderBy: { versionNumber: "desc" },
+              omit: { digitalTwin: true },
+            },
           },
           orderBy: { createdAt: "asc" },
         },
