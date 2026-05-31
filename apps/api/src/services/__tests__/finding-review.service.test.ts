@@ -130,7 +130,7 @@ describe("findingReviewService.getReview", () => {
     mockReview.findUnique.mockResolvedValueOnce(makeReview());
     mockFinding.findMany.mockResolvedValueOnce([{ id: "f1", severity: "high" }]);
     mockSection.findMany.mockResolvedValueOnce([
-      { id: "s1", title: "Раздел", standardSection: "5", order: 0, contentBlocks: [{ content: "текст" }] },
+      { id: "s1", title: "Раздел", standardSection: "5", order: 0, contentBlocks: [{ content: "текст", rawHtml: null }] },
     ]);
 
     const result = await findingReviewService.getReview(TENANT_A, REVIEW_ID);
@@ -138,7 +138,8 @@ describe("findingReviewService.getReview", () => {
     expect(result.review.id).toBe(REVIEW_ID);
     expect(result.findings).toHaveLength(1);
     expect(result.sections).toEqual([
-      { id: "s1", title: "Раздел", standardSection: "5", content: "текст" },
+      // contentHtml собирается из rawHtml блока, иначе экранированный <p>.
+      { id: "s1", title: "Раздел", standardSection: "5", content: "текст", contentHtml: "<p>текст</p>" },
     ]);
   });
 

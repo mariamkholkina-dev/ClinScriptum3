@@ -558,11 +558,28 @@ export function FindingDetailBody({
 
 /* ──────────────────── Section Panel ──────────────────── */
 
+/** Лёгкая санитизация HTML раздела (контент — собственный документ тенанта,
+ *  admin-UI): вырезаем script/style/iframe и обработчики событий. */
+function sanitizeSectionHtml(html: string): string {
+  return html
+    .replace(/<\s*(script|style|iframe|object|embed)[\s\S]*?<\/\s*\1\s*>/gi, "")
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/(href|src)\s*=\s*("javascript:[^"]*"|'javascript:[^']*')/gi, "");
+}
+
+// Классы для HTML-раздела: видимые таблицы, абзацы, списки.
+const HTML_CONTENT_CLASSES =
+  "px-4 pb-4 text-sm text-gray-700 leading-relaxed max-h-96 overflow-auto " +
+  "[&_table]:border-collapse [&_table]:my-2 [&_table]:w-full " +
+  "[&_td]:border [&_td]:border-gray-300 [&_td]:px-2 [&_td]:py-1 [&_td]:align-top " +
+  "[&_th]:border [&_th]:border-gray-300 [&_th]:px-2 [&_th]:py-1 [&_th]:bg-gray-50 [&_th]:text-left " +
+  "[&_p]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5";
+
 export function SectionPanel({
   section,
   highlightQuotes,
 }: {
-  section: { title: string; standardSection: string | null; content: string };
+  section: { title: string; standardSection: string | null; content: string; contentHtml?: string | null };
   highlightQuotes: string[];
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -601,26 +618,35 @@ export function SectionPanel({
         <ChevronRight className={cn("h-4 w-4 text-gray-400 transition-transform", expanded && "rotate-90")} />
       </button>
       {expanded && (
-        <div className="px-4 pb-4 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
-          {parts.map((part, idx) => {
-            if (part === "%%HL_START%%") {
-              inHighlight = true;
-              return null;
-            }
-            if (part === "%%HL_END%%") {
-              inHighlight = false;
-              return null;
-            }
-            if (inHighlight) {
-              return (
-                <span key={idx} className="bg-yellow-200 underline decoration-red-500 decoration-2 underline-offset-2">
-                  {part}
-                </span>
-              );
-            }
-            return <span key={idx}>{part}</span>;
-          })}
-        </div>
+        // HTML-режим: видны таблицы/переносы строк (контент из rawHtml). Подсветку
+        // цитат в HTML не делаем (риск порчи разметки) — она остаётся в text-режиме.
+        section.contentHtml ? (
+          <div
+            className={HTML_CONTENT_CLASSES}
+            dangerouslySetInnerHTML={{ __html: sanitizeSectionHtml(section.contentHtml) }}
+          />
+        ) : (
+          <div className="px-4 pb-4 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
+            {parts.map((part, idx) => {
+              if (part === "%%HL_START%%") {
+                inHighlight = true;
+                return null;
+              }
+              if (part === "%%HL_END%%") {
+                inHighlight = false;
+                return null;
+              }
+              if (inHighlight) {
+                return (
+                  <span key={idx} className="bg-yellow-200 underline decoration-red-500 decoration-2 underline-offset-2">
+                    {part}
+                  </span>
+                );
+              }
+              return <span key={idx}>{part}</span>;
+            })}
+          </div>
+        )
       )}
     </div>
   );
