@@ -594,9 +594,11 @@ export const auditService = {
         type: { in: ["icf", "csr"] },
       },
       include: {
+        // omit digitalTwin — ниже берутся только id/label/status версий (см. #173)
         versions: {
           where: { status: { in: ["ready", "parsed"] } },
           orderBy: { versionNumber: "desc" },
+          omit: { digitalTwin: true },
         },
       },
     });

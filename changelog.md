@@ -2,6 +2,17 @@
 
 ## 2026-05-31
 
+### Fix: heap OOM при входе в исследование — `digitalTwin` тянулся в ещё 4 эндпоинтах
+
+После фикса `document.listAll` (#173) тот же класс бага остался в других местах: вход внутрь исследования (`/studies/[id]`) показывал «Исследование не найдено», потому что `studyService.getById` через `include: { documents: { include: { versions } } }` грузил **все версии всех документов целиком, с тяжёлым полем `digitalTwin`** (JSONB-двойник, мегабайты/версию). На обработанных протоколах (X7 и т.п.) это снова валило API по heap OOM → запрос обрывался → UI показывал generic «не найдено» (хотя `study.list` исследование показывал — он версии не грузит). Аудит выявил тот же over-fetch ещё в трёх местах. Фикс — `omit: { digitalTwin: true }` на инклюдах версий (фронт это поле нигде не читает, Prisma 6 поддерживает `omit`):
+
+- `studyService.getById` — версии документов исследования (репортнутый блокер)
+- `documentService.listByStudy` — версии по исследованию
+- `documentService.getUploadUrl` — последняя версия (`take: 1`)
+- `auditService.getStudyDocumentsForInterAudit` — версии ICF/CSR
+
+Требует деплой api. `RuleSetVersion`-инклюды (getTaxonomy/tuning/rule-management) — другая модель без `digitalTwin`, не затронуты.
+
 ### Fix: Redis policy `noeviction` вместо `allkeys-lru` (риск потери задач BullMQ)
 
 `docker-compose.prod.yml`: у сервиса `redis` сменён `--maxmemory-policy allkeys-lru` → `noeviction`. При `allkeys-lru` Redis по достижении `maxmemory` вытесняет произвольные ключи, включая данные очередей BullMQ (jobs, locks, метаданные) — задачи pipeline могли молча пропасть/повиснуть. BullMQ официально требует `noeviction` (это же предупреждение писал сам клиент при старте API: `Eviction policy is allkeys-lru. It should be "noeviction"`). Теперь переполнение даёт явную ошибку записи вместо тихой потери. Требует пересоздание контейнера redis.

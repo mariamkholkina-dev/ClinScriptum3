@@ -42,7 +42,10 @@ export const documentService = {
 
     return prisma.document.findMany({
       where: { studyId },
-      include: { versions: { orderBy: { versionNumber: "desc" } } },
+      include: {
+        // omit digitalTwin — список версий не использует тяжёлое JSONB-поле (см. #173)
+        versions: { orderBy: { versionNumber: "desc" }, omit: { digitalTwin: true } },
+      },
       orderBy: { createdAt: "desc" },
     });
   },
@@ -84,7 +87,11 @@ export const documentService = {
   ) {
     const doc = await prisma.document.findFirst({
       where: { id: documentId },
-      include: { study: true, versions: { orderBy: { versionNumber: "desc" }, take: 1 } },
+      include: {
+        study: true,
+        // omit digitalTwin — нужна лишь метаинформация последней версии (см. #173)
+        versions: { orderBy: { versionNumber: "desc" }, take: 1, omit: { digitalTwin: true } },
+      },
     });
     requireTenantResource(doc, tenantId, (d) => d.study.tenantId);
 
