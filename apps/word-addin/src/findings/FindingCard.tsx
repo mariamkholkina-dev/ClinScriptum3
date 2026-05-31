@@ -37,6 +37,9 @@ const useStyles = makeStyles({
     gap: "4px",
     alignItems: "center",
     flexWrap: "wrap" as const,
+    // flexShrink:0 — иначе на узкой панели бейдж сжимается уже текста и Fluent
+    // Badge режет содержимое по overflow:hidden (фикс обрезки, как в #201).
+    "& > *": { flexShrink: 0 },
   },
   desc: {
     marginTop: "4px",
