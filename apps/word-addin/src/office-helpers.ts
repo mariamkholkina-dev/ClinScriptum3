@@ -41,13 +41,18 @@ export async function navigateToText(textSnippet: string, sectionHint?: string):
   if (!normalized) return false;
   // Кандидаты от наиболее специфичного к менее. Word.body.search ограничен
   // ~255 символами и на длинном term бросает — режем и оборачиваем в try/catch.
+  // ВАЖНО: цитата часто пересекает границу ячейки/абзаца таблицы (та самая
+  // «нет пробела»: «…ОрганизацияООО «…»») — такой непрерывной строки в
+  // документе НЕТ, и длинные кандидаты не находятся. Поэтому спускаемся до
+  // коротких префиксов (≈24) и пробуем суффикс — чтобы поймать часть цитаты
+  // ДО или ПОСЛЕ «битого» стыка.
   const candidates: string[] = [];
   const pushCand = (s: string) => {
-    if (s.length >= 3 && !candidates.includes(s)) candidates.push(s);
+    s = s.trim();
+    if (s.length >= 12 && !candidates.includes(s)) candidates.push(s);
   };
-  pushCand(normalized.slice(0, 255));
-  pushCand(normalized.slice(0, 120));
-  pushCand(normalized.slice(0, 60));
+  for (const len of [255, 120, 80, 50, 36, 24]) pushCand(normalized.slice(0, len));
+  if (normalized.length > 60) pushCand(normalized.slice(-60));
 
   const headingTerm = sectionHint ? normalizeForSearch(sectionHint).slice(0, 255) : "";
 
