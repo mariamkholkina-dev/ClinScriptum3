@@ -221,6 +221,22 @@ export function selectTestedSections(
   meta: FindingMeta,
   sections: { id: string; title: string; standardSection: string | null; content: string }[],
 ): typeof sections {
+  // Зоны находки. zone/anchorZone — это rootZone (первый компонент
+  // standardSection, напр. "5"; см. buildZoneTexts). Кандидатов ОГРАНИЧИВАЕМ
+  // зонами находки — иначе совпадение цитаты вытаскивало разделы из чужих зон
+  // (один и тот же фрагмент встречается в нескольких разделах документа).
+  const zones = [meta.anchorZone, meta.zone].filter(
+    (z): z is string => typeof z === "string" && z.length > 0,
+  );
+  const inZone = (s: { standardSection: string | null }) => {
+    if (zones.length === 0) return true; // нет инфо о зоне — не ограничиваем
+    const root = (s.standardSection ?? "").split(".")[0];
+    return zones.some(
+      (z) => root === z || s.standardSection === z || (s.standardSection ?? "").startsWith(z + "."),
+    );
+  };
+  const candidates = sections.filter(inZone);
+
   const quotes = [meta.textSnippet, meta.referenceQuote, meta.anchorQuote, meta.targetQuote]
     .filter((q): q is string => typeof q === "string" && q.trim().length > 0);
 
@@ -230,30 +246,25 @@ export function selectTestedSections(
     .map((f) => norm(f).slice(0, 60))
     .filter((p) => p.length >= 12);
 
+  // Внутри зон(ы) сужаем по цитате.
   if (probes.length > 0) {
-    const byQuote = sections.filter((s) => {
+    const byQuote = candidates.filter((s) => {
       const c = norm(s.content);
       return probes.some((p) => c.includes(p));
     });
     if (byQuote.length > 0) return byQuote;
   }
 
-  // Fallback 1: по названию раздела, если есть.
+  // Затем по названию раздела (тоже внутри зон).
   if (meta.sectionTitle) {
     const t = norm(meta.sectionTitle);
-    const byTitle = sections.filter((s) => norm(s.title).includes(t) || t.includes(norm(s.title)));
+    const byTitle = candidates.filter((s) => norm(s.title).includes(t) || t.includes(norm(s.title)));
     if (byTitle.length > 0) return byTitle;
   }
 
-  // Fallback 2 (последний): по зоне — широкий, когда нет ни цитат, ни названия.
-  const zones = [meta.anchorZone, meta.zone].filter(
-    (z): z is string => typeof z === "string" && z.length > 0,
-  );
-  if (zones.length > 0) {
-    return sections.filter((s) => zones.some((z) => s.standardSection?.startsWith(z)));
-  }
-
-  return [];
+  // Узкого совпадения нет: если зоны заданы — показываем разделы этих зон;
+  // если зон нет — ничего (нет ориентира, чужие зоны показывать нельзя).
+  return zones.length > 0 ? candidates : [];
 }
 
 /** Строит regex'ы, подсвечивающие ПОЛНЫЕ фрагменты цитаты (а не первые 80
