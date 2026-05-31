@@ -192,6 +192,9 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
                 {SEVERITY_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
               </Select>
               <Button size="small" icon={<Star24Regular />} onClick={() => setPromoteTarget(selArr)}>В эталон</Button>
+              <Button size="small" disabled={r.busy} onClick={() => { r.restoreFromFalsePositive(selArr); clearSel(); }}>
+                На валидацию
+              </Button>
               <Button size="small" appearance="subtle" onClick={clearSel}>Снять</Button>
             </div>
           )}
@@ -224,6 +227,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
           onChangeSeverity={(s) => r.changeSeverity(selected.id, s)}
           onSaveNote={(note) => r.addNote(selected.id, note)}
           onPromote={() => setPromoteTarget([selected.id])}
+          onRestore={() => r.restoreFromFalsePositive([selected.id])}
         />
       )}
 
@@ -273,7 +277,7 @@ function ReviewCard({
 }
 
 function ReviewDetail({
-  f, isPublished, busy, onBack, onToggleHidden, onChangeSeverity, onSaveNote, onPromote,
+  f, isPublished, busy, onBack, onToggleHidden, onChangeSeverity, onSaveNote, onPromote, onRestore,
 }: {
   f: ReviewFinding;
   isPublished: boolean;
@@ -283,12 +287,14 @@ function ReviewDetail({
   onChangeSeverity: (s: string) => void;
   onSaveNote: (note: string) => void;
   onPromote: () => void;
+  onRestore: () => void;
 }) {
   const styles = useStyles();
   const ref = f.sourceRef as any;
   const [note, setNote] = useState(f.reviewerNote ?? "");
   const sev = effSeverity(f);
   const navSnippet = bestSnippet(ref);
+  const isFalsePositive = f.status === "false_positive";
 
   return (
     <div className={styles.detail}>
@@ -306,6 +312,13 @@ function ReviewDetail({
           </Text>
         )}
       </div>
+
+      {/* Восстановление ошибочно помеченной ложноположительной находки */}
+      {isFalsePositive && (
+        <Button size="small" disabled={busy} onClick={onRestore} style={{ alignSelf: "flex-start" }}>
+          Вернуть на валидацию
+        </Button>
+      )}
 
       <Text weight="semibold" size={300}>{f.description}</Text>
 
