@@ -16,6 +16,9 @@ vi.mock("@clinscriptum/db", () => ({
     findingReviewLog: {
       create: vi.fn(),
     },
+    section: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -35,6 +38,7 @@ const mockFinding = prisma.finding as unknown as {
   update: ReturnType<typeof vi.fn>;
 };
 const mockLog = (prisma as any).findingReviewLog as { create: ReturnType<typeof vi.fn> };
+const mockSection = (prisma as any).section as { findMany: ReturnType<typeof vi.fn> };
 
 const TENANT_A = "tenant-aaa";
 const TENANT_B = "tenant-bbb";
@@ -118,14 +122,20 @@ describe("findingReviewService.dashboard", () => {
 });
 
 describe("findingReviewService.getReview", () => {
-  it("returns review + findings when tenant matches", async () => {
+  it("returns review + findings + sections when tenant matches", async () => {
     mockReview.findUnique.mockResolvedValueOnce(makeReview());
     mockFinding.findMany.mockResolvedValueOnce([{ id: "f1", severity: "high" }]);
+    mockSection.findMany.mockResolvedValueOnce([
+      { id: "s1", title: "Раздел", standardSection: "5", order: 0, contentBlocks: [{ content: "текст" }] },
+    ]);
 
     const result = await findingReviewService.getReview(TENANT_A, REVIEW_ID);
 
     expect(result.review.id).toBe(REVIEW_ID);
     expect(result.findings).toHaveLength(1);
+    expect(result.sections).toEqual([
+      { id: "s1", title: "Раздел", standardSection: "5", content: "текст" },
+    ]);
   });
 
   it("rejects cross-tenant access", async () => {
@@ -136,9 +146,10 @@ describe("findingReviewService.getReview", () => {
     ).rejects.toThrow(DomainError);
   });
 
-  it("excludes false_positive findings", async () => {
+  it("includes ALL findings regardless of status (вкл. false_positive)", async () => {
     mockReview.findUnique.mockResolvedValueOnce(makeReview());
     mockFinding.findMany.mockResolvedValueOnce([]);
+    mockSection.findMany.mockResolvedValueOnce([]);
 
     await findingReviewService.getReview(TENANT_A, REVIEW_ID);
 
@@ -146,7 +157,6 @@ describe("findingReviewService.getReview", () => {
       where: {
         docVersionId: DOC_VERSION_ID,
         type: { in: ["intra_audit", "editorial", "semantic"] },
-        status: { not: "false_positive" },
       },
       orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
     });
@@ -255,9 +265,15 @@ describe("findingReviewService.changeSeverity", () => {
         newValue: "critical",
       }),
     });
+    // Пишем И колонку, И extraAttributes.severity (чтобы правка отразилась на
+    // экранах, читающих extraAttributes), И originalSeverity для индикатора.
     expect(mockFinding.update).toHaveBeenCalledWith({
       where: { id: FINDING_ID },
-      data: { severity: "critical" },
+      data: expect.objectContaining({
+        severity: "critical",
+        extraAttributes: expect.objectContaining({ severity: "critical" }),
+        originalSeverity: "low",
+      }),
     });
   });
 

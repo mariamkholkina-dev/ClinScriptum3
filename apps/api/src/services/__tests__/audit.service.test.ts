@@ -387,4 +387,32 @@ describe("auditService", () => {
       expect(orderKeys).toContain("id");
     });
   });
+
+  describe("getAuditFindings: false-positive visibility", () => {
+    it("writer: where excludes false_positive findings and reviewer-hidden", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockFinding.findMany.mockResolvedValueOnce([]);
+
+      await auditService.getAuditFindings(TENANT_A, "writer", {
+        docVersionId: VERSION_ID,
+      });
+
+      const where = mockFinding.findMany.mock.calls[0][0].where;
+      expect(where.hiddenByReviewer).toBe(false);
+      expect(where.status).toEqual({ not: "false_positive" });
+    });
+
+    it("reviewer: where does NOT restrict status/hidden (sees everything)", async () => {
+      mockVersion.findUnique.mockResolvedValue(makeVersion());
+      mockFinding.findMany.mockResolvedValueOnce([]);
+
+      await auditService.getAuditFindings(TENANT_A, "findings_reviewer", {
+        docVersionId: VERSION_ID,
+      });
+
+      const where = mockFinding.findMany.mock.calls[0][0].where;
+      expect(where.hiddenByReviewer).toBeUndefined();
+      expect(where.status).toBeUndefined();
+    });
+  });
 });

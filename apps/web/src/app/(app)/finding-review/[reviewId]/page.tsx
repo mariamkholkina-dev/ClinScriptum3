@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
 import { DocumentVersionHeader } from "@/components/document-version-header";
@@ -14,79 +14,48 @@ import {
   MessageSquare,
   AlertTriangle,
 } from "lucide-react";
+import {
+  SEVERITY_BORDER,
+  SEVERITY_LABELS,
+  SEVERITY_STYLES,
+  SEVERITY_OPTIONS,
+  STATUS_ORDER,
+  STATUS_LABELS,
+  TYPE_LABELS,
+  extractFindingMeta,
+  effectiveSeverity,
+  selectTestedSections,
+  FindingBadges,
+  FindingCardBody,
+  FindingDetailBody,
+} from "@/components/finding-display";
 
 /* ──────────────────── Constants ──────────────────── */
-
-const SEVERITY_LABELS: Record<string, string> = {
-  critical: "CRITICAL",
-  high: "HIGH",
-  medium: "MEDIUM",
-  low: "LOW",
-  info: "INFO",
-};
-
-const SEVERITY_STYLES: Record<string, string> = {
-  critical: "bg-red-600 text-white",
-  high: "bg-orange-500 text-white",
-  medium: "bg-yellow-400 text-yellow-900",
-  low: "bg-blue-100 text-blue-700",
-  info: "bg-gray-100 text-gray-600",
-};
-
-const SEVERITY_BORDER: Record<string, string> = {
-  critical: "border-l-red-600",
-  high: "border-l-orange-500",
-  medium: "border-l-yellow-400",
-  low: "border-l-blue-400",
-  info: "border-l-gray-300",
-};
-
-const SEVERITY_OPTIONS = [
-  { value: "critical", label: "Critical" },
-  { value: "high", label: "High" },
-  { value: "medium", label: "Medium" },
-  { value: "low", label: "Low" },
-  { value: "info", label: "Info" },
-];
 
 const AUDIT_TYPE_LABELS: Record<string, string> = {
   intra_audit: "Внутридокументный аудит",
   inter_audit: "Междокументный аудит",
 };
 
-// Метки типа находки и статуса валидации — те же, что на экране аудита.
-const FINDING_TYPE_LABELS: Record<string, string> = {
-  editorial: "Редакторская",
-  semantic: "Семантическая",
-  intra_audit: "Внутренний аудит",
-  inter_audit: "Межд. аудит",
-};
+// Фильтр по «ложному срабатыванию» — в ревью оно означает «скрыт ревьюером»
+// (hiddenByReviewer), а не Finding.status. Показываем все опции всегда.
+const VISIBILITY_OPTIONS = [
+  { value: "all", label: "Все находки" },
+  { value: "visible", label: "Не ложные (видимые)" },
+  { value: "hidden", label: "Ложное срабатывание" },
+] as const;
 
-const STATUS_LABELS: Record<string, string> = {
-  pending: "К валидации",
-  confirmed: "Подтверждено",
-  rejected: "Игнорировать",
-  resolved: "Исправлено",
-  false_positive: "Ложное срабатывание",
-};
-
-// Эффективная серьёзность находки. У intra-audit находок колонка severity не
-// заполняется — реальная серьёзность лежит в extraAttributes.severity (как на
-// экране аудита). Приоритет: override ревьюера (колонка) → исходная из
-// extraAttributes → info. Без этого все находки на review показывались как INFO.
-function effSeverity(f: any): string {
-  return f?.severity ?? (f?.extraAttributes as any)?.severity ?? "info";
-}
+type DocSection = { id: string; title: string; standardSection: string | null; content: string };
 
 /* ──────────────────── Main Page ──────────────────── */
 
 export default function FindingReviewPage() {
   const { reviewId } = useParams<{ reviewId: string }>();
-  const router = useRouter();
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [noteText, setNoteText] = useState("");
   const [showPublishConfirm, setShowPublishConfirm] = useState(false);
 
@@ -131,18 +100,18 @@ export default function FindingReviewPage() {
 
   const review = data?.review;
   const findings = data?.findings ?? [];
+  const sections = ((data as any)?.sections ?? []) as DocSection[];
 
   const availableTypes = Array.from(
-    new Set(findings.map((f: any) => f.type).filter(Boolean)),
-  ).sort() as string[];
-  const availableStatuses = Array.from(
-    new Set(findings.map((f: any) => f.status).filter(Boolean)),
+    new Set(findings.map((f: any) => extractFindingMeta(f).type).filter(Boolean)),
   ).sort() as string[];
 
   const filteredFindings = findings.filter((f: any) => {
-    if (severityFilter !== "all" && effSeverity(f) !== severityFilter) return false;
-    if (typeFilter !== "all" && f.type !== typeFilter) return false;
+    if (severityFilter !== "all" && effectiveSeverity(f) !== severityFilter) return false;
+    if (typeFilter !== "all" && extractFindingMeta(f).type !== typeFilter) return false;
     if (statusFilter !== "all" && f.status !== statusFilter) return false;
+    if (visibilityFilter === "hidden" && !f.hiddenByReviewer) return false;
+    if (visibilityFilter === "visible" && f.hiddenByReviewer) return false;
     return true;
   });
 
@@ -176,6 +145,10 @@ export default function FindingReviewPage() {
   }
 
   const isPublished = review.status === "published";
+
+  const testedSections = selectedFinding
+    ? selectTestedSections(extractFindingMeta(selectedFinding), sections)
+    : [];
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
@@ -236,19 +209,18 @@ export default function FindingReviewPage() {
         {/* Left: Findings list */}
         <div className="w-[440px] flex-none border-r flex flex-col bg-gray-50">
           <div className="flex-none p-4 border-b bg-white">
-            {/* Фильтры аналогичны экрану аудита: severity / тип / статус,
-                grid-cols-2 — не вылезают за ширину панели. */}
+            {/* Фильтры: серьёзность / тип / статус / ложное срабатывание.
+                Severity и статус показывают ВСЕ возможные значения, даже если
+                их нет в наборе. grid-cols-2 — не вылезают за ширину панели. */}
             <div className="grid grid-cols-2 gap-2">
               <select
                 value={severityFilter}
                 onChange={(e) => setSeverityFilter(e.target.value)}
                 className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
               >
-                <option value="all">Все серьёзности ({findings.length})</option>
+                <option value="all">Все серьёзности</option>
                 {SEVERITY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label} ({findings.filter((f: any) => effSeverity(f) === o.value).length})
-                  </option>
+                  <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
               <select
@@ -258,7 +230,7 @@ export default function FindingReviewPage() {
               >
                 <option value="all">Все типы</option>
                 {availableTypes.map((t) => (
-                  <option key={t} value={t}>{FINDING_TYPE_LABELS[t] ?? t}</option>
+                  <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
                 ))}
               </select>
               <select
@@ -267,8 +239,17 @@ export default function FindingReviewPage() {
                 className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
               >
                 <option value="all">Все статусы</option>
-                {availableStatuses.map((s) => (
+                {STATUS_ORDER.map((s) => (
                   <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
+                ))}
+              </select>
+              <select
+                value={visibilityFilter}
+                onChange={(e) => setVisibilityFilter(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                {VISIBILITY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
             </div>
@@ -283,8 +264,10 @@ export default function FindingReviewPage() {
             )}
 
             {filteredFindings.map((finding: any) => {
-              const severity = effSeverity(finding);
+              const severity = effectiveSeverity(finding);
               const isSelected = finding.id === selectedFinding?.id;
+              const showOriginal =
+                finding.originalSeverity && finding.originalSeverity !== severity;
 
               return (
                 <div
@@ -299,30 +282,25 @@ export default function FindingReviewPage() {
                       : "hover:shadow-sm"
                   )}
                 >
-                  <div className="flex items-start gap-2 mb-1.5">
-                    <span
-                      className={cn(
-                        "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase shrink-0",
-                        SEVERITY_STYLES[severity]
+                  {/* Бэйджи как на экране внутридокументного аудита + признаки ревью */}
+                  <FindingBadges finding={finding} showStatus />
+                  {(finding.hiddenByReviewer || showOriginal) && (
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                      {finding.hiddenByReviewer && (
+                        <span className="rounded-full bg-red-100 text-red-600 px-1.5 py-0.5 text-[10px] font-medium flex items-center gap-0.5">
+                          <EyeOff className="h-2.5 w-2.5" />
+                          Ложное срабатывание
+                        </span>
                       )}
-                    >
-                      {SEVERITY_LABELS[severity]}
-                    </span>
-                    {finding.hiddenByReviewer && (
-                      <span className="rounded-full bg-red-100 text-red-600 px-1.5 py-0.5 text-[10px] font-medium flex items-center gap-0.5">
-                        <EyeOff className="h-2.5 w-2.5" />
-                        Скрыт
-                      </span>
-                    )}
-                    {finding.originalSeverity && finding.originalSeverity !== finding.severity && (
-                      <span className="text-[10px] text-gray-400 line-through">
-                        {SEVERITY_LABELS[finding.originalSeverity]}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm font-medium text-gray-900 line-clamp-2">
-                    {finding.description}
-                  </p>
+                      {showOriginal && (
+                        <span className="text-[10px] text-gray-400">
+                          Алгоритм:{" "}
+                          <span className="line-through">{SEVERITY_LABELS[finding.originalSeverity] ?? finding.originalSeverity}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <FindingCardBody finding={finding} />
                   {finding.reviewerNote && (
                     <div className="flex items-center gap-1 mt-1.5 text-[10px] text-purple-600">
                       <MessageSquare className="h-2.5 w-2.5" />
@@ -345,7 +323,7 @@ export default function FindingReviewPage() {
           ) : (
             <ReviewDetail
               finding={selectedFinding}
-              reviewId={reviewId}
+              sections={testedSections}
               isPublished={isPublished}
               noteText={noteText}
               onNoteChange={setNoteText}
@@ -381,7 +359,7 @@ export default function FindingReviewPage() {
 
 function ReviewDetail({
   finding,
-  reviewId,
+  sections,
   isPublished,
   noteText,
   onNoteChange,
@@ -393,7 +371,7 @@ function ReviewDetail({
   isSavingNote,
 }: {
   finding: any;
-  reviewId: string;
+  sections: DocSection[];
   isPublished: boolean;
   noteText: string;
   onNoteChange: (v: string) => void;
@@ -404,79 +382,31 @@ function ReviewDetail({
   isChangingSeverity: boolean;
   isSavingNote: boolean;
 }) {
-  const ref = finding.sourceRef as any;
-  const severity = effSeverity(finding);
+  const severity = effectiveSeverity(finding);
+  const showOriginal = finding.originalSeverity && finding.originalSeverity !== severity;
 
   return (
     <div className="space-y-6 max-w-3xl">
-      {/* Finding info */}
-      <div className="space-y-3">
+      {/* Контекст ревью: исходная серьёзность алгоритма + признак скрытия */}
+      {(showOriginal || finding.hiddenByReviewer) && (
         <div className="flex items-center gap-2 flex-wrap">
-          <span
-            className={cn(
-              "rounded px-2 py-0.5 text-xs font-bold uppercase",
-              SEVERITY_STYLES[severity]
-            )}
-          >
-            {SEVERITY_LABELS[severity]}
-          </span>
-          {finding.originalSeverity && finding.originalSeverity !== finding.severity && (
+          {showOriginal && (
             <span className="text-xs text-gray-400">
-              Алгоритм: <span className="line-through">{SEVERITY_LABELS[finding.originalSeverity]}</span>
+              Алгоритм:{" "}
+              <span className="line-through">{SEVERITY_LABELS[finding.originalSeverity] ?? finding.originalSeverity}</span>
             </span>
           )}
           {finding.hiddenByReviewer && (
             <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-xs font-medium flex items-center gap-1">
               <EyeOff className="h-3 w-3" />
-              Скрыт от пользователя
+              Скрыт от пользователя (ложное срабатывание)
             </span>
           )}
         </div>
-
-        <h2 className="text-lg font-semibold text-gray-900">{finding.description}</h2>
-
-        {finding.suggestion && (
-          <div className="rounded-lg bg-green-50 border border-green-200 p-3">
-            <p className="text-sm text-green-800">
-              <span className="font-medium">Рекомендация:</span> {finding.suggestion}
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Source refs */}
-      {(ref?.anchorQuote || ref?.targetQuote || ref?.textSnippet || ref?.protocolQuote || ref?.checkedDocQuote) && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold text-gray-700">Цитаты</h3>
-          {ref.anchorQuote && (
-            <blockquote className="border-l-4 border-brand-300 bg-brand-50 pl-4 py-2 text-sm text-gray-700 italic">
-              {ref.anchorQuote}
-            </blockquote>
-          )}
-          {ref.targetQuote && (
-            <blockquote className="border-l-4 border-orange-300 bg-orange-50 pl-4 py-2 text-sm text-gray-700 italic">
-              {ref.targetQuote}
-            </blockquote>
-          )}
-          {ref.protocolQuote && (
-            <blockquote className="border-l-4 border-brand-300 bg-brand-50 pl-4 py-2 text-sm text-gray-700 italic">
-              <span className="text-[10px] font-semibold uppercase text-brand-500 block mb-1">Протокол</span>
-              {ref.protocolQuote}
-            </blockquote>
-          )}
-          {ref.checkedDocQuote && (
-            <blockquote className="border-l-4 border-orange-300 bg-orange-50 pl-4 py-2 text-sm text-gray-700 italic">
-              <span className="text-[10px] font-semibold uppercase text-orange-500 block mb-1">Проверяемый документ</span>
-              {ref.checkedDocQuote}
-            </blockquote>
-          )}
-          {ref.textSnippet && !ref.anchorQuote && !ref.protocolQuote && (
-            <blockquote className="border-l-4 border-gray-300 bg-gray-50 pl-4 py-2 text-sm text-gray-700 italic">
-              {ref.textSnippet}
-            </blockquote>
-          )}
-        </div>
       )}
+
+      {/* Богатая детализация — идентична экрану внутридокументного аудита */}
+      <FindingDetailBody finding={finding} sections={sections} />
 
       {/* Reviewer actions */}
       {!isPublished && (
@@ -561,15 +491,6 @@ function ReviewDetail({
           <p className="text-sm text-gray-700">{finding.reviewerNote}</p>
         </div>
       )}
-
-      {/* Metadata */}
-      <div className="text-xs text-gray-400 space-y-0.5">
-        {finding.auditCategory && <p>Категория: {finding.auditCategory}</p>}
-        {finding.issueType && <p>Тип: {finding.issueType}</p>}
-        {finding.issueFamily && <p>Семейство: {finding.issueFamily}</p>}
-        {finding.anchorZone && <p>Зона (anchor): {finding.anchorZone}</p>}
-        {finding.targetZone && <p>Зона (target): {finding.targetZone}</p>}
-      </div>
     </div>
   );
 }
