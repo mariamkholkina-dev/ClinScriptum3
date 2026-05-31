@@ -412,9 +412,14 @@ function ReviewDetail({
       <Text weight="semibold" size={300}>{f.description}</Text>
 
       {f.suggestion && (
-        <Text size={200} style={{ color: tokens.colorPaletteGreenForeground1 }}>
-          → {f.suggestion}
-        </Text>
+        <div>
+          <Text size={200} weight="semibold" style={{ display: "block", color: tokens.colorPaletteGreenForeground1 }}>
+            Рекомендация
+          </Text>
+          <Text size={200} style={{ color: tokens.colorPaletteGreenForeground1 }}>
+            {f.suggestion}
+          </Text>
+        </div>
       )}
 
       {(ref?.textSnippet || ref?.anchorQuote) && (
