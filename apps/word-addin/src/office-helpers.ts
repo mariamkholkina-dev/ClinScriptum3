@@ -41,17 +41,30 @@ export async function navigateToText(textSnippet: string, sectionHint?: string):
   if (!normalized) return false;
   // Кандидаты от наиболее специфичного к менее. Word.body.search ограничен
   // ~255 символами и на длинном term бросает — режем и оборачиваем в try/catch.
-  // ВАЖНО: цитата часто пересекает границу ячейки/абзаца таблицы (та самая
-  // «нет пробела»: «…ОрганизацияООО «…»») — такой непрерывной строки в
-  // документе НЕТ, и длинные кандидаты не находятся. Поэтому спускаемся до
-  // коротких префиксов (≈24) и пробуем суффикс — чтобы поймать часть цитаты
-  // ДО или ПОСЛЕ «битого» стыка.
+  // ВАЖНО: Word.search НЕ пересекает границы абзаца/ячейки таблицы, а цитата
+  // часто многоабзацная или со «склейкой» (пропущенный пробел: «…ОрганизацияООО»)
+  // — непрерывной строки на всю цитату в документе НЕТ.
+  // Порядок кандидатов задаёт, КУДА сядет выделение:
+  //   1) старт-выровненные префиксы (longest-first) — берём максимальный кусок
+  //      ОТ НАЧАЛА цитаты, который влезает в один абзац;
+  //   2) если самый старт «битый» (склейка в первых символах) — фрагменты от
+  //      ближайших словесных границ, по возрастанию смещения (ближе к началу),
+  //      чтобы выделение НЕ прыгало в середину/конец;
+  //   3) суффикс — крайний случай.
   const candidates: string[] = [];
   const pushCand = (s: string) => {
     s = s.trim();
-    if (s.length >= 12 && !candidates.includes(s)) candidates.push(s);
+    if (s.length >= 14 && !candidates.includes(s)) candidates.push(s);
   };
-  for (const len of [255, 120, 80, 50, 36, 24]) pushCand(normalized.slice(0, len));
+  // 1) старт-выровненные, longest-first
+  for (const len of [200, 140, 100, 70, 50, 36, 24, 16]) pushCand(normalized.slice(0, len));
+  // 2) фрагменты от первых словесных границ (смещения по возрастанию)
+  const starts: number[] = [];
+  for (let i = 1; i < Math.min(normalized.length, 110) && starts.length < 6; i++) {
+    if (normalized[i - 1] === " " && normalized[i] !== " ") starts.push(i);
+  }
+  for (const off of starts) pushCand(normalized.slice(off, off + 60));
+  // 3) суффикс — последний шанс зацепиться за цитату
   if (normalized.length > 60) pushCand(normalized.slice(-60));
 
   const headingTerm = sectionHint ? normalizeForSearch(sectionHint).slice(0, 255) : "";
