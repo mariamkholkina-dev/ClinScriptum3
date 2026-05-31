@@ -115,11 +115,15 @@ export default function FindingReviewDetailPage() {
   ).sort() as string[];
 
   const filteredFindings = findings.filter((f: any) => {
+    // «Ложное срабатывание» — это И скрытое ревьюером (hiddenByReviewer), И
+    // помеченное конвейером/LLM (status=false_positive): на карточках обе пометки
+    // подписаны «Ложное срабатывание», поэтому фильтр должен ловить оба случая.
+    const isFalsePositive = f.hiddenByReviewer || f.status === "false_positive";
     if (severityFilter !== "all" && effectiveSeverity(f) !== severityFilter) return false;
     if (typeFilter !== "all" && extractFindingMeta(f).type !== typeFilter) return false;
     if (statusFilter !== "all" && f.status !== statusFilter) return false;
-    if (visibilityFilter === "hidden" && !f.hiddenByReviewer) return false;
-    if (visibilityFilter === "visible" && f.hiddenByReviewer) return false;
+    if (visibilityFilter === "hidden" && !isFalsePositive) return false;
+    if (visibilityFilter === "visible" && isFalsePositive) return false;
     return true;
   });
 

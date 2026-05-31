@@ -97,10 +97,13 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
 
   const filtered = useMemo(() => {
     return findings.filter((f) => {
+      // «Ложное срабатывание» = скрыто ревьюером ИЛИ помечено конвейером/LLM
+      // (status=false_positive) — фильтр ловит оба случая.
+      const isFalsePositive = f.hiddenByReviewer || f.status === "false_positive";
       if (severityFilter !== "all" && effSeverity(f) !== severityFilter) return false;
       if (statusFilter !== "all" && f.status !== statusFilter) return false;
-      if (visibilityFilter === "hidden" && !f.hiddenByReviewer) return false;
-      if (visibilityFilter === "visible" && f.hiddenByReviewer) return false;
+      if (visibilityFilter === "hidden" && !isFalsePositive) return false;
+      if (visibilityFilter === "visible" && isFalsePositive) return false;
       return true;
     });
   }, [findings, severityFilter, statusFilter, visibilityFilter]);
