@@ -32,7 +32,10 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const useStyles = makeStyles({
-  root: { display: "flex", flexDirection: "column", height: "100%" },
+  // flex:1 + minHeight:0 (как в FindingsPanel) — без этого внутри нефлексового
+  // styles.content высота не схлопывается и между фильтрами и списком зияла
+  // большая пустая область.
+  root: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   header: {
     padding: "10px 12px",
     display: "flex",
