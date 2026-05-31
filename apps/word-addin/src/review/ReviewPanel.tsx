@@ -22,7 +22,10 @@ import { useReview, effSeverity, type ReviewFinding } from "./useReview";
 import { PromoteModal } from "./PromoteModal";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
-const STATUS_OPTIONS = ["pending", "confirmed", "resolved", "rejected", "false_positive"];
+// Без false_positive — ложноположительные ловит отдельный фильтр «видимости»
+// (Все находки / Не ложные / Ложное срабатывание), иначе два одинаковых пункта
+// с разным поведением путали.
+const STATUS_OPTIONS = ["pending", "confirmed", "resolved", "rejected"];
 const STATUS_LABELS: Record<string, string> = {
   pending: "К валидации",
   confirmed: "Подтверждено",
@@ -31,11 +34,30 @@ const STATUS_LABELS: Record<string, string> = {
   false_positive: "Ложное срабатывание",
 };
 
+// Направление проверки (как в web). taskKind лежит в extraAttributes/sourceRef.
+const TASK_KIND_LABELS: Record<string, string> = {
+  self_check: "Внутренняя проверка",
+  cross_check: "Перекрёстная проверка",
+  self_editorial: "Редакторская проверка",
+};
+function effTaskKind(f: ReviewFinding): string | null {
+  return (f.extraAttributes?.taskKind as string) ?? (f.sourceRef?.taskKind as string) ?? null;
+}
+
+const QA_VERDICT_LABELS: Record<string, string> = {
+  confirmed: "Подтверждено QA",
+  dismissed: "Отклонено QA",
+  adjusted: "Скорректировано QA",
+  deduplicated: "Дубликат",
+};
+
 const useStyles = makeStyles({
-  // flex:1 + minHeight:0 (как в FindingsPanel) — без этого внутри нефлексового
-  // styles.content высота не схлопывается и между фильтрами и списком зияла
-  // большая пустая область.
-  root: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
+  // height:100% + minHeight:0 — как в ParsingPanel/InterAuditPanel (рабочий
+  // паттерн внутри нефлексового styles.content): даёт высоту панели и
+  // позволяет внутреннему списку (flex:1, overflowY:auto) прокручиваться.
+  // flex:1 здесь НЕ работает (родитель content не display:flex) → ломалась
+  // прокрутка и появлялась пустая область.
+  root: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 },
   header: {
     padding: "10px 12px",
     display: "flex",
@@ -99,6 +121,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [taskKindFilter, setTaskKindFilter] = useState("all");
   const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [promoteTarget, setPromoteTarget] = useState<string[] | null>(null);
@@ -107,6 +130,11 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
   const findings = r.data?.findings ?? [];
   const isPublished = r.data?.review.status === "published";
 
+  const availableTaskKinds = useMemo(
+    () => Array.from(new Set(findings.map(effTaskKind).filter((k): k is string => !!k))).sort(),
+    [findings],
+  );
+
   const filtered = useMemo(() => {
     return findings.filter((f) => {
       // «Ложное срабатывание» = скрыто ревьюером ИЛИ помечено конвейером/LLM
@@ -114,11 +142,12 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
       const isFalsePositive = f.hiddenByReviewer || f.status === "false_positive";
       if (severityFilter !== "all" && effSeverity(f) !== severityFilter) return false;
       if (statusFilter !== "all" && f.status !== statusFilter) return false;
+      if (taskKindFilter !== "all" && effTaskKind(f) !== taskKindFilter) return false;
       if (visibilityFilter === "hidden" && !isFalsePositive) return false;
       if (visibilityFilter === "visible" && isFalsePositive) return false;
       return true;
     });
-  }, [findings, severityFilter, statusFilter, visibilityFilter]);
+  }, [findings, severityFilter, statusFilter, taskKindFilter, visibilityFilter]);
 
   const selectedIndex = filtered.findIndex((f) => f.id === selectedId);
   const selected = selectedIndex >= 0 ? filtered[selectedIndex] : null;
@@ -133,6 +162,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
     });
   const selArr = Array.from(selectedIds);
   const clearSel = () => setSelectedIds(new Set());
+  const selectAllFiltered = () => setSelectedIds(new Set(filtered.map((f) => f.id)));
 
   if (r.loading && !r.data) {
     return <div className={styles.empty}><Spinner label="Загрузка ревью..." /></div>;
@@ -170,7 +200,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-            Находок: {findings.length} · скрытых: {hiddenCount}
+            По фильтру: {filtered.length} из {findings.length} · скрытых: {hiddenCount}
           </Text>
         </div>
       </div>
@@ -190,6 +220,14 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
               <option value="all">Все статусы</option>
               {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
             </Select>
+            {availableTaskKinds.length > 0 && (
+              <Select size="small" value={taskKindFilter} onChange={(_, d) => setTaskKindFilter(d.value)}>
+                <option value="all">Все направления</option>
+                {availableTaskKinds.map((k) => (
+                  <option key={k} value={k}>{TASK_KIND_LABELS[k] ?? k}</option>
+                ))}
+              </Select>
+            )}
             <Select size="small" value={visibilityFilter} onChange={(_, d) => setVisibilityFilter(d.value)}>
               <option value="all">Все находки</option>
               <option value="visible">Не ложные</option>
@@ -200,6 +238,8 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
           {!isPublished && selectedIds.size > 0 && (
             <div className={styles.bulkBar}>
               <Text size={200} weight="semibold">Выбрано: {selectedIds.size}</Text>
+              <Button size="small" appearance="subtle" onClick={selectAllFiltered}>Выбрать все ({filtered.length})</Button>
+              <Button size="small" appearance="subtle" onClick={clearSel}>Снять все</Button>
               <Button size="small" disabled={r.busy} onClick={() => { r.bulkSetHidden(selArr, true); clearSel(); }}>Скрыть</Button>
               <Button size="small" disabled={r.busy} onClick={() => { r.bulkSetHidden(selArr, false); clearSel(); }}>Показать</Button>
               <Select size="small" value="" disabled={r.busy}
@@ -211,7 +251,6 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
               <Button size="small" disabled={r.busy} onClick={() => { r.restoreFromFalsePositive(selArr); clearSel(); }}>
                 На валидацию
               </Button>
-              <Button size="small" appearance="subtle" onClick={clearSel}>Снять</Button>
             </div>
           )}
 
@@ -305,6 +344,11 @@ function ReviewCard({
         <div className={styles.badges}>
           <SeverityBadge severity={sev} />
           <StatusBadge status={f.status} />
+          {effTaskKind(f) && (
+            <Badge appearance="outline" color="informative" size="small">
+              {TASK_KIND_LABELS[effTaskKind(f)!] ?? effTaskKind(f)}
+            </Badge>
+          )}
           {f.hiddenByReviewer && <Badge appearance="tint" color="danger" size="small">Ложное</Badge>}
         </div>
         <Text size={200} style={{ display: "block", marginTop: 4 }}>{f.description}</Text>
@@ -345,6 +389,11 @@ function ReviewDetail({
       <div className={styles.badges}>
         <SeverityBadge severity={sev} />
         <StatusBadge status={f.status} />
+        {effTaskKind(f) && (
+          <Badge appearance="outline" color="informative" size="small">
+            {TASK_KIND_LABELS[effTaskKind(f)!] ?? effTaskKind(f)}
+          </Badge>
+        )}
         {f.hiddenByReviewer && <Badge appearance="tint" color="danger" size="small">Ложное срабатывание</Badge>}
         {f.originalSeverity && f.originalSeverity !== sev && (
           <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
@@ -373,6 +422,26 @@ function ReviewDetail({
       )}
       {ref?.targetQuote && (
         <div className={styles.blockquote}><Text size={200}>{ref.targetQuote}</Text></div>
+      )}
+
+      {/* QA-верификация — особенно важна для ложноположительных (почему QA её
+          отклонил/скорректировал). */}
+      {(f.extraAttributes?.qaVerdict || f.extraAttributes?.qaReason) && (
+        <div className={styles.actionsBox}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Text weight="semibold" size={200}>QA-верификация</Text>
+            {f.extraAttributes?.qaVerdict && (
+              <Badge appearance="tint" color="informative" size="small">
+                {QA_VERDICT_LABELS[f.extraAttributes.qaVerdict as string] ?? f.extraAttributes.qaVerdict}
+              </Badge>
+            )}
+          </div>
+          {f.extraAttributes?.qaReason && (
+            <Text size={200} style={{ color: tokens.colorNeutralForeground2 }}>
+              {f.extraAttributes.qaReason as string}
+            </Text>
+          )}
+        </div>
       )}
 
       <Button
