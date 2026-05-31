@@ -7,11 +7,25 @@ import { logger } from "../lib/logger.js";
 
 export const documentService = {
   async listAll(tenantId: string) {
+    // Explicit `select` — НЕ тянуть тяжёлое поле `digitalTwin` (JSONB с полным
+    // распарсенным двойником документа, мегабайты на версию). Без него запрос
+    // грузил все колонки всех версий тенанта в heap и валил API по OOM
+    // (см. fix/document-listall-heap). Списку нужны только метаданные.
     return prisma.documentVersion.findMany({
       where: { document: { study: { tenantId } } },
-      include: {
+      select: {
+        id: true,
+        documentId: true,
+        versionNumber: true,
+        versionLabel: true,
+        status: true,
+        isCurrent: true,
+        createdAt: true,
         document: {
-          include: {
+          select: {
+            id: true,
+            type: true,
+            title: true,
             study: { select: { id: true, title: true } },
           },
         },
