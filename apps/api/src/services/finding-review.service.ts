@@ -1,6 +1,7 @@
 import { prisma } from "@clinscriptum/db";
 import { DomainError } from "./errors.js";
 import { requireTenantResource } from "./tenant-guard.js";
+import { buildSectionHtml } from "../lib/section-html.js";
 
 /**
  * Типы находок, относящиеся к ревью данного auditType. Боевой
@@ -96,6 +97,9 @@ export const findingReviewService = {
       title: s.title,
       standardSection: s.standardSection,
       content: s.contentBlocks.map((b) => b.content).join("\n"),
+      // HTML-версия раздела — чтобы ревьюер видел таблицы и переносы строк
+      // (иначе ячейки/строки склеиваются и ложно выглядят как «нет пробела»).
+      contentHtml: buildSectionHtml(s.contentBlocks),
     }));
 
     return {
