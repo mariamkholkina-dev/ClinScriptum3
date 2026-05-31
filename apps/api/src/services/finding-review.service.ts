@@ -377,6 +377,101 @@ export const findingReviewService = {
     return { promoted: true, goldenSampleId };
   },
 
+  /** Список эталонных наборов тенанта для выбора при promote-to-golden.
+   *  Доступен ревьюеру (reviewerProcedure) — минимальный набор полей, чтобы не
+   *  открывать ревьюеру весь quality-only goldenDataset.listSamples. */
+  async listGoldenSamples(tenantId: string) {
+    const samples = await prisma.goldenSample.findMany({
+      where: { tenantId },
+      select: { id: true, name: true, sampleType: true },
+      orderBy: { createdAt: "desc" },
+    });
+    return samples;
+  },
+
+  /** Массовое скрытие/показ находок ревьюером (ложноположительные).
+   *  Пишет audit-лог по каждой реально изменённой находке. */
+  async bulkSetHidden(
+    tenantId: string,
+    reviewId: string,
+    findingIds: string[],
+    hidden: boolean,
+    userId: string,
+  ) {
+    const review = await prisma.findingReview.findUnique({ where: { id: reviewId } });
+    requireTenantResource(review, tenantId);
+
+    // Ограничиваем находки документом этого ревью — гарантия принадлежности тенанту.
+    const findings = await prisma.finding.findMany({
+      where: { id: { in: findingIds }, docVersionId: review.docVersionId },
+    });
+
+    let updated = 0;
+    for (const f of findings) {
+      if (f.hiddenByReviewer === hidden) continue;
+      await prisma.findingReviewLog.create({
+        data: {
+          reviewId,
+          findingId: f.id,
+          reviewerId: userId,
+          action: hidden ? "hide" : "unhide",
+          previousValue: String(f.hiddenByReviewer),
+          newValue: String(hidden),
+        },
+      });
+      await prisma.finding.update({
+        where: { id: f.id },
+        data: { hiddenByReviewer: hidden },
+      });
+      updated += 1;
+    }
+    return { updated };
+  },
+
+  /** Массовая смена серьёзности. Как и одиночная changeSeverity, пишет И
+   *  колонку, И extraAttributes.severity, и сохраняет originalSeverity. */
+  async bulkChangeSeverity(
+    tenantId: string,
+    reviewId: string,
+    findingIds: string[],
+    severity: "critical" | "high" | "medium" | "low" | "info",
+    userId: string,
+  ) {
+    const review = await prisma.findingReview.findUnique({ where: { id: reviewId } });
+    requireTenantResource(review, tenantId);
+
+    const findings = await prisma.finding.findMany({
+      where: { id: { in: findingIds }, docVersionId: review.docVersionId },
+    });
+
+    let updated = 0;
+    for (const f of findings) {
+      const extra = (f.extraAttributes ?? {}) as Record<string, unknown>;
+      const previousSeverity = (extra.severity as string) ?? f.severity ?? "info";
+      if (f.severity === severity && extra.severity === severity) continue;
+      await prisma.findingReviewLog.create({
+        data: {
+          reviewId,
+          findingId: f.id,
+          reviewerId: userId,
+          action: "change_severity",
+          previousValue: previousSeverity,
+          newValue: severity,
+        },
+      });
+      await prisma.finding.update({
+        where: { id: f.id },
+        data: {
+          severity: severity as any,
+          extraAttributes: { ...extra, severity } as any,
+          originalSeverity: (f.originalSeverity as any) ?? (previousSeverity as any),
+        },
+      });
+      updated += 1;
+    }
+    return { updated };
+  },
+
   async getReviewStatus(
     docVersionId: string,
     auditType: "intra_audit" | "inter_audit",
