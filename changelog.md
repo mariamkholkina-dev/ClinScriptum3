@@ -2,6 +2,16 @@
 
 ## 2026-05-31
 
+### Refactor: экран finding-review перенесён из web в rule-admin
+
+Ревью находок — задача эксперта/qc, а не медицинского писателя (см. UI-разделение в CLAUDE.md). Перенесли богатый интерфейс finding-review из основного интерфейса (`apps/web`) в rule-admin, а web-версию удалили.
+
+- В rule-admin (`finding-review/[id]`) — богатая версия из web: общий `finding-display` (бэйджи, карточки, детализация, тестируемые разделы, выделение цитат), фильтры (серьёзность / тип / статус / ложное срабатывание со всеми значениями), массовые операции (мультивыбор + bulk скрыть/показать/severity/эталон), promote-to-golden, заметка, «Завершить ревью». Заменила прежний упрощённый экран rule-admin.
+- В rule-admin добавлены `components/finding-display.tsx`, `components/promote-to-golden-modal.tsx`, `lib/cn.ts` (лёгкий, без clsx/tailwind-merge).
+- Из web удалены: `app/(app)/finding-review/*`, `components/promote-to-golden-modal.tsx`, пункт меню «Ревью findings» в сайдбаре. `finding-display.tsx` в web остаётся — его использует экран внутридокументного аудита.
+
+Бэкенд не меняется (те же `findingReview`-эндпойнты). Требует деплой web + rule-admin.
+
 ### Feat: Word add-in — режим «Ревью находок» (finding_review) для оператора
 
 В Office.js-аддон добавлен полноценный режим ревьюера — все операции, доступные на web `finding-review`, теперь доступны и в Word.
