@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
@@ -39,6 +39,39 @@ export default function IntraAuditPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [auditStarted, setAuditStarted] = useState(false);
+
+  // Ширина левой панели (список находок) — перетаскиваемый разделитель.
+  const [leftWidth, setLeftWidth] = useState(480);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current || !contentRef.current) return;
+      const left = contentRef.current.getBoundingClientRect().left;
+      const max = contentRef.current.clientWidth - 360;
+      const w = Math.min(Math.max(e.clientX - left, 300), Math.max(max, 300));
+      setLeftWidth(w);
+    };
+    const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  const startDragDivider = () => {
+    draggingRef.current = true;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
 
   const statusQuery = trpc.audit.getAuditStatus.useQuery(
     { docVersionId },
@@ -213,9 +246,12 @@ export default function IntraAuditPage() {
       )}
 
       {/* Main content */}
-      <div className="flex-1 flex min-h-0">
-        {/* Left Panel: Findings */}
-        <div className="w-[480px] flex-none border-r flex flex-col bg-gray-50">
+      <div ref={contentRef} className="flex-1 flex min-h-0">
+        {/* Left Panel: Findings (ширина регулируется разделителем) */}
+        <div
+          className="flex-none border-r flex flex-col bg-gray-50"
+          style={{ width: leftWidth }}
+        >
           {/* Filters */}
           <div className="flex-none p-4 space-y-2 border-b bg-white">
             {/* grid-cols-2: фильтры переносятся (2+1) и не вылезают за ширину
@@ -301,8 +337,15 @@ export default function IntraAuditPage() {
           </div>
         </div>
 
+        {/* Перетаскиваемый разделитель ширины панелей */}
+        <div
+          onMouseDown={startDragDivider}
+          className="w-1.5 flex-none cursor-col-resize bg-gray-200 hover:bg-brand-400 transition-colors"
+          title="Потяните, чтобы изменить ширину панелей"
+        />
+
         {/* Right Panel: Document sections */}
-        <div className="flex-1 overflow-y-auto bg-white p-6">
+        <div className="flex-1 min-w-0 overflow-y-auto bg-white p-6">
           {!selectedFinding ? (
             <div className="flex flex-col items-center justify-center h-full text-gray-400">
               <Eye className="h-16 w-16 mb-4" />

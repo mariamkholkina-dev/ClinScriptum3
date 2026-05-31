@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/cn";
@@ -68,6 +68,40 @@ export default function FindingReviewDetailPage() {
   const [showPublishConfirm, setShowPublishConfirm] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [promoteTarget, setPromoteTarget] = useState<string[] | null>(null);
+
+  // Ширина левой панели (список находок) — перетаскиваемый разделитель.
+  const [leftWidth, setLeftWidth] = useState(440);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current || !contentRef.current) return;
+      const left = contentRef.current.getBoundingClientRect().left;
+      // Ограничиваем: список не уже 280 и оставляем ≥360 правой панели.
+      const max = contentRef.current.clientWidth - 360;
+      const w = Math.min(Math.max(e.clientX - left, 280), Math.max(max, 280));
+      setLeftWidth(w);
+    };
+    const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  const startDragDivider = () => {
+    draggingRef.current = true;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
 
   const utils = trpc.useUtils();
 
@@ -266,9 +300,12 @@ export default function FindingReviewDetailPage() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex min-h-0">
-        {/* Left: Findings list */}
-        <div className="w-[440px] flex-none border-r flex flex-col bg-gray-50">
+      <div ref={contentRef} className="flex-1 flex min-h-0">
+        {/* Left: Findings list (ширина регулируется разделителем) */}
+        <div
+          className="flex-none border-r flex flex-col bg-gray-50"
+          style={{ width: leftWidth }}
+        >
           <div className="flex-none p-4 border-b bg-white">
             <div className="grid grid-cols-2 gap-2">
               <select
@@ -449,8 +486,15 @@ export default function FindingReviewDetailPage() {
           </div>
         </div>
 
+        {/* Перетаскиваемый разделитель ширины панелей */}
+        <div
+          onMouseDown={startDragDivider}
+          className="w-1.5 flex-none cursor-col-resize bg-gray-200 hover:bg-brand-400 transition-colors"
+          title="Потяните, чтобы изменить ширину панелей"
+        />
+
         {/* Right: Finding detail + actions */}
-        <div className="flex-1 overflow-y-auto bg-white p-6">
+        <div className="flex-1 min-w-0 overflow-y-auto bg-white p-6">
           {!selectedFinding ? (
             <div className="flex flex-col items-center justify-center h-full text-gray-400">
               <Eye className="h-16 w-16 mb-4" />
