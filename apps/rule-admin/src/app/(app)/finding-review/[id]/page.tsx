@@ -15,7 +15,9 @@ import {
   AlertTriangle,
   Star,
   RotateCcw,
+  FileText,
 } from "lucide-react";
+import { openInWord } from "@/lib/open-in-word";
 import {
   SEVERITY_BORDER,
   SEVERITY_LABELS,
@@ -214,6 +216,20 @@ export default function FindingReviewDetailPage() {
               <div>Видимые: <span className="font-semibold text-gray-900">{visibleCount}</span></div>
               <div>Скрытые: <span className="font-semibold text-red-600">{hiddenCount}</span></div>
             </div>
+            <button
+              onClick={() =>
+                openInWord({
+                  mode: "finding_review",
+                  reviewId,
+                  docVersionId: review.docVersionId,
+                }).catch((e) => alert(e instanceof Error ? e.message : String(e)))
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              title="Открыть это ревью находок в Word"
+            >
+              <FileText className="h-4 w-4" />
+              Открыть в Word
+            </button>
             {isPublished ? (
               <span className="rounded-full bg-green-100 px-4 py-2 text-sm font-medium text-green-700">
                 Опубликовано

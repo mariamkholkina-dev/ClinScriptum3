@@ -7,6 +7,7 @@ export interface WordSessionContext {
   mode:
     | "intra_audit"
     | "inter_audit"
+    | "finding_review"
     | "generation_review"
     | "generation_insert"
     | "parsing"; // Word-aided parsing/structure annotation (PR series feat/word-addon-parsing)
@@ -15,6 +16,8 @@ export interface WordSessionContext {
   /** Опционально — для parsing mode: какой goldenSampleStageStatus это редактирует
       (если открывается из /golden-dataset/{id} → парсинг таб). */
   goldenSampleId?: string;
+  /** Только для mode='finding_review': id ревью находок (для ReviewPanel). */
+  reviewId?: string;
 }
 
 const SESSION_TTL_MINUTES = 5;
