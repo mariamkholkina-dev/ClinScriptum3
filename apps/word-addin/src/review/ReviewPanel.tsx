@@ -43,12 +43,25 @@ const TASK_KIND_LABELS: Record<string, string> = {
 function effTaskKind(f: ReviewFinding): string | null {
   return (f.extraAttributes?.taskKind as string) ?? (f.sourceRef?.taskKind as string) ?? null;
 }
+/** Зоны находки: якорная и проверяемая (колонки или sourceRef). */
+function effZones(f: ReviewFinding): { anchor: string | null; target: string | null } {
+  return {
+    anchor: f.anchorZone ?? (f.sourceRef?.anchorZone as string) ?? null,
+    target: f.targetZone ?? (f.sourceRef?.zone as string) ?? null,
+  };
+}
 
 const QA_VERDICT_LABELS: Record<string, string> = {
   confirmed: "Подтверждено QA",
   dismissed: "Отклонено QA",
   adjusted: "Скорректировано QA",
   deduplicated: "Дубликат",
+};
+const QA_VERDICT_COLORS: Record<string, "success" | "danger" | "warning" | "subtle"> = {
+  confirmed: "success",
+  dismissed: "danger",
+  adjusted: "warning",
+  deduplicated: "subtle",
 };
 
 const useStyles = makeStyles({
@@ -411,6 +424,18 @@ function ReviewDetail({
 
       <Text weight="semibold" size={300}>{f.description}</Text>
 
+      {(() => {
+        const z = effZones(f);
+        if (!z.anchor && !z.target) return null;
+        return (
+          <Text size={200} style={{ color: tokens.colorNeutralForeground2 }}>
+            {z.anchor && z.target && z.anchor !== z.target
+              ? `Зоны: ${z.anchor} → ${z.target}`
+              : `Зона: ${z.target ?? z.anchor}`}
+          </Text>
+        );
+      })()}
+
       {f.suggestion && (
         <div>
           <Text size={200} weight="semibold" style={{ display: "block", color: tokens.colorPaletteGreenForeground1 }}>
@@ -443,7 +468,11 @@ function ReviewDetail({
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <Text weight="semibold" size={200}>QA-верификация</Text>
             {f.extraAttributes?.qaVerdict && (
-              <Badge appearance="tint" color="informative" size="small">
+              <Badge
+                appearance="tint"
+                color={QA_VERDICT_COLORS[f.extraAttributes.qaVerdict as string] ?? "informative"}
+                size="small"
+              >
                 {QA_VERDICT_LABELS[f.extraAttributes.qaVerdict as string] ?? f.extraAttributes.qaVerdict}
               </Badge>
             )}

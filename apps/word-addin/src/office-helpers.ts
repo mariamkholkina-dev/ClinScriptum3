@@ -28,27 +28,38 @@ function normalizeForSearch(text: string): string {
 export async function navigateToText(textSnippet: string): Promise<boolean> {
   const normalized = normalizeForSearch(textSnippet);
   if (!normalized) return false;
-  // Кандидаты от наиболее специфичного к менее: полная нормализованная цитата,
-  // затем первые ~120 и ~60 символов (длиннее = меньше ложных совпадений).
-  const candidates = [normalized];
-  if (normalized.length > 120) candidates.push(normalized.slice(0, 120));
-  if (normalized.length > 60) candidates.push(normalized.slice(0, 60));
+  // Кандидаты от наиболее специфичного к менее. ВАЖНО: Word.body.search
+  // ограничен 255 символами — более длинный term бросает ошибку и (без
+  // try/catch) ронял весь Word.run, из-за чего «Перейти в документе» молча
+  // не срабатывало на длинных цитатах. Первый кандидат режем до 255, каждый
+  // поиск оборачиваем в try/catch и пробуем более короткий.
+  const candidates: string[] = [];
+  const pushCand = (s: string) => {
+    if (s.length >= 3 && !candidates.includes(s)) candidates.push(s);
+  };
+  pushCand(normalized.slice(0, 255));
+  pushCand(normalized.slice(0, 120));
+  pushCand(normalized.slice(0, 60));
 
   return Word.run(async (context: any) => {
     const body = context.document.body;
     for (const term of candidates) {
-      const results = body.search(term, { matchCase: false, matchWholeWord: false });
-      results.load("items");
-      await context.sync();
-      if (results.items.length > 0) {
-        results.items[0].select();
-        // scrollIntoView гарантирует прокрутку к выделению (select не всегда
-        // прокручивает, если место уже «технически» в области просмотра).
-        if (typeof results.items[0].scrollIntoView === "function") {
-          results.items[0].scrollIntoView();
-        }
+      try {
+        const results = body.search(term, { matchCase: false, matchWholeWord: false });
+        results.load("items");
         await context.sync();
-        return true;
+        if (results.items.length > 0) {
+          results.items[0].select();
+          // scrollIntoView гарантирует прокрутку к выделению (select не всегда
+          // прокручивает, если место уже «технически» в области просмотра).
+          if (typeof results.items[0].scrollIntoView === "function") {
+            results.items[0].scrollIntoView();
+          }
+          await context.sync();
+          return true;
+        }
+      } catch {
+        // Слишком длинный/невалидный term — пробуем следующий, короче.
       }
     }
     return false;
