@@ -13,6 +13,10 @@
 
 Использует существующие reviewer-эндпойнты (`getReview`, `toggleHidden`, `changeSeverity`, `addNote`, `promoteFindingToGolden`, `bulkSetHidden`, `bulkChangeSeverity`, `publish`, `listGoldenSamples`, `dashboard`). Требует rebuild word-addin.
 
+### Feat: дефолтные настройки нового исследования
+
+`studyService.create` теперь выставляет новому исследованию настройки по умолчанию (отличные от schema-дефолтов): ревью оператором — включено, режим рассуждений LLM — включён, детерминированные находки intra-audit — выключены, режим аудита — Variant 2 (`zone_based`, по зонам). Schema-дефолты не меняются (касается только создаваемых через приложение исследований). Требует деплой api.
+
 ### Feat: finding-review (web) — promote-to-golden, массовые операции, явное завершение ревью
 
 Расширили возможности ревьюера на экране `finding-review` (web), доведя паритет с rule-admin.

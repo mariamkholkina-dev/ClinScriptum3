@@ -54,6 +54,13 @@ export const studyService = {
         therapeuticArea: input.therapeuticArea || null,
         protocolTitle: input.protocolTitle || null,
         phase: input.phase,
+        // Дефолтные настройки нового исследования (отличаются от schema-дефолтов):
+        // ревью оператором — вкл., режим рассуждений LLM — вкл., детерминированные
+        // находки intra-audit — выкл., режим аудита — Variant 2 (по зонам).
+        operatorReviewEnabled: true,
+        llmThinkingEnabled: true,
+        intraAuditDeterministicEnabled: false,
+        auditMode: "zone_based",
       },
     });
   },
