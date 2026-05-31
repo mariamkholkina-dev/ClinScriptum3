@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Text,
   Spinner,
@@ -17,7 +17,7 @@ import {
 import { Location24Regular, Star24Regular } from "@fluentui/react-icons";
 import { SeverityBadge } from "../shared/SeverityBadge";
 import { StatusBadge } from "../shared/StatusBadge";
-import { navigateToText, bestSnippet } from "../office-helpers";
+import { navigateToText } from "../office-helpers";
 import { useReview, effSeverity, type ReviewFinding } from "./useReview";
 import { PromoteModal } from "./PromoteModal";
 
@@ -390,8 +390,36 @@ function ReviewDetail({
   const ref = f.sourceRef as any;
   const [note, setNote] = useState(f.reviewerNote ?? "");
   const sev = effSeverity(f);
-  const navSnippet = bestSnippet(ref);
   const isFalsePositive = f.status === "false_positive";
+
+  // Места в документе, на которые ссылается находка, по порядку (1-е и 2-е).
+  const quoteList = useMemo(() => {
+    const first = ref?.textSnippet || ref?.anchorQuote || ref?.referenceQuote || ref?.checkedDocQuote;
+    const second = ref?.targetQuote;
+    const list: string[] = [];
+    for (const q of [first, second]) {
+      if (typeof q === "string" && q.trim() && !list.includes(q)) list.push(q);
+    }
+    return list;
+  }, [f.id]);
+  const [navIdx, setNavIdx] = useState(0);
+
+  const goToQuote = (i: number) => {
+    if (i < 0 || i >= quoteList.length) return;
+    setNavIdx(i);
+    void navigateToText(quoteList[i]);
+  };
+  // Циклический переход «Перейти в документе»: 1-е → 2-е → 1-е …
+  const goNextQuote = () => {
+    if (quoteList.length === 0) return;
+    goToQuote((navIdx + 1) % quoteList.length);
+  };
+
+  // При открытии карточки находки — автопереход на первое место в документе.
+  useEffect(() => {
+    setNavIdx(0);
+    if (quoteList.length > 0) void navigateToText(quoteList[0]);
+  }, [f.id]);
 
   return (
     <div className={styles.detail}>
@@ -447,17 +475,25 @@ function ReviewDetail({
         </div>
       )}
 
-      {(ref?.textSnippet || ref?.anchorQuote || ref?.targetQuote) && (
+      {quoteList.length > 0 && (
         <div>
           <Text size={200} weight="semibold" style={{ display: "block", marginBottom: 4 }}>
             Цитаты из документа
           </Text>
-          {(ref?.textSnippet || ref?.anchorQuote) && (
-            <div className={styles.blockquote}><Text size={200}>{ref?.textSnippet || ref?.anchorQuote}</Text></div>
-          )}
-          {ref?.targetQuote && (
-            <div className={styles.blockquote}><Text size={200}>{ref.targetQuote}</Text></div>
-          )}
+          {quoteList.map((q, i) => (
+            <div
+              key={i}
+              className={styles.blockquote}
+              onClick={() => goToQuote(i)}
+              title="Перейти к этому месту в документе"
+              style={{
+                cursor: "pointer",
+                backgroundColor: i === navIdx ? tokens.colorNeutralBackground1Selected : undefined,
+              }}
+            >
+              <Text size={200}>{q}</Text>
+            </div>
+          ))}
         </div>
       )}
 
@@ -488,10 +524,12 @@ function ReviewDetail({
       <Button
         size="small"
         icon={<Location24Regular />}
-        disabled={!navSnippet}
-        onClick={() => navSnippet && navigateToText(navSnippet)}
+        disabled={quoteList.length === 0}
+        onClick={goNextQuote}
       >
-        Перейти в документе
+        {quoteList.length > 1
+          ? `Перейти в документе (${navIdx + 1}/${quoteList.length})`
+          : "Перейти в документе"}
       </Button>
 
       {/* Действия ревьюера */}
