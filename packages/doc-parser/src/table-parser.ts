@@ -1,4 +1,5 @@
 import type { ParsedTable, SourceAnchor } from "./types.js";
+import { decodeHtmlEntities } from "./html-entities.js";
 
 const SOA_INDICATORS = [
   /schedule\s+of\s+assessments/i,
@@ -65,5 +66,5 @@ function extractTableFootnotes(html: string): string[] {
 }
 
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+  return decodeHtmlEntities(html.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
 }

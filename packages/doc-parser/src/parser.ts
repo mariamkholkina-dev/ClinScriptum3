@@ -6,6 +6,7 @@ import { parseHtmlTable, isSOATable } from "./table-parser.js";
 import { extractFootnotes } from "./footnote-extractor.js";
 import JSZip from "jszip";
 import { extractDrawingsFromDocumentXml, type Drawing } from "./drawing-parser.js";
+import { decodeHtmlEntities } from "./html-entities.js";
 import { extractTableGeometry, type TableGeometry } from "./table-geometry.js";
 import { extractWordFootnotes } from "./word-footnote-parser.js";
 import {
@@ -465,5 +466,5 @@ function splitHtmlElements(
 }
 
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+  return decodeHtmlEntities(html.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
 }
