@@ -384,7 +384,27 @@ app.get("/api/audit-report/:versionId", async (req, res) => {
       });
     }
 
-    const buffer = await generateAuditReport(version, findings);
+    // Разделы (с исходной нумерацией Word) — чтобы по каждой находке показать
+    // её раздел. Берём только лёгкие поля + текст блоков для сопоставления цитат
+    // (без rawHtml — защита от heap-balloon).
+    const reportSections = await prisma.section.findMany({
+      where: { docVersionId: req.params.versionId },
+      orderBy: { order: "asc" },
+      select: {
+        title: true,
+        standardSection: true,
+        headingNumber: true,
+        contentBlocks: { orderBy: { order: "asc" }, select: { content: true } },
+      },
+    });
+    const sectionsForReport = reportSections.map((s) => ({
+      title: s.title,
+      standardSection: s.standardSection,
+      headingNumber: s.headingNumber,
+      content: s.contentBlocks.map((b) => b.content).join("\n"),
+    }));
+
+    const buffer = await generateAuditReport(version, findings, sectionsForReport);
     const filename = `Аудит_${version.document.title}_${version.versionLabel ?? "v" + version.versionNumber}.docx`;
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
