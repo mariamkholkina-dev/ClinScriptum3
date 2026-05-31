@@ -56,6 +56,13 @@ const QA_VERDICT_LABELS: Record<string, string> = {
   adjusted: "Скорректировано QA",
   deduplicated: "Дубликат",
 };
+// Цвета левой полосы цитат (по индексу) — визуально разделяют 1-ю и 2-ю цитату.
+const QUOTE_BORDER_COLORS = [
+  tokens.colorBrandStroke1,
+  tokens.colorPaletteRedBorderActive,
+  tokens.colorPalettePurpleBorderActive,
+];
+
 const QA_VERDICT_COLORS: Record<string, "success" | "danger" | "warning" | "subtle"> = {
   confirmed: "success",
   dismissed: "danger",
@@ -284,34 +291,38 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
 
       {selected && (
         <>
-          {/* Навигация по находкам с учётом текущих фильтров */}
+          {/* Фиксированная панель навигации: «К списку» + переход между находками */}
           <div className={styles.detailNav}>
-            <Button
-              size="small"
-              appearance="subtle"
-              disabled={selectedIndex <= 0}
-              onClick={() => setSelectedId(filtered[selectedIndex - 1]?.id ?? null)}
-            >
-              ← Назад
+            <Button size="small" appearance="subtle" onClick={() => setSelectedId(null)}>
+              ☰ К списку
             </Button>
-            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-              {selectedIndex + 1} / {filtered.length}
-            </Text>
-            <Button
-              size="small"
-              appearance="subtle"
-              disabled={selectedIndex >= filtered.length - 1}
-              onClick={() => setSelectedId(filtered[selectedIndex + 1]?.id ?? null)}
-            >
-              Вперёд →
-            </Button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Button
+                size="small"
+                appearance="subtle"
+                disabled={selectedIndex <= 0}
+                onClick={() => setSelectedId(filtered[selectedIndex - 1]?.id ?? null)}
+              >
+                ← Назад
+              </Button>
+              <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                {selectedIndex + 1} / {filtered.length}
+              </Text>
+              <Button
+                size="small"
+                appearance="subtle"
+                disabled={selectedIndex >= filtered.length - 1}
+                onClick={() => setSelectedId(filtered[selectedIndex + 1]?.id ?? null)}
+              >
+                Вперёд →
+              </Button>
+            </div>
           </div>
           <ReviewDetail
             f={selected}
             sections={r.data.sections ?? []}
             isPublished={isPublished}
             busy={r.busy}
-            onBack={() => setSelectedId(null)}
             onToggleHidden={() => r.toggleHidden(selected.id)}
             onChangeSeverity={(s) => r.changeSeverity(selected.id, s)}
             onSaveNote={(note) => r.addNote(selected.id, note)}
@@ -372,13 +383,12 @@ function ReviewCard({
 }
 
 function ReviewDetail({
-  f, sections, isPublished, busy, onBack, onToggleHidden, onChangeSeverity, onSaveNote, onPromote, onRestore,
+  f, sections, isPublished, busy, onToggleHidden, onChangeSeverity, onSaveNote, onPromote, onRestore,
 }: {
   f: ReviewFinding;
   sections: { title: string; standardSection: string | null; content: string }[];
   isPublished: boolean;
   busy: boolean;
-  onBack: () => void;
   onToggleHidden: () => void;
   onChangeSeverity: (s: string) => void;
   onSaveNote: (note: string) => void;
@@ -449,9 +459,6 @@ function ReviewDetail({
 
   return (
     <div className={styles.detail}>
-      <Button size="small" appearance="subtle" onClick={onBack} style={{ alignSelf: "flex-start" }}>
-        ← К списку
-      </Button>
 
       <div className={styles.badges}>
         <SeverityBadge severity={sev} />
@@ -514,9 +521,22 @@ function ReviewDetail({
               title="Перейти к этому месту в документе"
               style={{
                 cursor: "pointer",
+                // Разный цвет левой полосы — чтобы две цитаты не выглядели как одна.
+                borderLeftWidth: 4,
+                borderLeftColor: QUOTE_BORDER_COLORS[i % QUOTE_BORDER_COLORS.length],
+                marginBottom: 8,
                 backgroundColor: i === navIdx ? tokens.colorNeutralBackground1Selected : undefined,
               }}
             >
+              {quoteList.length > 1 && (
+                <Text
+                  size={100}
+                  weight="semibold"
+                  style={{ display: "block", color: QUOTE_BORDER_COLORS[i % QUOTE_BORDER_COLORS.length] }}
+                >
+                  Цитата {i + 1}
+                </Text>
+              )}
               <Text size={200}>{q}</Text>
             </div>
           ))}
