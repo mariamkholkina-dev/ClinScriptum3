@@ -2,6 +2,17 @@
 
 ## 2026-05-31
 
+### Feat: Word add-in — режим «Ревью находок» (finding_review) для оператора
+
+В Office.js-аддон добавлен полноценный режим ревьюера — все операции, доступные на web `finding-review`, теперь доступны и в Word.
+
+- Новый `Mode='finding_review'` + пункт «Ревью находок (оператор)» в ручном выборе; `ReviewSelector` показывает список ревью (`findingReview.dashboard`). `SessionContext.reviewId`.
+- `ReviewPanel` (+ хук `useReview`): список находок с фильтрами (серьёзность / статус / ложное срабатывание), бэйджи, детализация с цитатами и переходом в документ (`navigateToText`).
+- Операции ревьюера: скрыть/показать (ложное срабатывание), смена серьёзности, заметка, **promote-to-golden** («В эталон», `PromoteModal`), **массовые операции** (чекбоксы + bulk скрыть/показать/severity/эталон), **завершение ревью** («Завершить ревью» → publish).
+- Эффективная серьёзность читается так же, как на web (`extraAttributes.severity` → колонка → info).
+
+Использует существующие reviewer-эндпойнты (`getReview`, `toggleHidden`, `changeSeverity`, `addNote`, `promoteFindingToGolden`, `bulkSetHidden`, `bulkChangeSeverity`, `publish`, `listGoldenSamples`, `dashboard`). Требует rebuild word-addin.
+
 ### Feat: finding-review (web) — promote-to-golden, массовые операции, явное завершение ревью
 
 Расширили возможности ревьюера на экране `finding-review` (web), доведя паритет с rule-admin.

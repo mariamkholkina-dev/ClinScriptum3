@@ -8,6 +8,8 @@ export interface SessionContext {
   generatedDocId?: string;
   /** Только для mode='parsing': ссылка на голден-сэмпл если открыт из /golden-dataset. */
   goldenSampleId?: string;
+  /** Только для mode='finding_review': id ревью находок. */
+  reviewId?: string;
 }
 
 interface AuthContextValue {
