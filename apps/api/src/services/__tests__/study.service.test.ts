@@ -130,6 +130,21 @@ describe("studyService", () => {
         }),
       });
     });
+
+    it("applies default settings for new study", async () => {
+      mockStudy.create.mockResolvedValue(makeStudy());
+
+      await studyService.create(TENANT_A, { title: "S", phase: "I" });
+
+      expect(mockStudy.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          operatorReviewEnabled: true,
+          llmThinkingEnabled: true,
+          intraAuditDeterministicEnabled: false,
+          auditMode: "zone_based",
+        }),
+      });
+    });
   });
 
   describe("update", () => {
