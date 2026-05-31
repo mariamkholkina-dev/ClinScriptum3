@@ -22,6 +22,8 @@ import { AuthProvider, useAuth, type SessionContext } from "./auth/AuthProvider"
 import { useAutoAuth } from "./auth/useAutoAuth";
 import { LoginForm } from "./auth/LoginForm";
 import { FindingsPanel } from "./findings/FindingsPanel";
+import { ReviewPanel } from "./review/ReviewPanel";
+import { ReviewSelector } from "./review/ReviewSelector";
 import { InterAuditPanel } from "./inter-audit/InterAuditPanel";
 import { GenerationPanel } from "./generation/GenerationPanel";
 import { UploadPanel } from "./upload/UploadPanel";
@@ -163,6 +165,12 @@ function AppContent() {
         </div>
       )}
 
+      {mode === "finding_review" && sessionContext.reviewId && (
+        <div className={styles.content}>
+          <ReviewPanel reviewId={sessionContext.reviewId} />
+        </div>
+      )}
+
       {(mode === "generation_review" || mode === "generation_insert") && sessionContext.generatedDocId && (
         <>
           <TabList
@@ -228,6 +236,7 @@ type Mode =
   | "intra_audit"
   | "intra_fact_audit"
   | "inter_audit"
+  | "finding_review"
   | "generation_review"
   | "generation_insert";
 
@@ -236,6 +245,7 @@ const MODE_LABELS: { value: Mode; label: string }[] = [
   { value: "intra_audit", label: "Внутридокументный аудит (секции)" },
   { value: "intra_fact_audit", label: "Внутридокументный аудит фактов" },
   { value: "inter_audit", label: "Междокументный аудит" },
+  { value: "finding_review", label: "Ревью находок (оператор)" },
   { value: "generation_review", label: "Генерация — просмотр" },
   { value: "generation_insert", label: "Генерация — вставка" },
 ];
@@ -323,7 +333,13 @@ function ManualModeSelector({ onSelect }: { onSelect: (ctx: SessionContext) => v
 
       <Divider />
 
-      {isGenerationMode(selectedMode) ? (
+      {selectedMode === "finding_review" ? (
+        <ReviewSelector
+          onSelect={(reviewId, docVersionId) =>
+            onSelect({ mode: "finding_review", reviewId, docVersionId })
+          }
+        />
+      ) : isGenerationMode(selectedMode) ? (
         loadingGenerated ? (
           <Spinner label="Загрузка..." size="small" />
         ) : (
