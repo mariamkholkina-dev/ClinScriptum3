@@ -1,525 +1,599 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { trpc } from "@/lib/trpc";
+import { cn } from "@/lib/cn";
 import {
   ArrowLeft,
-  Loader2,
-  AlertCircle,
   Eye,
   EyeOff,
-  MessageSquare,
   Send,
-  CheckCircle2,
+  Shield,
+  Loader2,
+  MessageSquare,
+  AlertTriangle,
   Star,
-  X,
 } from "lucide-react";
-import { trpc } from "@/lib/trpc";
-import { FindingValuePair } from "@/components/finding-value-pair";
-import { FindingSectionLink } from "@/components/finding-section-link";
+import {
+  SEVERITY_BORDER,
+  SEVERITY_LABELS,
+  SEVERITY_STYLES,
+  SEVERITY_OPTIONS,
+  STATUS_ORDER,
+  STATUS_LABELS,
+  TYPE_LABELS,
+  extractFindingMeta,
+  effectiveSeverity,
+  selectTestedSections,
+  FindingBadges,
+  FindingCardBody,
+  FindingDetailBody,
+} from "@/components/finding-display";
+import { PromoteToGoldenModal } from "@/components/promote-to-golden-modal";
 
-const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"] as const;
-type Severity = (typeof SEVERITY_OPTIONS)[number];
+/* ──────────────────── Constants ──────────────────── */
 
-const SEVERITY_LABEL: Record<Severity, string> = {
-  critical: "Критическое",
-  high: "Высокое",
-  medium: "Среднее",
-  low: "Низкое",
-  info: "Инфо",
+const AUDIT_TYPE_LABELS: Record<string, string> = {
+  intra_audit: "Внутридокументный аудит",
+  inter_audit: "Междокументный аудит",
 };
 
-const SEVERITY_BADGE: Record<Severity, string> = {
-  critical: "bg-red-100 text-red-800",
-  high: "bg-orange-100 text-orange-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  low: "bg-blue-100 text-blue-800",
-  info: "bg-gray-100 text-gray-700",
-};
+// Фильтр по «ложному срабатыванию» — в ревью оно означает «скрыт ревьюером»
+// (hiddenByReviewer), а не Finding.status. Показываем все опции всегда.
+const VISIBILITY_OPTIONS = [
+  { value: "all", label: "Все находки" },
+  { value: "visible", label: "Не ложные (видимые)" },
+  { value: "hidden", label: "Ложное срабатывание" },
+] as const;
 
-interface ReviewFinding {
-  id: string;
-  description: string;
-  suggestion?: string | null;
-  severity: Severity | null;
-  originalSeverity?: Severity | null;
-  issueFamily?: string | null;
-  issueType?: string | null;
-  anchorZone?: string | null;
-  status: string;
-  hiddenByReviewer: boolean;
-  reviewerNote?: string | null;
-  sourceRef?: unknown;
-  extraAttributes?: unknown;
-}
+type DocSection = { id: string; title: string; standardSection: string | null; content: string };
 
-interface ReviewView {
-  id: string;
-  docVersionId: string;
-  auditType: "intra_audit" | "inter_audit";
-  status: "pending" | "in_review" | "published";
-  reviewerId: string | null;
-  documentTitle?: string | null;
-  versionLabel?: string | null;
-  findings: ReviewFinding[];
-}
+/* ──────────────────── Main Page ──────────────────── */
 
 export default function FindingReviewDetailPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const reviewId = params.id;
+  const router = useRouter();
+
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [visibilityFilter, setVisibilityFilter] = useState("all");
+  const [noteText, setNoteText] = useState("");
+  const [showPublishConfirm, setShowPublishConfirm] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [promoteTarget, setPromoteTarget] = useState<string[] | null>(null);
+
   const utils = trpc.useUtils();
 
-  const reviewQuery = trpc.findingReview.getReview.useQuery(
+  const { data, isLoading } = trpc.findingReview.getReview.useQuery(
     { reviewId },
-    { staleTime: 30_000, refetchOnWindowFocus: false },
+    { enabled: !!reviewId }
   );
 
-  const refetch = useCallback(() => {
+  const refetch = () => {
     void utils.findingReview.getReview.invalidate({ reviewId });
     void utils.findingReview.dashboard.invalidate();
-  }, [utils, reviewId]);
+  };
 
   const startReview = trpc.findingReview.startReview.useMutation({ onSuccess: refetch });
   const toggleHidden = trpc.findingReview.toggleHidden.useMutation({ onSuccess: refetch });
   const changeSeverity = trpc.findingReview.changeSeverity.useMutation({ onSuccess: refetch });
-  const addNote = trpc.findingReview.addNote.useMutation({ onSuccess: refetch });
+  const addNote = trpc.findingReview.addNote.useMutation({
+    onSuccess: () => { refetch(); setNoteText(""); },
+  });
   const publish = trpc.findingReview.publish.useMutation({
-    onSuccess: () => {
-      refetch();
-      router.push("/finding-review");
-    },
+    onSuccess: () => { refetch(); setShowPublishConfirm(false); },
   });
 
-  if (reviewQuery.isLoading) {
+  const clearSelection = () => setSelectedIds(new Set());
+  const bulkSetHidden = trpc.findingReview.bulkSetHidden.useMutation({
+    onSuccess: () => { refetch(); clearSelection(); },
+  });
+  const bulkChangeSeverity = trpc.findingReview.bulkChangeSeverity.useMutation({
+    onSuccess: () => { refetch(); clearSelection(); },
+  });
+
+  useEffect(() => {
+    if (data?.review.status === "pending") {
+      startReview.mutate({ reviewId });
+    }
+  }, [data?.review.status]);
+
+  const review = data?.review;
+  const findings = data?.findings ?? [];
+  const sections = ((data as any)?.sections ?? []) as DocSection[];
+
+  const availableTypes = Array.from(
+    new Set(findings.map((f: any) => extractFindingMeta(f).type).filter(Boolean)),
+  ).sort() as string[];
+
+  const filteredFindings = findings.filter((f: any) => {
+    if (severityFilter !== "all" && effectiveSeverity(f) !== severityFilter) return false;
+    if (typeFilter !== "all" && extractFindingMeta(f).type !== typeFilter) return false;
+    if (statusFilter !== "all" && f.status !== statusFilter) return false;
+    if (visibilityFilter === "hidden" && !f.hiddenByReviewer) return false;
+    if (visibilityFilter === "visible" && f.hiddenByReviewer) return false;
+    return true;
+  });
+
+  const selectedFinding = filteredFindings.find((f: any) => f.id === selectedFindingId)
+    ?? (filteredFindings.length > 0 ? filteredFindings[0] : null);
+
+  const hiddenCount = findings.filter((f: any) => f.hiddenByReviewer).length;
+  const visibleCount = findings.length - hiddenCount;
+
+  useEffect(() => {
+    if (selectedFinding) {
+      setNoteText(selectedFinding.reviewerNote ?? "");
+    }
+  }, [selectedFinding?.id]);
+
+  if (isLoading) {
     return (
-      <div className="p-8 text-center text-gray-500">
-        <Loader2 size={20} className="mx-auto animate-spin" />
-      </div>
-    );
-  }
-  if (reviewQuery.error) {
-    return (
-      <div className="m-4 flex items-center gap-2 rounded-md bg-red-50 p-3 text-sm text-red-700">
-        <AlertCircle size={16} /> {reviewQuery.error.message}
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
       </div>
     );
   }
 
-  const review = reviewQuery.data as ReviewView | undefined;
-  if (!review) return null;
+  if (!data || !review) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16">
+        <AlertTriangle className="h-12 w-12 text-gray-300 mb-3" />
+        <p className="text-gray-500">Ревью не найдено</p>
+      </div>
+    );
+  }
 
-  const findings = review.findings;
-  const hiddenCount = findings.filter((f) => f.hiddenByReviewer).length;
-  const remainingVisible = findings.length - hiddenCount;
   const isPublished = review.status === "published";
 
+  const testedSections = selectedFinding
+    ? selectTestedSections(extractFindingMeta(selectedFinding), sections)
+    : [];
+
+  // ── Множественный выбор для массовых операций ──
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const filteredIds = filteredFindings.map((f: any) => f.id);
+  const allFilteredSelected =
+    filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+  const toggleSelectAll = () =>
+    setSelectedIds((prev) => {
+      if (allFilteredSelected) {
+        const next = new Set(prev);
+        filteredIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...filteredIds]);
+    });
+  const selectedArray = Array.from(selectedIds);
+  const bulkBusy = bulkSetHidden.isPending || bulkChangeSeverity.isPending;
+
   return (
-    <div className="space-y-4 p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/finding-review")}
-            className="rounded p-1 text-gray-500 hover:bg-gray-100"
-          >
-            <ArrowLeft size={18} />
-          </button>
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">
-              {review.documentTitle ?? `Документ ${review.docVersionId.slice(0, 8)}`}
-              {review.versionLabel && (
-                <span className="ml-2 text-xs text-gray-500">· {review.versionLabel}</span>
-              )}
-            </h1>
-            <p className="text-xs text-gray-500">
-              {review.auditType === "intra_audit"
-                ? "Внутридокументный аудит"
-                : "Межд. сравнение"}{" "}
-              · статус: <span className="font-medium">{review.status}</span>
-            </p>
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      {/* Header (стиль rule-admin) */}
+      <div className="flex-none border-b bg-white px-6 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => router.push("/finding-review")}
+              className="rounded p-1 text-gray-500 hover:bg-gray-100"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold text-gray-900 truncate">
+                {data.documentTitle}
+                <span className="ml-2 text-xs font-normal text-gray-500">{data.versionLabel}</span>
+              </h1>
+              <p className="text-xs text-gray-500 truncate">
+                {(data as any).studyTitle ? `${(data as any).studyTitle} · ` : ""}
+                {AUDIT_TYPE_LABELS[review.auditType] ?? review.auditType} · статус: {review.status}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 flex-none">
+            <div className="text-right text-xs text-gray-500">
+              <div>Видимые: <span className="font-semibold text-gray-900">{visibleCount}</span></div>
+              <div>Скрытые: <span className="font-semibold text-red-600">{hiddenCount}</span></div>
+            </div>
+            {isPublished ? (
+              <span className="rounded-full bg-green-100 px-4 py-2 text-sm font-medium text-green-700">
+                Опубликовано
+              </span>
+            ) : showPublishConfirm ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Завершить ревью и опубликовать писателю?</span>
+                <button
+                  onClick={() => publish.mutate({ reviewId })}
+                  disabled={publish.isPending}
+                  className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {publish.isPending ? "..." : "Да, завершить"}
+                </button>
+                <button
+                  onClick={() => setShowPublishConfirm(false)}
+                  className="rounded-lg border px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                >
+                  Отмена
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowPublishConfirm(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                title="Завершить ревью и опубликовать находки писателю"
+              >
+                <Send className="h-4 w-4" />
+                Завершить ревью
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 flex min-h-0">
+        {/* Left: Findings list */}
+        <div className="w-[440px] flex-none border-r flex flex-col bg-gray-50">
+          <div className="flex-none p-4 border-b bg-white">
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={severityFilter}
+                onChange={(e) => setSeverityFilter(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="all">Все серьёзности</option>
+                {SEVERITY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="all">Все типы</option>
+                {availableTypes.map((t) => (
+                  <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
+                ))}
+              </select>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="all">Все статусы</option>
+                {STATUS_ORDER.map((s) => (
+                  <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
+                ))}
+              </select>
+              <select
+                value={visibilityFilter}
+                onChange={(e) => setVisibilityFilter(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                {VISIBILITY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {!isPublished && filteredFindings.length > 0 && (
+              <div className="mt-2 flex items-center justify-between">
+                <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded border-gray-300"
+                  />
+                  Выбрать все ({filteredFindings.length})
+                </label>
+                {selectedIds.size > 0 && (
+                  <button onClick={clearSelection} className="text-xs text-gray-400 hover:text-gray-600">
+                    Снять выделение ({selectedIds.size})
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {!isPublished && selectedIds.size > 0 && (
+            <div className="flex-none border-b bg-amber-50 px-3 py-2 space-y-2">
+              <div className="text-xs font-medium text-amber-800">Выбрано: {selectedIds.size}</div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  onClick={() => bulkSetHidden.mutate({ reviewId, findingIds: selectedArray, hidden: true })}
+                  disabled={bulkBusy}
+                  className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  <EyeOff className="h-3 w-3" /> Скрыть (FP)
+                </button>
+                <button
+                  onClick={() => bulkSetHidden.mutate({ reviewId, findingIds: selectedArray, hidden: false })}
+                  disabled={bulkBusy}
+                  className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <Eye className="h-3 w-3" /> Показать
+                </button>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      bulkChangeSeverity.mutate({ reviewId, findingIds: selectedArray, severity: e.target.value as any });
+                    }
+                  }}
+                  disabled={bulkBusy}
+                  className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-50"
+                >
+                  <option value="">Серьёзность…</option>
+                  {SEVERITY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => setPromoteTarget(selectedArray)}
+                  disabled={bulkBusy}
+                  className="inline-flex items-center gap-1 rounded border border-yellow-300 bg-yellow-50 px-2 py-1 text-xs text-yellow-800 hover:bg-yellow-100 disabled:opacity-50"
+                >
+                  <Star className="h-3 w-3" /> В эталон
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {filteredFindings.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                <Shield className="h-12 w-12 text-gray-300 mb-3" />
+                <p className="text-sm text-gray-500">Нет findings</p>
+              </div>
+            )}
+
+            {filteredFindings.map((finding: any) => {
+              const severity = effectiveSeverity(finding);
+              const isSelected = finding.id === selectedFinding?.id;
+              const showOriginal = finding.originalSeverity && finding.originalSeverity !== severity;
+              const isChecked = selectedIds.has(finding.id);
+
+              return (
+                <div
+                  key={finding.id}
+                  onClick={() => setSelectedFindingId(finding.id)}
+                  className={cn(
+                    "rounded-lg border bg-white p-3 cursor-pointer transition-all border-l-4",
+                    SEVERITY_BORDER[severity] ?? "border-l-gray-300",
+                    finding.hiddenByReviewer && "opacity-50",
+                    isChecked && "ring-1 ring-amber-300",
+                    isSelected ? "ring-2 ring-brand-400 shadow-md" : "hover:shadow-sm"
+                  )}
+                >
+                  {!isPublished && (
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleSelect(finding.id)}
+                      className="float-right ml-2 mt-0.5 rounded border-gray-300"
+                    />
+                  )}
+                  <FindingBadges finding={finding} showStatus />
+                  {(finding.hiddenByReviewer || showOriginal) && (
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                      {finding.hiddenByReviewer && (
+                        <span className="rounded-full bg-red-100 text-red-600 px-1.5 py-0.5 text-[10px] font-medium flex items-center gap-0.5">
+                          <EyeOff className="h-2.5 w-2.5" />
+                          Ложное срабатывание
+                        </span>
+                      )}
+                      {showOriginal && (
+                        <span className="text-[10px] text-gray-400">
+                          Алгоритм:{" "}
+                          <span className="line-through">{SEVERITY_LABELS[finding.originalSeverity] ?? finding.originalSeverity}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <FindingCardBody finding={finding} />
+                  {finding.reviewerNote && (
+                    <div className="flex items-center gap-1 mt-1.5 text-[10px] text-purple-600">
+                      <MessageSquare className="h-2.5 w-2.5" />
+                      Есть заметка
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">
-            Видны writer&apos;у после публикации: <b>{remainingVisible}</b> · скрыты:{" "}
-            <b>{hiddenCount}</b>
-          </span>
-          {review.status === "pending" && (
-            <button
-              onClick={() => startReview.mutate({ reviewId })}
-              disabled={startReview.isPending}
-              className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50"
-            >
-              Взять в работу
-            </button>
+        {/* Right: Finding detail + actions */}
+        <div className="flex-1 overflow-y-auto bg-white p-6">
+          {!selectedFinding ? (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400">
+              <Eye className="h-16 w-16 mb-4" />
+              <p className="text-lg">Выберите finding для проверки</p>
+            </div>
+          ) : (
+            <ReviewDetail
+              finding={selectedFinding}
+              sections={testedSections}
+              isPublished={isPublished}
+              noteText={noteText}
+              onNoteChange={setNoteText}
+              onToggleHidden={() => toggleHidden.mutate({ reviewId, findingId: selectedFinding.id })}
+              onChangeSeverity={(severity: string) =>
+                changeSeverity.mutate({ reviewId, findingId: selectedFinding.id, severity: severity as any })
+              }
+              onSaveNote={() => addNote.mutate({ reviewId, findingId: selectedFinding.id, note: noteText })}
+              onPromote={() => setPromoteTarget([selectedFinding.id])}
+              isToggling={toggleHidden.isPending}
+              isChangingSeverity={changeSeverity.isPending}
+              isSavingNote={addNote.isPending}
+            />
           )}
-          {review.status !== "published" && (
-            <button
-              onClick={() => publish.mutate({ reviewId })}
-              disabled={publish.isPending}
-              className="inline-flex items-center gap-1.5 rounded bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-            >
-              <Send size={14} />
-              Опубликовать writer&apos;у
-            </button>
+        </div>
+      </div>
+
+      {promoteTarget && (
+        <PromoteToGoldenModal
+          reviewId={reviewId}
+          findingIds={promoteTarget}
+          onClose={() => setPromoteTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────── Review Detail ──────────────────── */
+
+function ReviewDetail({
+  finding,
+  sections,
+  isPublished,
+  noteText,
+  onNoteChange,
+  onToggleHidden,
+  onChangeSeverity,
+  onSaveNote,
+  onPromote,
+  isToggling,
+  isChangingSeverity,
+  isSavingNote,
+}: {
+  finding: any;
+  sections: DocSection[];
+  isPublished: boolean;
+  noteText: string;
+  onNoteChange: (v: string) => void;
+  onToggleHidden: () => void;
+  onChangeSeverity: (severity: string) => void;
+  onSaveNote: () => void;
+  onPromote: () => void;
+  isToggling: boolean;
+  isChangingSeverity: boolean;
+  isSavingNote: boolean;
+}) {
+  const severity = effectiveSeverity(finding);
+  const showOriginal = finding.originalSeverity && finding.originalSeverity !== severity;
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <div className="flex justify-end">
+        <button
+          onClick={onPromote}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-1.5 text-sm font-medium text-yellow-800 hover:bg-yellow-100"
+          title="Перенести находку в эталонный набор"
+        >
+          <Star className="h-4 w-4" />
+          В эталон
+        </button>
+      </div>
+
+      {(showOriginal || finding.hiddenByReviewer) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {showOriginal && (
+            <span className="text-xs text-gray-400">
+              Алгоритм:{" "}
+              <span className="line-through">{SEVERITY_LABELS[finding.originalSeverity] ?? finding.originalSeverity}</span>
+            </span>
           )}
-          {isPublished && (
-            <span className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">
-              <CheckCircle2 size={12} /> опубликовано
+          {finding.hiddenByReviewer && (
+            <span className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-xs font-medium flex items-center gap-1">
+              <EyeOff className="h-3 w-3" />
+              Скрыт от пользователя (ложное срабатывание)
             </span>
           )}
         </div>
-      </header>
+      )}
 
-      <div className="space-y-2">
-        {findings.map((f) => (
-          <FindingCard
-            key={f.id}
-            f={f}
-            disabled={isPublished}
-            reviewId={reviewId}
-            onToggleHidden={() => toggleHidden.mutate({ reviewId, findingId: f.id })}
-            onChangeSeverity={(severity) =>
-              changeSeverity.mutate({ reviewId, findingId: f.id, severity })
-            }
-            onAddNote={(note) => addNote.mutate({ reviewId, findingId: f.id, note })}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
+      <FindingDetailBody finding={finding} sections={sections} />
 
-/* ═══════════════ Promote-to-golden modal ═══════════════ */
+      {!isPublished && (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-5 space-y-5">
+          <h3 className="text-sm font-semibold text-gray-700">Действия ревьюера</h3>
 
-interface GoldenSampleRow {
-  id: string;
-  name?: string | null;
-  sampleType?: string;
-}
-
-function PromoteToGoldenModal({
-  reviewId,
-  findingId,
-  onClose,
-}: {
-  reviewId: string;
-  findingId: string;
-  onClose: () => void;
-}) {
-  const samplesQuery = trpc.goldenDataset.listSamples.useQuery(
-    {},
-    { staleTime: 30_000, refetchOnWindowFocus: false },
-  );
-  const [selected, setSelected] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
-
-  const mutation = trpc.findingReview.promoteFindingToGolden.useMutation({
-    onSuccess: (data) => {
-      if (data && typeof data === "object" && "promoted" in data) {
-        const d = data as { promoted: boolean; reason?: string };
-        setResult(
-          d.promoted ? "✓ Finding добавлен в эталон" : `Уже присутствует (${d.reason ?? "—"})`,
-        );
-      } else {
-        setResult("✓");
-      }
-    },
-    onError: (err) => {
-      setResult("✗ Ошибка: " + err.message);
-    },
-  });
-
-  const samples = (samplesQuery.data ?? []) as GoldenSampleRow[];
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-            <Star size={14} className="text-yellow-500" />
-            Promote finding в эталонный набор
-          </h3>
-          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:text-gray-600">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="space-y-3 p-4">
-          <p className="text-xs text-gray-600">
-            Выберите golden sample. Finding будет конвертирован в ExpectedFinding и добавлен
-            в <code>expectedResults.findings</code> stage=&apos;intra_audit&apos;. Если такого
-            stage у sample ещё нет — он создаётся как draft.
-          </p>
-
-          {samplesQuery.isLoading ? (
-            <div className="py-4 text-center text-xs text-gray-500">
-              <Loader2 size={14} className="mx-auto animate-spin" />
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-900">Скрыть от конечного пользователя</p>
+              <p className="text-xs text-gray-500">Ложноположительный finding не будет показан</p>
             </div>
-          ) : samples.length === 0 ? (
-            <p className="rounded bg-yellow-50 p-2 text-xs text-yellow-700">
-              Нет доступных golden samples. Создайте sample в /golden-dataset и повторите.
-            </p>
-          ) : (
-            <div className="max-h-72 space-y-1 overflow-y-auto">
-              {samples.map((s) => (
-                <label
-                  key={s.id}
-                  className={`flex cursor-pointer items-center gap-2 rounded border px-2 py-1.5 text-xs ${
-                    selected === s.id
-                      ? "border-brand-500 bg-brand-50"
-                      : "border-gray-200 hover:bg-gray-50"
-                  }`}
+            <button
+              onClick={onToggleHidden}
+              disabled={isToggling}
+              className={cn(
+                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                finding.hiddenByReviewer ? "bg-red-500" : "bg-gray-300"
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-4 w-4 rounded-full bg-white transition-transform",
+                  finding.hiddenByReviewer ? "translate-x-6" : "translate-x-1"
+                )}
+              />
+            </button>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium text-gray-900 mb-2">Уровень критичности</p>
+            <div className="flex gap-1.5">
+              {SEVERITY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => onChangeSeverity(opt.value)}
+                  disabled={isChangingSeverity}
+                  className={cn(
+                    "rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors",
+                    severity === opt.value
+                      ? cn(SEVERITY_STYLES[opt.value], "ring-2 ring-offset-1 ring-gray-300")
+                      : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+                  )}
                 >
-                  <input
-                    type="radio"
-                    name="sample"
-                    checked={selected === s.id}
-                    onChange={() => setSelected(s.id)}
-                  />
-                  <span className="flex-1">
-                    {s.name ?? `Sample ${s.id.slice(0, 8)}`}
-                    {s.sampleType && (
-                      <span className="ml-2 text-[10px] text-gray-500">{s.sampleType}</span>
-                    )}
-                  </span>
-                </label>
+                  {opt.label}
+                </button>
               ))}
             </div>
-          )}
+          </div>
 
-          {result && (
-            <div
-              className={`rounded p-2 text-xs ${
-                result.startsWith("✗")
-                  ? "bg-red-50 text-red-700"
-                  : "bg-green-50 text-green-700"
-              }`}
-            >
-              {result}
+          <div>
+            <p className="text-sm font-medium text-gray-900 mb-2">Заметка</p>
+            <textarea
+              value={noteText}
+              onChange={(e) => onNoteChange(e.target.value)}
+              placeholder="Комментарий к finding (сохраняется для обучения алгоритма)..."
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              rows={3}
+            />
+            <div className="flex justify-end mt-2">
+              <button
+                onClick={onSaveNote}
+                disabled={isSavingNote || noteText === (finding.reviewerNote ?? "")}
+                className="inline-flex items-center gap-1 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-40"
+              >
+                <MessageSquare className="h-3 w-3" />
+                Сохранить заметку
+              </button>
             </div>
-          )}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              onClick={onClose}
-              className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:bg-gray-100"
-            >
-              Закрыть
-            </button>
-            <button
-              onClick={() =>
-                selected && mutation.mutate({ reviewId, findingId, goldenSampleId: selected })
-              }
-              disabled={!selected || mutation.isPending}
-              className="rounded bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-700 disabled:opacity-50"
-            >
-              {mutation.isPending ? "..." : "Promote"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FindingCard({
-  f,
-  disabled,
-  reviewId,
-  onToggleHidden,
-  onChangeSeverity,
-  onAddNote,
-}: {
-  f: ReviewFinding;
-  disabled: boolean;
-  reviewId: string;
-  onToggleHidden: () => void;
-  onChangeSeverity: (s: Severity) => void;
-  onAddNote: (note: string) => void;
-}) {
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [note, setNote] = useState(f.reviewerNote ?? "");
-  const [promoteOpen, setPromoteOpen] = useState(false);
-  const sev = (f.severity ?? "medium") as Severity;
-  const ref = (f.sourceRef ?? {}) as {
-    anchorQuote?: string;
-    targetQuote?: string;
-    referenceQuote?: string;
-    referenceSectionId?: string;
-    targetSectionId?: string;
-    referenceValueRaw?: string;
-    targetValueRaw?: string;
-  };
-  const extra = (f.extraAttributes ?? {}) as {
-    referenceValueCanonical?: string;
-    targetValueCanonical?: string;
-  };
-  // v2 — есть ли в этой находке value pair (из intra-audit v2 промтов)?
-  const hasValuePair = Boolean(ref.referenceValueRaw || ref.targetValueRaw);
-
-  return (
-    <div
-      className={`rounded-md border p-3 text-sm ${
-        f.hiddenByReviewer
-          ? "border-gray-200 bg-gray-100/50 opacity-60"
-          : "border-gray-200 bg-white"
-      }`}
-    >
-      <div className="mb-1 flex flex-wrap items-center gap-1.5">
-        <select
-          value={sev}
-          onChange={(e) => onChangeSeverity(e.target.value as Severity)}
-          disabled={disabled}
-          className={`rounded border-0 px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[sev]} disabled:cursor-not-allowed`}
-        >
-          {SEVERITY_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {SEVERITY_LABEL[s]}
-            </option>
-          ))}
-        </select>
-        {f.originalSeverity && f.originalSeverity !== f.severity && (
-          <span className="text-[10px] text-gray-400">
-            (исходно: {SEVERITY_LABEL[f.originalSeverity]})
-          </span>
-        )}
-        {f.issueFamily && (
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
-            {f.issueFamily}
-          </span>
-        )}
-        {f.issueType && (
-          <span className="rounded bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-600">
-            {f.issueType}
-          </span>
-        )}
-        {f.anchorZone && (
-          <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">
-            {f.anchorZone}
-          </span>
-        )}
-
-        <div className="ml-auto flex shrink-0 gap-1">
-          <button
-            onClick={onToggleHidden}
-            disabled={disabled}
-            className={`rounded border px-2 py-0.5 text-xs transition-colors disabled:opacity-30 ${
-              f.hiddenByReviewer
-                ? "border-gray-400 bg-gray-200 text-gray-700"
-                : "border-gray-300 text-gray-600 hover:border-red-300 hover:text-red-600"
-            }`}
-            title={f.hiddenByReviewer ? "Показать writer'у" : "Скрыть от writer'а (FP)"}
-          >
-            {f.hiddenByReviewer ? <EyeOff size={12} /> : <Eye size={12} />}
-            <span className="ml-1">{f.hiddenByReviewer ? "Скрыто" : "Скрыть"}</span>
-          </button>
-          <button
-            onClick={() => setNoteOpen((v) => !v)}
-            disabled={disabled}
-            className="rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-30"
-            title="Добавить заметку"
-          >
-            <MessageSquare size={12} /> {f.reviewerNote ? "✎ заметка" : "+ заметка"}
-          </button>
-          <button
-            onClick={() => setPromoteOpen(true)}
-            className="rounded border border-yellow-300 bg-yellow-50 px-2 py-0.5 text-xs text-yellow-800 hover:bg-yellow-100"
-            title="Перенести этот finding в эталонный набор (Promote-to-golden)"
-          >
-            <Star size={12} className="inline" /> В эталон
-          </button>
-        </div>
-      </div>
-
-      {promoteOpen && (
-        <PromoteToGoldenModal
-          reviewId={reviewId}
-          findingId={f.id}
-          onClose={() => setPromoteOpen(false)}
-        />
-      )}
-
-      <p className="text-sm text-gray-800">{f.description}</p>
-
-      {hasValuePair && (
-        <FindingValuePair
-          data={{
-            referenceSectionId: ref.referenceSectionId,
-            targetSectionId: ref.targetSectionId,
-            referenceValueRaw: ref.referenceValueRaw,
-            targetValueRaw: ref.targetValueRaw,
-            referenceValueCanonical: extra.referenceValueCanonical,
-            targetValueCanonical: extra.targetValueCanonical,
-          }}
-        />
-      )}
-
-      {(ref.anchorQuote || ref.referenceQuote || ref.targetQuote) && (
-        <blockquote className="mt-1 border-l-2 border-gray-300 pl-2 text-xs italic text-gray-600">
-          {(ref.referenceQuote || ref.anchorQuote) && (
-            <>
-              {ref.referenceSectionId && (
-                <FindingSectionLink sectionId={ref.referenceSectionId} />
-              )}{" "}
-              «{ref.referenceQuote ?? ref.anchorQuote}»
-            </>
-          )}
-          {ref.targetQuote && (
-            <>
-              <br />
-              <span className="text-gray-400">→</span>{" "}
-              {ref.targetSectionId && <FindingSectionLink sectionId={ref.targetSectionId} />}{" "}
-              «{ref.targetQuote}»
-            </>
-          )}
-        </blockquote>
-      )}
-
-      {f.suggestion && (
-        <p className="mt-1 text-xs text-gray-500">
-          <span className="font-medium">Suggestion:</span> {f.suggestion}
-        </p>
-      )}
-
-      {noteOpen && (
-        <div className="mt-2 space-y-1">
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Почему скрыли / что не так / решение..."
-            className="w-full rounded border border-gray-300 px-2 py-1 text-xs focus:border-brand-500 focus:outline-none"
-            rows={2}
-            maxLength={2000}
-          />
-          <div className="flex justify-end gap-1">
-            <button
-              onClick={() => {
-                setNoteOpen(false);
-                setNote(f.reviewerNote ?? "");
-              }}
-              className="rounded px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-100"
-            >
-              Отмена
-            </button>
-            <button
-              onClick={() => {
-                onAddNote(note);
-                setNoteOpen(false);
-              }}
-              disabled={!note.trim()}
-              className="rounded bg-brand-600 px-2 py-0.5 text-xs text-white hover:bg-brand-700 disabled:opacity-50"
-            >
-              Сохранить
-            </button>
           </div>
         </div>
       )}
 
-      {!noteOpen && f.reviewerNote && (
-        <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-900">
-          <span className="font-medium">📝 </span>
-          {f.reviewerNote}
+      {isPublished && finding.reviewerNote && (
+        <div className="rounded-lg border border-purple-200 bg-purple-50 p-3">
+          <p className="text-xs font-semibold text-purple-700 uppercase mb-1">Заметка ревьюера</p>
+          <p className="text-sm text-gray-700">{finding.reviewerNote}</p>
         </div>
       )}
     </div>
