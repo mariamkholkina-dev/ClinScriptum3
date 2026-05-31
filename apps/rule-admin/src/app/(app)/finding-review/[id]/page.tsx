@@ -151,17 +151,20 @@ export default function FindingReviewDetailPage() {
     new Set(findings.map((f: any) => extractFindingMeta(f).type).filter(Boolean)),
   ).sort() as string[];
 
+  // «Ложное срабатывание» — это И скрытое ревьюером (hiddenByReviewer), И
+  // помеченное конвейером/LLM (status=false_positive): на карточках обе пометки
+  // подписаны «Ложное срабатывание». Единый предикат для фильтра И счётчиков
+  // шапки — иначе FP-находки, не скрытые вручную, считались «видимыми» в шапке,
+  // но «ложными» в фильтре (расхождение Видимые/Скрытые vs фильтры).
+  const isFalsePositive = (f: any) => f.hiddenByReviewer || f.status === "false_positive";
+
   const q = searchText.trim().toLowerCase();
   const filteredFindings = findings.filter((f: any) => {
-    // «Ложное срабатывание» — это И скрытое ревьюером (hiddenByReviewer), И
-    // помеченное конвейером/LLM (status=false_positive): на карточках обе пометки
-    // подписаны «Ложное срабатывание», поэтому фильтр должен ловить оба случая.
-    const isFalsePositive = f.hiddenByReviewer || f.status === "false_positive";
     if (severityFilter !== "all" && effectiveSeverity(f) !== severityFilter) return false;
     if (typeFilter !== "all" && extractFindingMeta(f).type !== typeFilter) return false;
     if (statusFilter !== "all" && f.status !== statusFilter) return false;
-    if (visibilityFilter === "hidden" && !isFalsePositive) return false;
-    if (visibilityFilter === "visible" && isFalsePositive) return false;
+    if (visibilityFilter === "hidden" && !isFalsePositive(f)) return false;
+    if (visibilityFilter === "visible" && isFalsePositive(f)) return false;
     if (q) {
       const m = extractFindingMeta(f);
       const hay = [m.description, m.suggestion, m.textSnippet, m.referenceQuote, m.anchorQuote, m.targetQuote, f.reviewerNote]
@@ -176,7 +179,10 @@ export default function FindingReviewDetailPage() {
   const selectedFinding = filteredFindings.find((f: any) => f.id === selectedFindingId)
     ?? (filteredFindings.length > 0 ? filteredFindings[0] : null);
 
-  const hiddenCount = findings.filter((f: any) => f.hiddenByReviewer).length;
+  // Считаем по тому же предикату, что и фильтр: «скрытые» = ложные срабатывания
+  // (вручную скрытые ИЛИ status=false_positive), остальное — видимые. Так шапка
+  // совпадает с фильтрами «Не ложные (видимые)» / «Ложное срабатывание».
+  const hiddenCount = findings.filter(isFalsePositive).length;
   const visibleCount = findings.length - hiddenCount;
 
   useEffect(() => {
