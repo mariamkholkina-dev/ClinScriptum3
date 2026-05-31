@@ -422,11 +422,18 @@ function ReviewDetail({
         </div>
       )}
 
-      {(ref?.textSnippet || ref?.anchorQuote) && (
-        <div className={styles.blockquote}><Text size={200}>{ref?.textSnippet || ref?.anchorQuote}</Text></div>
-      )}
-      {ref?.targetQuote && (
-        <div className={styles.blockquote}><Text size={200}>{ref.targetQuote}</Text></div>
+      {(ref?.textSnippet || ref?.anchorQuote || ref?.targetQuote) && (
+        <div>
+          <Text size={200} weight="semibold" style={{ display: "block", marginBottom: 4 }}>
+            Цитаты из документа
+          </Text>
+          {(ref?.textSnippet || ref?.anchorQuote) && (
+            <div className={styles.blockquote}><Text size={200}>{ref?.textSnippet || ref?.anchorQuote}</Text></div>
+          )}
+          {ref?.targetQuote && (
+            <div className={styles.blockquote}><Text size={200}>{ref.targetQuote}</Text></div>
+          )}
+        </div>
       )}
 
       {/* QA-верификация — особенно важна для ложноположительных (почему QA её
