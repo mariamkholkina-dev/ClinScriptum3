@@ -308,6 +308,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
           </div>
           <ReviewDetail
             f={selected}
+            sections={r.data.sections ?? []}
             isPublished={isPublished}
             busy={r.busy}
             onBack={() => setSelectedId(null)}
@@ -371,9 +372,10 @@ function ReviewCard({
 }
 
 function ReviewDetail({
-  f, isPublished, busy, onBack, onToggleHidden, onChangeSeverity, onSaveNote, onPromote, onRestore,
+  f, sections, isPublished, busy, onBack, onToggleHidden, onChangeSeverity, onSaveNote, onPromote, onRestore,
 }: {
   f: ReviewFinding;
+  sections: { title: string; standardSection: string | null; content: string }[];
   isPublished: boolean;
   busy: boolean;
   onBack: () => void;
@@ -388,6 +390,28 @@ function ReviewDetail({
   const [note, setNote] = useState(f.reviewerNote ?? "");
   const sev = effSeverity(f);
   const isFalsePositive = f.status === "false_positive";
+
+  // Заголовок раздела, содержащего цитату — чтобы переход в Word искал текст
+  // именно в этом разделе (а не первое одноимённое вхождение по всему документу).
+  // Среди разделов с этой цитатой предпочитаем те, что в зоне(ах) находки.
+  const sectionHeadingFor = (quote: string): string | undefined => {
+    const probe = quote.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 60);
+    if (probe.length < 12) return undefined;
+    const cands = sections.filter(
+      (s) => s.content.toLowerCase().replace(/\s+/g, " ").includes(probe),
+    );
+    if (cands.length === 0) return undefined;
+    const z = effZones(f);
+    const zones = [z.anchor, z.target].filter((zz): zz is string => !!zz);
+    const inZone = (s: { standardSection: string | null }) => {
+      if (zones.length === 0) return true;
+      const root = (s.standardSection ?? "").split(".")[0];
+      return zones.some(
+        (zz) => root === zz || s.standardSection === zz || (s.standardSection ?? "").startsWith(zz + "."),
+      );
+    };
+    return (cands.find(inZone) ?? cands[0]).title;
+  };
 
   // Места в документе, на которые ссылается находка, по порядку (1-е и 2-е).
   const quoteList = useMemo(() => {
@@ -414,13 +438,13 @@ function ReviewDetail({
   const goToQuote = (i: number) => {
     if (i < 0 || i >= quoteList.length) return;
     setNavIdx(i);
-    void navigateToText(quoteList[i]);
+    void navigateToText(quoteList[i], sectionHeadingFor(quoteList[i]));
   };
 
   // При открытии карточки находки — автопереход на первое место в документе.
   useEffect(() => {
     setNavIdx(0);
-    if (quoteList.length > 0) void navigateToText(quoteList[0]);
+    if (quoteList.length > 0) void navigateToText(quoteList[0], sectionHeadingFor(quoteList[0]));
   }, [f.id]);
 
   return (
