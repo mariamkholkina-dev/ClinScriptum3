@@ -2,6 +2,13 @@
 
 ## 2026-05-31
 
+### Fix: API падал по heap OOM на `document.listAll` (ERR_HTTP2_PROTOCOL_ERROR в браузере)
+
+В браузере периодически рвались запросы к API с `net::ERR_HTTP2_PROTOCOL_ERROR`; в nginx — `upstream prematurely closed connection`, в логах API — `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory` с последующим рестартом контейнера. Корень: `documentService.listAll` (`apps/api/src/services/document.service.ts`) делал `findMany` без `select` → Prisma тянула **все** колонки всех версий документов тенанта, включая тяжёлое поле `digitalTwin` (JSONB с полным распарсенным двойником документа, мегабайты на версию). На дашборде и `/documents` запрос вызывался в батче, иногда параллельно → heap улетал в ~1 ГБ и процесс падал, обрывая все висящие HTTP/2-соединения.
+
+- **`listAll`**: заменён `include` на явный `select` только нужных списку метаданных (id, версия, статус, тип, study) — `digitalTwin`/`fileUrl` больше не грузятся. Поведение для фронта (`documents/page.tsx`, `dashboard/page.tsx`) не меняется. Требует деплой api.
+- **`docker-compose.prod.yml`**: сервисам `api` и `workers` добавлен `NODE_OPTIONS=--max-old-space-size=896` — Node не знает про cgroup memory limit (1g) и ставит heap выше; теперь heap держится ниже лимита контейнера (~128 МБ запаса на не-heap). Раньше флаг жил только в prod `.env` руками — теперь зафиксирован в репозитории. Требует пересоздание контейнеров.
+
 ### Feat: повтор LLM-вызовов intra-audit при transient-ошибке (fetch failed)
 
 Раньше (#159/#160) упавший по `fetch failed` промт сразу попадал в `failedCalls` без повтора. Добавлен `lib/llm-retry.ts` (`withTransientRetry`): каждый LLM-вызов intra-audit (llm_check Variant 1 и Variant 2, llm_qa-батчи) сначала повторяется до 3 раз с экспоненциальным backoff (5с → 10с) при временной ошибке (`fetch failed`, таймаут, разрыв соединения, 429/5xx, перегрузка), и лишь после исчерпания попыток пишется в `failedCalls`. Постоянные ошибки (401/невалидный запрос/лимит токенов) не повторяются — fail-fast. Файлы: `apps/workers/src/lib/llm-retry.ts` (+тест, 6 кейсов), `apps/workers/src/handlers/intra-doc-audit.ts`. Требует деплой workers.

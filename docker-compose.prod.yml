@@ -78,6 +78,11 @@ services:
       dockerfile: Dockerfile.api
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Node не знает про cgroup memory limit (1g ниже) и ставит heap выше —
+      # упирается и падает по OOM. Держим heap ниже лимита контейнера, оставляя
+      # ~128 МБ на не-heap (C++/буферы). См. fix/document-listall-heap.
+      NODE_OPTIONS: "--max-old-space-size=896"
     ports:
       - "127.0.0.1:4000:4000"
     depends_on:
@@ -139,6 +144,9 @@ services:
       dockerfile: Dockerfile.workers
     restart: unless-stopped
     env_file: .env
+    environment:
+      # См. сервис api: heap ниже cgroup-лимита (1g) во избежание OOM.
+      NODE_OPTIONS: "--max-old-space-size=896"
     depends_on:
       postgres:
         condition: service_healthy
