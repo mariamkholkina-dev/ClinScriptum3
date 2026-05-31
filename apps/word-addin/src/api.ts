@@ -105,6 +105,7 @@ export async function exchangeSession(sessionId: string) {
       mode: string;
       protocolVersionId?: string;
       generatedDocId?: string;
+      reviewId?: string;
     };
     userId: string;
     tenantId: string;

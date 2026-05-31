@@ -36,7 +36,7 @@ app.post("/api/word-sessions", async (req, res) => {
     }
 
     const user = verifyAccessToken(authHeader.slice(7));
-    const { docVersionId, mode, protocolVersionId, generatedDocId, goldenSampleId } = req.body;
+    const { docVersionId, mode, protocolVersionId, generatedDocId, goldenSampleId, reviewId } = req.body;
 
     if (!mode) {
       res.status(400).json({ error: "mode is required" });
@@ -49,6 +49,7 @@ app.post("/api/word-sessions", async (req, res) => {
       protocolVersionId,
       generatedDocId,
       goldenSampleId,
+      reviewId,
     });
 
     res.json({ sessionId });

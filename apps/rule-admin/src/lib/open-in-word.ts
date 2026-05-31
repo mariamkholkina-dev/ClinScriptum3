@@ -12,12 +12,14 @@ interface WordSessionParams {
   mode:
     | "intra_audit"
     | "inter_audit"
+    | "finding_review"
     | "generation_review"
     | "generation_insert"
     | "parsing";
   protocolVersionId?: string;
   generatedDocId?: string;
   goldenSampleId?: string;
+  reviewId?: string;
 }
 
 /**
