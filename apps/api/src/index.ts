@@ -362,13 +362,17 @@ app.get("/api/audit-report/:versionId", async (req, res) => {
     // Backstop: отчёт буферизует весь Word-документ в памяти, поэтому
     // ограничиваем число находок защитным потолком (см. OOM api).
     const MAX_REPORT_FINDINGS = 5000;
+    // Боевой внутридокументный аудит пишет находки с type=editorial/semantic
+    // (а не "intra_audit") — старый фильтр (intra_audit ИЛИ editorial+EDITORIAL)
+    // отбрасывал semantic и большинство editorial → отчёт выгружался пустым,
+    // хотя на экране находки есть. Берём тот же набор типов, что getAuditFindings,
+    // и исключаем ложноположительные/скрытые ревьюером (как видит писатель).
     const findings = await prisma.finding.findMany({
       where: {
         docVersionId: req.params.versionId,
-        OR: [
-          { type: "intra_audit" },
-          { type: "editorial", issueFamily: "EDITORIAL" },
-        ],
+        type: { in: ["intra_audit", "editorial", "semantic"] },
+        status: { not: "false_positive" },
+        hiddenByReviewer: false,
       },
       orderBy: [{ severity: "asc" }, { createdAt: "asc" }],
       take: MAX_REPORT_FINDINGS,
