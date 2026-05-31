@@ -4,6 +4,7 @@ import { enqueueJob } from "../lib/queue.js";
 import { logger } from "../lib/logger.js";
 import { DomainError } from "./errors.js";
 import { requireTenantResource } from "./tenant-guard.js";
+import { buildSectionHtml } from "../lib/section-html.js";
 
 const REVIEWER_ROLES = new Set(["findings_reviewer", "rule_admin", "tenant_admin"]);
 
@@ -336,9 +337,9 @@ export const auditService = {
     });
     requireTenantResource(version, tenantId, (v) => v.document.study.tenantId);
 
-    // Грузим только текст блоков (content), без тяжёлого rawHtml — иначе на
-    // большом документе в память тянется весь HTML каждого блока, хотя в ответ
-    // он не идёт (см. OOM api: heap-balloon на полном протоколе/CSR).
+    // content + rawHtml блоков: rawHtml нужен для форматированного показа
+    // разделов (таблицы/переносы строк) в детализации находки. Объём ≈ размер
+    // документа (как в getReview); тяжёлый digitalTwin не тянем.
     const sections = await prisma.section.findMany({
       where: { docVersionId },
       orderBy: { order: "asc" },
@@ -348,7 +349,7 @@ export const auditService = {
         standardSection: true,
         contentBlocks: {
           orderBy: { order: "asc" },
-          select: { content: true },
+          select: { content: true, rawHtml: true },
         },
       },
     });
@@ -358,6 +359,8 @@ export const auditService = {
       title: s.title,
       standardSection: s.standardSection,
       content: s.contentBlocks.map((b) => b.content).join("\n"),
+      // HTML-версия — видны таблицы/переносы строк в детализации находки.
+      contentHtml: buildSectionHtml(s.contentBlocks),
     }));
   },
 
