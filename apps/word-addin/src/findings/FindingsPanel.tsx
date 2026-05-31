@@ -6,7 +6,6 @@ import {
   Button,
   makeStyles,
   tokens,
-  Divider,
   MessageBar,
   MessageBarBody,
 } from "@fluentui/react-components";
@@ -36,7 +35,8 @@ const useStyles = makeStyles({
     // прокручивает список (контент просто вылезает за пределы панели).
     minHeight: 0,
     overflowY: "auto",
-    padding: "0 8px 8px",
+    padding: "8px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke1}`,
   },
   detail: {
     borderTop: `1px solid ${tokens.colorNeutralStroke1}`,
@@ -174,8 +174,6 @@ export function FindingsPanel({ docVersionId, categoryFilter }: Props) {
           </Button>
         </div>
       )}
-
-      <Divider />
 
       {selected ? (
         <div className={styles.detail}>
