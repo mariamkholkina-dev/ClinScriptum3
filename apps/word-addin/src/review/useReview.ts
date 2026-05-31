@@ -107,6 +107,9 @@ export function useReview(reviewId: string) {
   const bulkChangeSeverity = (findingIds: string[], severity: string) =>
     run(() => trpcCall("findingReview.bulkChangeSeverity", { reviewId, findingIds, severity }, "mutation"));
 
+  const restoreFromFalsePositive = (findingIds: string[]) =>
+    run(() => trpcCall("findingReview.restoreFromFalsePositive", { reviewId, findingIds }, "mutation"));
+
   const publish = () =>
     run(() => trpcCall("findingReview.publish", { reviewId }, "mutation"));
 
@@ -125,6 +128,7 @@ export function useReview(reviewId: string) {
     promoteToGolden,
     bulkSetHidden,
     bulkChangeSeverity,
+    restoreFromFalsePositive,
     publish,
     listGoldenSamples,
   };
