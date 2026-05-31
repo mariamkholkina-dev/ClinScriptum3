@@ -49,9 +49,57 @@ const CATEGORY_LABELS: Record<string, string> = {
   grammar: "Редакторское",
 };
 
+const TYPE_LABELS: Record<string, string> = {
+  editorial: "Редакторская",
+  semantic: "Семантическая",
+  intra_audit: "Внутренний аудит",
+  inter_audit: "Межд. аудит",
+};
+
+interface ReportSection {
+  title: string;
+  standardSection: string | null;
+  headingNumber: string | null;
+  content: string;
+}
+
+const normForMatch = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+
+/** Определяет раздел документа, к которому относится находка: по цитате
+ *  (контент раздела содержит цитату), с предпочтением зоны находки; иначе —
+ *  любой раздел зоны. Нужно для явного указания раздела с исходной нумерацией. */
+function resolveSection(f: any, sections: ReportSection[]): ReportSection | null {
+  if (sections.length === 0) return null;
+  const ref = (f.sourceRef ?? {}) as Record<string, unknown>;
+  const probes = [ref.anchorQuote, ref.targetQuote, ref.textSnippet, ref.referenceQuote]
+    .filter((q): q is string => typeof q === "string" && q.trim().length > 0)
+    .map((q) => normForMatch(q).slice(0, 60))
+    .filter((p) => p.length >= 12);
+  const zones = [f.anchorZone, f.targetZone, ref.anchorZone, ref.zone].filter(
+    (z): z is string => typeof z === "string" && z.length > 0,
+  );
+  const inZone = (s: ReportSection) => {
+    if (zones.length === 0) return false;
+    const root = (s.standardSection ?? "").split(".")[0];
+    return zones.some(
+      (z) => root === z || s.standardSection === z || (s.standardSection ?? "").startsWith(z + "."),
+    );
+  };
+  const byQuote = probes.length
+    ? sections.filter((s) => probes.some((p) => normForMatch(s.content).includes(p)))
+    : [];
+  return byQuote.find(inZone) ?? byQuote[0] ?? sections.find(inZone) ?? null;
+}
+
+function sectionLabel(s: ReportSection): string {
+  const num = s.headingNumber ? `${s.headingNumber} ` : s.standardSection ? `[${s.standardSection}] ` : "";
+  return `${num}${s.title}`.trim();
+}
+
 export async function generateAuditReport(
   version: any,
-  findings: any[]
+  findings: any[],
+  sections: ReportSection[] = []
 ): Promise<Buffer> {
   const docTitle = version.document.title;
   const versionLabel = version.versionLabel ?? `v${version.versionNumber}`;
@@ -129,8 +177,12 @@ export async function generateAuditReport(
 
   children.push(new Paragraph({ spacing: { after: 300 } }));
 
-  // Findings by severity
+  // Находки — каждая с новой страницы, отсортированы по серьёзности.
   const severityOrder = ["critical", "high", "medium", "low", "info"];
+  const sortedFindings = [...findings].sort(
+    (a, b) =>
+      severityOrder.indexOf(a.severity ?? "info") - severityOrder.indexOf(b.severity ?? "info"),
+  );
   let findingNum = 1;
 
   children.push(
@@ -140,85 +192,113 @@ export async function generateAuditReport(
     })
   );
 
-  for (const sev of severityOrder) {
-    const sevFindings = findings.filter((f) => (f.severity ?? "info") === sev);
-    if (sevFindings.length === 0) continue;
+  for (const f of sortedFindings) {
+    const sev = (f.severity ?? "info") as string;
+    const status = STATUS_LABELS[f.status] ?? f.status;
+    const category = CATEGORY_LABELS[f.auditCategory ?? ""] ?? f.auditCategory ?? "";
+    const ref = (f.sourceRef ?? {}) as any;
+    const section = resolveSection(f, sections);
 
+    // Заголовок находки — с новой страницы.
     children.push(
       new Paragraph({
-        text: `${SEVERITY_LABELS[sev]} (${sevFindings.length})`,
-        heading: HeadingLevel.HEADING_2,
+        pageBreakBefore: true,
+        spacing: { after: 80 },
+        children: [
+          new TextRun({ text: `${findingNum}. `, bold: true }),
+          new TextRun({ text: `[${SEVERITY_LABELS[sev] ?? sev}] `, bold: true, color: SEVERITY_COLORS[sev] }),
+          new TextRun({ text: f.description, bold: true }),
+        ],
       })
     );
 
-    for (const f of sevFindings) {
-      const status = STATUS_LABELS[f.status] ?? f.status;
-      const category = CATEGORY_LABELS[f.auditCategory ?? ""] ?? f.auditCategory ?? "";
+    // Явно: раздел документа с исходной нумерацией Word.
+    children.push(
+      new Paragraph({
+        spacing: { after: 40 },
+        children: [
+          new TextRun({ text: "Раздел: ", bold: true, size: 22 }),
+          new TextRun({
+            text: section ? sectionLabel(section) : "—",
+            size: 22,
+            color: "1F4E79",
+          }),
+        ],
+      })
+    );
 
+    // Мета: тип / категория / семейство / статус.
+    const metaParts: string[] = [];
+    if (f.type) metaParts.push(`Тип: ${TYPE_LABELS[f.type] ?? f.type}`);
+    if (category) metaParts.push(`Категория: ${category}`);
+    if (f.issueType) metaParts.push(`Подтип: ${f.issueType}`);
+    if (f.issueFamily) metaParts.push(`Семейство: ${f.issueFamily}`);
+    metaParts.push(`Статус: ${status}`);
+    children.push(
+      new Paragraph({
+        spacing: { after: 40 },
+        children: [new TextRun({ text: metaParts.join("  |  "), italics: true, size: 20, color: "666666" })],
+      })
+    );
+
+    // Зоны (если кросс-проверка).
+    if (f.anchorZone || f.targetZone) {
+      const zoneText =
+        f.anchorZone && f.targetZone && f.anchorZone !== f.targetZone
+          ? `Зоны: ${f.anchorZone} → ${f.targetZone}`
+          : `Зона: ${f.targetZone ?? f.anchorZone}`;
       children.push(
         new Paragraph({
-          spacing: { before: 200 },
-          children: [
-            new TextRun({
-              text: `${findingNum}. `,
-              bold: true,
-            }),
-            new TextRun({
-              text: `[${SEVERITY_LABELS[sev]}] `,
-              bold: true,
-              color: SEVERITY_COLORS[sev],
-            }),
-            new TextRun({ text: f.description }),
-          ],
+          spacing: { after: 40 },
+          children: [new TextRun({ text: zoneText, italics: true, size: 20, color: "666666" })],
         })
       );
-
-      children.push(
-        new Paragraph({
-          spacing: { after: 50 },
-          children: [
-            new TextRun({ text: `   Категория: ${category}`, italics: true, size: 20 }),
-            new TextRun({ text: `  |  Статус: ${status}`, italics: true, size: 20 }),
-            ...(f.issueType
-              ? [new TextRun({ text: `  |  Тип: ${f.issueType}`, italics: true, size: 20 })]
-              : []),
-          ],
-        })
-      );
-
-      if (f.suggestion) {
-        children.push(
-          new Paragraph({
-            spacing: { after: 50 },
-            children: [
-              new TextRun({ text: "   Рекомендация: ", bold: true, size: 20, color: "228B22" }),
-              new TextRun({ text: f.suggestion, size: 20, color: "228B22" }),
-            ],
-          })
-        );
-      }
-
-      const ref = f.sourceRef as any;
-      const quotes = [ref?.anchorQuote, ref?.targetQuote, ref?.textSnippet].filter(Boolean);
-      if (quotes.length > 0) {
-        children.push(
-          new Paragraph({
-            spacing: { after: 100 },
-            indent: { left: 400 },
-            children: [
-              new TextRun({
-                text: `«${quotes.join("» → «")}»`,
-                italics: true,
-                size: 18,
-                color: "666666",
-              }),
-            ],
-          })
-        );
-      }
-
-      findingNum++;
     }
+
+    if (f.suggestion) {
+      children.push(
+        new Paragraph({
+          spacing: { after: 40 },
+          children: [
+            new TextRun({ text: "Рекомендация: ", bold: true, size: 22, color: "228B22" }),
+            new TextRun({ text: f.suggestion, size: 22, color: "228B22" }),
+          ],
+        })
+      );
+    }
+
+    // Цитаты из документа (раздельно, с подписями).
+    const quoteEntries: Array<[string, string]> = [];
+    const pushQuote = (label: string, q: unknown) => {
+      if (typeof q === "string" && q.trim()) quoteEntries.push([label, q]);
+    };
+    pushQuote("Цитата", ref.textSnippet);
+    pushQuote(ref.textSnippet ? "Референс" : "Цитата", ref.referenceQuote);
+    pushQuote("Якорная зона", ref.anchorQuote);
+    pushQuote("Проверяемая зона", ref.targetQuote);
+    if (quoteEntries.length > 0) {
+      children.push(
+        new Paragraph({
+          spacing: { before: 40, after: 20 },
+          children: [new TextRun({ text: "Цитаты из документа:", bold: true, size: 20 })],
+        })
+      );
+      for (const [label, q] of quoteEntries) {
+        children.push(
+          new Paragraph({
+            spacing: { after: 30 },
+            indent: { left: 400 },
+            border: { left: { style: BorderStyle.SINGLE, size: 12, color: "BBBBBB", space: 8 } },
+            children: [
+              new TextRun({ text: `${label}: `, size: 18, color: "888888" }),
+              new TextRun({ text: `«${q}»`, italics: true, size: 20, color: "444444" }),
+            ],
+          })
+        );
+      }
+    }
+
+    findingNum++;
   }
 
   const doc = new Document({
