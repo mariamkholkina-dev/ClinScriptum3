@@ -114,7 +114,10 @@ const useStyles = makeStyles({
     display: "flex",
     gap: "8px",
   },
-  badges: { display: "flex", gap: "6px", flexWrap: "wrap" as const, alignItems: "center" },
+  // flexShrink:0 на бейджах: при узкой панели flexbox иначе сжимал бейдж уже
+  // его текста, а Fluent Badge режет содержимое по overflow:hidden («К валидации»
+  // обрезалось при переносе). Теперь бейджи переносятся целиком, без обрезки.
+  badges: { display: "flex", gap: "6px", flexWrap: "wrap" as const, alignItems: "center", "& > *": { flexShrink: 0 } },
   detail: { flex: 1, minHeight: 0, overflowY: "auto", padding: "12px", display: "flex", flexDirection: "column", gap: "10px" },
   blockquote: {
     borderLeft: `3px solid ${tokens.colorBrandStroke1}`,
