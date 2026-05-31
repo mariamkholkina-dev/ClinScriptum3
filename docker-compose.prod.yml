@@ -25,7 +25,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy allkeys-lru
+    # noeviction (НЕ allkeys-lru): BullMQ требует, чтобы Redis не вытеснял
+    # ключи — иначе при достижении maxmemory произвольные ключи (jobs, locks,
+    # метаданные очередей) молча удаляются и задачи pipeline теряются/виснут.
+    # При noeviction переполнение даёт явную ошибку записи — это и нужно.
+    command: redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction
     volumes:
       - redisdata:/data
     healthcheck:

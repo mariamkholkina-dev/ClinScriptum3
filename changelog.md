@@ -2,6 +2,10 @@
 
 ## 2026-05-31
 
+### Fix: Redis policy `noeviction` вместо `allkeys-lru` (риск потери задач BullMQ)
+
+`docker-compose.prod.yml`: у сервиса `redis` сменён `--maxmemory-policy allkeys-lru` → `noeviction`. При `allkeys-lru` Redis по достижении `maxmemory` вытесняет произвольные ключи, включая данные очередей BullMQ (jobs, locks, метаданные) — задачи pipeline могли молча пропасть/повиснуть. BullMQ официально требует `noeviction` (это же предупреждение писал сам клиент при старте API: `Eviction policy is allkeys-lru. It should be "noeviction"`). Теперь переполнение даёт явную ошибку записи вместо тихой потери. Требует пересоздание контейнера redis.
+
 ### Fix: API падал по heap OOM на `document.listAll` (ERR_HTTP2_PROTOCOL_ERROR в браузере)
 
 В браузере периодически рвались запросы к API с `net::ERR_HTTP2_PROTOCOL_ERROR`; в nginx — `upstream prematurely closed connection`, в логах API — `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory` с последующим рестартом контейнера. Корень: `documentService.listAll` (`apps/api/src/services/document.service.ts`) делал `findMany` без `select` → Prisma тянула **все** колонки всех версий документов тенанта, включая тяжёлое поле `digitalTwin` (JSONB с полным распарсенным двойником документа, мегабайты на версию). На дашборде и `/documents` запрос вызывался в батче, иногда параллельно → heap улетал в ~1 ГБ и процесс падал, обрывая все висящие HTTP/2-соединения.
