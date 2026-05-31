@@ -49,7 +49,6 @@ export function FindingsFilter({
         <option value="pending">К валидации</option>
         <option value="resolved">Исправлено</option>
         <option value="rejected">Игнорировать</option>
-        <option value="false_positive">Ложное</option>
       </Select>
     </div>
   );

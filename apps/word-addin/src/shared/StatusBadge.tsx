@@ -5,7 +5,7 @@ const STATUS_MAP: Record<string, { label: string; color: "warning" | "success" |
   confirmed: { label: "Подтверждено", color: "informative" },
   resolved: { label: "Исправлено", color: "success" },
   rejected: { label: "Игнорировать", color: "subtle" },
-  false_positive: { label: "Ложное", color: "subtle" },
+  false_positive: { label: "Ложное", color: "danger" },
 };
 
 export function StatusBadge({ status }: { status: string }) {

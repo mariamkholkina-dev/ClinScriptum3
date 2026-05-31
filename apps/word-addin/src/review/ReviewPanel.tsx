@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Text,
   Spinner,
@@ -14,15 +14,18 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { Location24Regular, Star24Regular } from "@fluentui/react-icons";
+import { Star24Regular } from "@fluentui/react-icons";
 import { SeverityBadge } from "../shared/SeverityBadge";
 import { StatusBadge } from "../shared/StatusBadge";
-import { navigateToText, bestSnippet } from "../office-helpers";
+import { navigateToText } from "../office-helpers";
 import { useReview, effSeverity, type ReviewFinding } from "./useReview";
 import { PromoteModal } from "./PromoteModal";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
-const STATUS_OPTIONS = ["pending", "confirmed", "resolved", "rejected", "false_positive"];
+// Без false_positive — ложноположительные ловит отдельный фильтр «видимости»
+// (Все находки / Не ложные / Ложное срабатывание), иначе два одинаковых пункта
+// с разным поведением путали.
+const STATUS_OPTIONS = ["pending", "confirmed", "resolved", "rejected"];
 const STATUS_LABELS: Record<string, string> = {
   pending: "К валидации",
   confirmed: "Подтверждено",
@@ -31,11 +34,43 @@ const STATUS_LABELS: Record<string, string> = {
   false_positive: "Ложное срабатывание",
 };
 
+// Направление проверки (как в web). taskKind лежит в extraAttributes/sourceRef.
+const TASK_KIND_LABELS: Record<string, string> = {
+  self_check: "Внутренняя проверка",
+  cross_check: "Перекрёстная проверка",
+  self_editorial: "Редакторская проверка",
+};
+function effTaskKind(f: ReviewFinding): string | null {
+  return (f.extraAttributes?.taskKind as string) ?? (f.sourceRef?.taskKind as string) ?? null;
+}
+/** Зоны находки: якорная и проверяемая (колонки или sourceRef). */
+function effZones(f: ReviewFinding): { anchor: string | null; target: string | null } {
+  return {
+    anchor: f.anchorZone ?? (f.sourceRef?.anchorZone as string) ?? null,
+    target: f.targetZone ?? (f.sourceRef?.zone as string) ?? null,
+  };
+}
+
+const QA_VERDICT_LABELS: Record<string, string> = {
+  confirmed: "Подтверждено QA",
+  dismissed: "Отклонено QA",
+  adjusted: "Скорректировано QA",
+  deduplicated: "Дубликат",
+};
+const QA_VERDICT_COLORS: Record<string, "success" | "danger" | "warning" | "subtle"> = {
+  confirmed: "success",
+  dismissed: "danger",
+  adjusted: "warning",
+  deduplicated: "subtle",
+};
+
 const useStyles = makeStyles({
-  // flex:1 + minHeight:0 (как в FindingsPanel) — без этого внутри нефлексового
-  // styles.content высота не схлопывается и между фильтрами и списком зияла
-  // большая пустая область.
-  root: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
+  // height:100% + minHeight:0 — как в ParsingPanel/InterAuditPanel (рабочий
+  // паттерн внутри нефлексового styles.content): даёт высоту панели и
+  // позволяет внутреннему списку (flex:1, overflowY:auto) прокручиваться.
+  // flex:1 здесь НЕ работает (родитель content не display:flex) → ломалась
+  // прокрутка и появлялась пустая область.
+  root: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 },
   header: {
     padding: "10px 12px",
     display: "flex",
@@ -54,6 +89,15 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorPaletteYellowBackground1,
   },
   list: { flex: 1, minHeight: 0, overflowY: "auto", padding: "0 8px 8px" },
+  detailNav: {
+    flex: "none",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+    padding: "6px 10px",
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
   card: {
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: "6px",
@@ -90,6 +134,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [taskKindFilter, setTaskKindFilter] = useState("all");
   const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [promoteTarget, setPromoteTarget] = useState<string[] | null>(null);
@@ -98,6 +143,11 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
   const findings = r.data?.findings ?? [];
   const isPublished = r.data?.review.status === "published";
 
+  const availableTaskKinds = useMemo(
+    () => Array.from(new Set(findings.map(effTaskKind).filter((k): k is string => !!k))).sort(),
+    [findings],
+  );
+
   const filtered = useMemo(() => {
     return findings.filter((f) => {
       // «Ложное срабатывание» = скрыто ревьюером ИЛИ помечено конвейером/LLM
@@ -105,13 +155,15 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
       const isFalsePositive = f.hiddenByReviewer || f.status === "false_positive";
       if (severityFilter !== "all" && effSeverity(f) !== severityFilter) return false;
       if (statusFilter !== "all" && f.status !== statusFilter) return false;
+      if (taskKindFilter !== "all" && effTaskKind(f) !== taskKindFilter) return false;
       if (visibilityFilter === "hidden" && !isFalsePositive) return false;
       if (visibilityFilter === "visible" && isFalsePositive) return false;
       return true;
     });
-  }, [findings, severityFilter, statusFilter, visibilityFilter]);
+  }, [findings, severityFilter, statusFilter, taskKindFilter, visibilityFilter]);
 
-  const selected = filtered.find((f) => f.id === selectedId) ?? null;
+  const selectedIndex = filtered.findIndex((f) => f.id === selectedId);
+  const selected = selectedIndex >= 0 ? filtered[selectedIndex] : null;
   const hiddenCount = findings.filter((f) => f.hiddenByReviewer).length;
 
   const toggleSel = (id: string) =>
@@ -123,6 +175,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
     });
   const selArr = Array.from(selectedIds);
   const clearSel = () => setSelectedIds(new Set());
+  const selectAllFiltered = () => setSelectedIds(new Set(filtered.map((f) => f.id)));
 
   if (r.loading && !r.data) {
     return <div className={styles.empty}><Spinner label="Загрузка ревью..." /></div>;
@@ -160,7 +213,7 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-            Находок: {findings.length} · скрытых: {hiddenCount}
+            По фильтру: {filtered.length} из {findings.length} · скрытых: {hiddenCount}
           </Text>
         </div>
       </div>
@@ -180,6 +233,14 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
               <option value="all">Все статусы</option>
               {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
             </Select>
+            {availableTaskKinds.length > 0 && (
+              <Select size="small" value={taskKindFilter} onChange={(_, d) => setTaskKindFilter(d.value)}>
+                <option value="all">Все направления</option>
+                {availableTaskKinds.map((k) => (
+                  <option key={k} value={k}>{TASK_KIND_LABELS[k] ?? k}</option>
+                ))}
+              </Select>
+            )}
             <Select size="small" value={visibilityFilter} onChange={(_, d) => setVisibilityFilter(d.value)}>
               <option value="all">Все находки</option>
               <option value="visible">Не ложные</option>
@@ -190,6 +251,8 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
           {!isPublished && selectedIds.size > 0 && (
             <div className={styles.bulkBar}>
               <Text size={200} weight="semibold">Выбрано: {selectedIds.size}</Text>
+              <Button size="small" appearance="subtle" onClick={selectAllFiltered}>Выбрать все ({filtered.length})</Button>
+              <Button size="small" appearance="subtle" onClick={clearSel}>Снять все</Button>
               <Button size="small" disabled={r.busy} onClick={() => { r.bulkSetHidden(selArr, true); clearSel(); }}>Скрыть</Button>
               <Button size="small" disabled={r.busy} onClick={() => { r.bulkSetHidden(selArr, false); clearSel(); }}>Показать</Button>
               <Select size="small" value="" disabled={r.busy}
@@ -201,7 +264,6 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
               <Button size="small" disabled={r.busy} onClick={() => { r.restoreFromFalsePositive(selArr); clearSel(); }}>
                 На валидацию
               </Button>
-              <Button size="small" appearance="subtle" onClick={clearSel}>Снять</Button>
             </div>
           )}
 
@@ -224,17 +286,41 @@ export function ReviewPanel({ reviewId }: { reviewId: string }) {
       )}
 
       {selected && (
-        <ReviewDetail
-          f={selected}
-          isPublished={isPublished}
-          busy={r.busy}
-          onBack={() => setSelectedId(null)}
-          onToggleHidden={() => r.toggleHidden(selected.id)}
-          onChangeSeverity={(s) => r.changeSeverity(selected.id, s)}
-          onSaveNote={(note) => r.addNote(selected.id, note)}
-          onPromote={() => setPromoteTarget([selected.id])}
-          onRestore={() => r.restoreFromFalsePositive([selected.id])}
-        />
+        <>
+          {/* Навигация по находкам с учётом текущих фильтров */}
+          <div className={styles.detailNav}>
+            <Button
+              size="small"
+              appearance="subtle"
+              disabled={selectedIndex <= 0}
+              onClick={() => setSelectedId(filtered[selectedIndex - 1]?.id ?? null)}
+            >
+              ← Назад
+            </Button>
+            <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+              {selectedIndex + 1} / {filtered.length}
+            </Text>
+            <Button
+              size="small"
+              appearance="subtle"
+              disabled={selectedIndex >= filtered.length - 1}
+              onClick={() => setSelectedId(filtered[selectedIndex + 1]?.id ?? null)}
+            >
+              Вперёд →
+            </Button>
+          </div>
+          <ReviewDetail
+            f={selected}
+            isPublished={isPublished}
+            busy={r.busy}
+            onBack={() => setSelectedId(null)}
+            onToggleHidden={() => r.toggleHidden(selected.id)}
+            onChangeSeverity={(s) => r.changeSeverity(selected.id, s)}
+            onSaveNote={(note) => r.addNote(selected.id, note)}
+            onPromote={() => setPromoteTarget([selected.id])}
+            onRestore={() => r.restoreFromFalsePositive([selected.id])}
+          />
+        </>
       )}
 
       {promoteTarget && (
@@ -271,6 +357,11 @@ function ReviewCard({
         <div className={styles.badges}>
           <SeverityBadge severity={sev} />
           <StatusBadge status={f.status} />
+          {effTaskKind(f) && (
+            <Badge appearance="outline" color="informative" size="small">
+              {TASK_KIND_LABELS[effTaskKind(f)!] ?? effTaskKind(f)}
+            </Badge>
+          )}
           {f.hiddenByReviewer && <Badge appearance="tint" color="danger" size="small">Ложное</Badge>}
         </div>
         <Text size={200} style={{ display: "block", marginTop: 4 }}>{f.description}</Text>
@@ -299,8 +390,31 @@ function ReviewDetail({
   const ref = f.sourceRef as any;
   const [note, setNote] = useState(f.reviewerNote ?? "");
   const sev = effSeverity(f);
-  const navSnippet = bestSnippet(ref);
   const isFalsePositive = f.status === "false_positive";
+
+  // Места в документе, на которые ссылается находка, по порядку (1-е и 2-е).
+  const quoteList = useMemo(() => {
+    const first = ref?.textSnippet || ref?.anchorQuote || ref?.referenceQuote || ref?.checkedDocQuote;
+    const second = ref?.targetQuote;
+    const list: string[] = [];
+    for (const q of [first, second]) {
+      if (typeof q === "string" && q.trim() && !list.includes(q)) list.push(q);
+    }
+    return list;
+  }, [f.id]);
+  const [navIdx, setNavIdx] = useState(0);
+
+  const goToQuote = (i: number) => {
+    if (i < 0 || i >= quoteList.length) return;
+    setNavIdx(i);
+    void navigateToText(quoteList[i]);
+  };
+
+  // При открытии карточки находки — автопереход на первое место в документе.
+  useEffect(() => {
+    setNavIdx(0);
+    if (quoteList.length > 0) void navigateToText(quoteList[0]);
+  }, [f.id]);
 
   return (
     <div className={styles.detail}>
@@ -311,6 +425,11 @@ function ReviewDetail({
       <div className={styles.badges}>
         <SeverityBadge severity={sev} />
         <StatusBadge status={f.status} />
+        {effTaskKind(f) && (
+          <Badge appearance="outline" color="informative" size="small">
+            {TASK_KIND_LABELS[effTaskKind(f)!] ?? effTaskKind(f)}
+          </Badge>
+        )}
         {f.hiddenByReviewer && <Badge appearance="tint" color="danger" size="small">Ложное срабатывание</Badge>}
         {f.originalSeverity && f.originalSeverity !== sev && (
           <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
@@ -328,27 +447,75 @@ function ReviewDetail({
 
       <Text weight="semibold" size={300}>{f.description}</Text>
 
+      {(() => {
+        const z = effZones(f);
+        if (!z.anchor && !z.target) return null;
+        return (
+          <Text size={200} style={{ color: tokens.colorNeutralForeground2 }}>
+            {z.anchor && z.target && z.anchor !== z.target
+              ? `Зоны: ${z.anchor} → ${z.target}`
+              : `Зона: ${z.target ?? z.anchor}`}
+          </Text>
+        );
+      })()}
+
       {f.suggestion && (
-        <Text size={200} style={{ color: tokens.colorPaletteGreenForeground1 }}>
-          → {f.suggestion}
-        </Text>
+        <div>
+          <Text size={200} weight="semibold" style={{ display: "block", color: tokens.colorPaletteGreenForeground1 }}>
+            Рекомендация
+          </Text>
+          <Text size={200} style={{ color: tokens.colorPaletteGreenForeground1 }}>
+            {f.suggestion}
+          </Text>
+        </div>
       )}
 
-      {(ref?.textSnippet || ref?.anchorQuote) && (
-        <div className={styles.blockquote}><Text size={200}>{ref?.textSnippet || ref?.anchorQuote}</Text></div>
-      )}
-      {ref?.targetQuote && (
-        <div className={styles.blockquote}><Text size={200}>{ref.targetQuote}</Text></div>
+      {quoteList.length > 0 && (
+        <div>
+          <Text size={200} weight="semibold" style={{ display: "block", marginBottom: 4 }}>
+            Цитаты из документа{quoteList.length > 0 ? " — нажмите для перехода" : ""}
+          </Text>
+          {quoteList.map((q, i) => (
+            <div
+              key={i}
+              className={styles.blockquote}
+              onClick={() => goToQuote(i)}
+              title="Перейти к этому месту в документе"
+              style={{
+                cursor: "pointer",
+                backgroundColor: i === navIdx ? tokens.colorNeutralBackground1Selected : undefined,
+              }}
+            >
+              <Text size={200}>{q}</Text>
+            </div>
+          ))}
+        </div>
       )}
 
-      <Button
-        size="small"
-        icon={<Location24Regular />}
-        disabled={!navSnippet}
-        onClick={() => navSnippet && navigateToText(navSnippet)}
-      >
-        Перейти в документе
-      </Button>
+      {/* QA-верификация — особенно важна для ложноположительных (почему QA её
+          отклонил/скорректировал). */}
+      {(f.extraAttributes?.qaVerdict || f.extraAttributes?.qaReason) && (
+        <div className={styles.actionsBox}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Text weight="semibold" size={200}>QA-верификация</Text>
+            {f.extraAttributes?.qaVerdict && (
+              <Badge
+                appearance="tint"
+                color={QA_VERDICT_COLORS[f.extraAttributes.qaVerdict as string] ?? "informative"}
+                size="small"
+              >
+                {QA_VERDICT_LABELS[f.extraAttributes.qaVerdict as string] ?? f.extraAttributes.qaVerdict}
+              </Badge>
+            )}
+          </div>
+          {f.extraAttributes?.qaReason && (
+            <Text size={200} style={{ color: tokens.colorNeutralForeground2 }}>
+              {f.extraAttributes.qaReason as string}
+            </Text>
+          )}
+        </div>
+      )}
+
 
       {/* Действия ревьюера */}
       <div className={styles.actionsBox}>
