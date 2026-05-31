@@ -472,6 +472,49 @@ export const findingReviewService = {
     return { updated };
   },
 
+  /** Вернуть находки из false_positive на валидацию (status=pending).
+   *  Нужно, когда конвейер (insufficient_context / QA-dismissed / дедуп) или
+   *  LLM ошибочно пометили находку как ложноположительную — ревьюер
+   *  восстанавливает её, и после публикации она дойдёт до писателя.
+   *  Затрагивает только находки со status=false_positive (остальные no-op). */
+  async restoreFromFalsePositive(
+    tenantId: string,
+    reviewId: string,
+    findingIds: string[],
+    userId: string,
+  ) {
+    const review = await prisma.findingReview.findUnique({ where: { id: reviewId } });
+    requireTenantResource(review, tenantId);
+
+    const findings = await prisma.finding.findMany({
+      where: {
+        id: { in: findingIds },
+        docVersionId: review.docVersionId,
+        status: "false_positive",
+      },
+    });
+
+    let restored = 0;
+    for (const f of findings) {
+      await prisma.findingReviewLog.create({
+        data: {
+          reviewId,
+          findingId: f.id,
+          reviewerId: userId,
+          action: "restore_from_false_positive",
+          previousValue: "false_positive",
+          newValue: "pending",
+        },
+      });
+      await prisma.finding.update({
+        where: { id: f.id },
+        data: { status: "pending" },
+      });
+      restored += 1;
+    }
+    return { restored };
+  },
+
   async getReviewStatus(
     docVersionId: string,
     auditType: "intra_audit" | "inter_audit",

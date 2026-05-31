@@ -14,6 +14,7 @@ import {
   MessageSquare,
   AlertTriangle,
   Star,
+  RotateCcw,
 } from "lucide-react";
 import {
   SEVERITY_BORDER,
@@ -93,6 +94,9 @@ export default function FindingReviewDetailPage() {
     onSuccess: () => { refetch(); clearSelection(); },
   });
   const bulkChangeSeverity = trpc.findingReview.bulkChangeSeverity.useMutation({
+    onSuccess: () => { refetch(); clearSelection(); },
+  });
+  const restoreFromFP = trpc.findingReview.restoreFromFalsePositive.useMutation({
     onSuccess: () => { refetch(); clearSelection(); },
   });
 
@@ -348,6 +352,14 @@ export default function FindingReviewDetailPage() {
                 >
                   <Star className="h-3 w-3" /> В эталон
                 </button>
+                <button
+                  onClick={() => restoreFromFP.mutate({ reviewId, findingIds: selectedArray })}
+                  disabled={bulkBusy || restoreFromFP.isPending}
+                  className="inline-flex items-center gap-1 rounded border border-blue-200 bg-white px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                  title="Вернуть выбранные ложноположительные находки на валидацию"
+                >
+                  <RotateCcw className="h-3 w-3" /> Вернуть на валидацию
+                </button>
               </div>
             </div>
           )}
@@ -437,9 +449,11 @@ export default function FindingReviewDetailPage() {
               }
               onSaveNote={() => addNote.mutate({ reviewId, findingId: selectedFinding.id, note: noteText })}
               onPromote={() => setPromoteTarget([selectedFinding.id])}
+              onRestore={() => restoreFromFP.mutate({ reviewId, findingIds: [selectedFinding.id] })}
               isToggling={toggleHidden.isPending}
               isChangingSeverity={changeSeverity.isPending}
               isSavingNote={addNote.isPending}
+              isRestoring={restoreFromFP.isPending}
             />
           )}
         </div>
@@ -468,9 +482,11 @@ function ReviewDetail({
   onChangeSeverity,
   onSaveNote,
   onPromote,
+  onRestore,
   isToggling,
   isChangingSeverity,
   isSavingNote,
+  isRestoring,
 }: {
   finding: any;
   sections: DocSection[];
@@ -481,16 +497,30 @@ function ReviewDetail({
   onChangeSeverity: (severity: string) => void;
   onSaveNote: () => void;
   onPromote: () => void;
+  onRestore: () => void;
   isToggling: boolean;
   isChangingSeverity: boolean;
   isSavingNote: boolean;
+  isRestoring: boolean;
 }) {
   const severity = effectiveSeverity(finding);
   const showOriginal = finding.originalSeverity && finding.originalSeverity !== severity;
+  const isFalsePositive = finding.status === "false_positive";
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {isFalsePositive && (
+          <button
+            onClick={onRestore}
+            disabled={isRestoring}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+            title="Находка помечена ложноположительной ошибочно — вернуть на валидацию"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Вернуть на валидацию
+          </button>
+        )}
         <button
           onClick={onPromote}
           className="inline-flex items-center gap-1.5 rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-1.5 text-sm font-medium text-yellow-800 hover:bg-yellow-100"

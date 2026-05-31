@@ -450,3 +450,41 @@ describe("findingReviewService.bulkChangeSeverity", () => {
     });
   });
 });
+
+describe("findingReviewService.restoreFromFalsePositive", () => {
+  it("sets status=pending for false_positive findings + logs", async () => {
+    mockReview.findUnique.mockResolvedValueOnce(makeReview());
+    // findMany уже отфильтровал по status=false_positive — вернёт только подходящие.
+    mockFinding.findMany.mockResolvedValueOnce([
+      { id: "f1", docVersionId: DOC_VERSION_ID, status: "false_positive" },
+    ]);
+    mockFinding.update.mockResolvedValue({});
+
+    const result = await findingReviewService.restoreFromFalsePositive(
+      TENANT_A, REVIEW_ID, ["f1", "f2"], USER_ID,
+    );
+
+    expect(result.restored).toBe(1);
+    expect(mockFinding.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["f1", "f2"] }, docVersionId: DOC_VERSION_ID, status: "false_positive" },
+    });
+    expect(mockFinding.update).toHaveBeenCalledWith({
+      where: { id: "f1" },
+      data: { status: "pending" },
+    });
+    expect(mockLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "restore_from_false_positive",
+        previousValue: "false_positive",
+        newValue: "pending",
+      }),
+    });
+  });
+
+  it("rejects cross-tenant review", async () => {
+    mockReview.findUnique.mockResolvedValueOnce(makeReview(TENANT_B));
+    await expect(
+      findingReviewService.restoreFromFalsePositive(TENANT_A, REVIEW_ID, ["f1"], USER_ID),
+    ).rejects.toThrow(DomainError);
+  });
+});
