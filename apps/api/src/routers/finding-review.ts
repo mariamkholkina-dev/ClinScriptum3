@@ -132,6 +132,22 @@ export const findingReviewRouter = router({
       ),
     ),
 
+  restoreFromFalsePositive: r
+    .input(
+      z.object({
+        reviewId: z.string().uuid(),
+        findingIds: z.array(z.string().uuid()).min(1),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      findingReviewService.restoreFromFalsePositive(
+        ctx.user.tenantId,
+        input.reviewId,
+        input.findingIds,
+        ctx.user.userId,
+      ),
+    ),
+
   getReviewStatus: p
     .input(
       z.object({

@@ -2,6 +2,15 @@
 
 ## 2026-05-31
 
+### Feat: ревьюер может вернуть ложноположительную находку на валидацию
+
+Если конвейер (insufficient_context / QA-dismissed / дедуп) или LLM ошибочно пометили находку `status=false_positive`, ревьюер теперь может восстановить её. Раньше это было невозможно: у ревьюера не было смены `Finding.status`, а писатель `false_positive` не видит — находка терялась навсегда.
+
+- Бэкенд: `findingReview.restoreFromFalsePositive(reviewId, findingIds[])` (reviewerProcedure) — ставит `status: pending` только находкам со `status=false_positive` этого ревью, с audit-логом (`restore_from_false_positive`). Поддерживает одну и несколько находок.
+- UI (rule-admin finding-review): кнопка **«Вернуть на валидацию»** в детализации (для находок со статусом «Ложное срабатывание») и в bulk-баре. После публикации находка дойдёт до писателя.
+
+Тест сервиса добавлен. Требует деплой api + rule-admin.
+
 ### Refactor: экран finding-review перенесён из web в rule-admin
 
 Ревью находок — задача эксперта/qc, а не медицинского писателя (см. UI-разделение в CLAUDE.md). Перенесли богатый интерфейс finding-review из основного интерфейса (`apps/web`) в rule-admin, а web-версию удалили.
