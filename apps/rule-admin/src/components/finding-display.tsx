@@ -567,13 +567,34 @@ function sanitizeSectionHtml(html: string): string {
     .replace(/(href|src)\s*=\s*("javascript:[^"]*"|'javascript:[^']*')/gi, "");
 }
 
-// Классы для HTML-раздела: видимые таблицы, абзацы, списки.
+/** Подсвечивает фрагменты цитат прямо в HTML раздела, НЕ ломая разметку:
+ *  обрабатываем только текстовые узлы (между тегами), совпадения оборачиваем
+ *  в <mark>. Теги и атрибуты не трогаем. Цитата, разорванная тегом (ячейки
+ *  таблицы, переносы), может не подсветиться — это допустимый компромисс. */
+function highlightHtml(html: string, quotes: string[]): string {
+  const regexes = buildHighlightRegexes(quotes);
+  if (regexes.length === 0) return html;
+  return html
+    .split(/(<[^>]+>)/)
+    .map((token) => {
+      if (token.startsWith("<")) return token; // тег — оставляем как есть
+      let t = token;
+      // Маркеры-плейсхолдеры (как в text-режиме), чтобы regex не цеплялся
+      // за уже вставленные <mark>; финальную разметку собираем в конце.
+      for (const re of regexes) t = t.replace(re, "%%HL_START%%$1%%HL_END%%");
+      return t.replace(/%%HL_START%%/g, "<mark>").replace(/%%HL_END%%/g, "</mark>");
+    })
+    .join("");
+}
+
+// Классы для HTML-раздела: видимые таблицы, абзацы, списки + подсветка цитат (<mark>).
 const HTML_CONTENT_CLASSES =
   "px-4 pb-4 text-sm text-gray-700 leading-relaxed max-h-96 overflow-auto " +
   "[&_table]:border-collapse [&_table]:my-2 [&_table]:w-full " +
   "[&_td]:border [&_td]:border-gray-300 [&_td]:px-2 [&_td]:py-1 [&_td]:align-top " +
   "[&_th]:border [&_th]:border-gray-300 [&_th]:px-2 [&_th]:py-1 [&_th]:bg-gray-50 [&_th]:text-left " +
-  "[&_p]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5";
+  "[&_p]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 " +
+  "[&_mark]:bg-yellow-200 [&_mark]:text-inherit [&_mark]:underline [&_mark]:decoration-red-500 [&_mark]:decoration-2 [&_mark]:underline-offset-2";
 
 export function SectionPanel({
   section,
@@ -618,12 +639,14 @@ export function SectionPanel({
         <ChevronRight className={cn("h-4 w-4 text-gray-400 transition-transform", expanded && "rotate-90")} />
       </button>
       {expanded && (
-        // HTML-режим: видны таблицы/переносы строк (контент из rawHtml). Подсветку
-        // цитат в HTML не делаем (риск порчи разметки) — она остаётся в text-режиме.
+        // HTML-режим: видны таблицы/переносы строк (контент из rawHtml). Цитаты
+        // подсвечиваем в текстовых узлах (highlightHtml) — разметку не ломаем.
         section.contentHtml ? (
           <div
             className={HTML_CONTENT_CLASSES}
-            dangerouslySetInnerHTML={{ __html: sanitizeSectionHtml(section.contentHtml) }}
+            dangerouslySetInnerHTML={{
+              __html: highlightHtml(sanitizeSectionHtml(section.contentHtml), highlightQuotes),
+            }}
           />
         ) : (
           <div className="px-4 pb-4 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto">
