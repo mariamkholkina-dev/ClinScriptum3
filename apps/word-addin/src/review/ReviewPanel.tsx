@@ -14,7 +14,7 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { Location24Regular, Star24Regular } from "@fluentui/react-icons";
+import { Star24Regular } from "@fluentui/react-icons";
 import { SeverityBadge } from "../shared/SeverityBadge";
 import { StatusBadge } from "../shared/StatusBadge";
 import { navigateToText } from "../office-helpers";
@@ -409,11 +409,6 @@ function ReviewDetail({
     setNavIdx(i);
     void navigateToText(quoteList[i]);
   };
-  // Циклический переход «Перейти в документе»: 1-е → 2-е → 1-е …
-  const goNextQuote = () => {
-    if (quoteList.length === 0) return;
-    goToQuote((navIdx + 1) % quoteList.length);
-  };
 
   // При открытии карточки находки — автопереход на первое место в документе.
   useEffect(() => {
@@ -478,7 +473,7 @@ function ReviewDetail({
       {quoteList.length > 0 && (
         <div>
           <Text size={200} weight="semibold" style={{ display: "block", marginBottom: 4 }}>
-            Цитаты из документа
+            Цитаты из документа{quoteList.length > 0 ? " — нажмите для перехода" : ""}
           </Text>
           {quoteList.map((q, i) => (
             <div
@@ -521,16 +516,6 @@ function ReviewDetail({
         </div>
       )}
 
-      <Button
-        size="small"
-        icon={<Location24Regular />}
-        disabled={quoteList.length === 0}
-        onClick={goNextQuote}
-      >
-        {quoteList.length > 1
-          ? `Перейти в документе (${navIdx + 1}/${quoteList.length})`
-          : "Перейти в документе"}
-      </Button>
 
       {/* Действия ревьюера */}
       <div className={styles.actionsBox}>
